@@ -36,7 +36,7 @@ default-features = false
 [dependencies.blake3-servil]
 path = ".."
 default-features = false
-features = ["std"]
+features = ["std", "no_sme2"]
 
 # BLAKE3 through ab-blake3: const_hash (a const fn copy of the reference
 # tree) for one message, and single_block_hash_many_exact for a batch of
