@@ -89,10 +89,7 @@ function checkLayout(tag) {
     check(buttons.every((id, i) => Math.abs(tx(id) - buttonsAt[i]) < 0.01), `${tag}: the zoom buttons never move`);
     const band = w.document.getElementById("zoom-band"), x0 = +band.getAttribute("x") + 3, x1 = x0 + +band.getAttribute("width") - 6;
     check(Math.abs(x0 - stripX(T.ALLB[T.zFrom])) < 0.1 && Math.abs(x1 - stripX(T.ALLB[T.zTo])) < 0.1, `${tag}: the band covers ${range()}`);
-    check(Math.abs(+w.document.getElementById("zoom-guide-from").getAttribute("x1") - x0) < 0.1
-      && Math.abs(+w.document.getElementById("zoom-guide-to").getAttribute("x1") - x1) < 0.1, `${tag}: the guides start at the band's ends`);
-    check(Math.abs(+w.document.getElementById("zoom-guide-from").getAttribute("x2") - L) < 0.1
-      && Math.abs(+w.document.getElementById("zoom-guide-to").getAttribute("x2") - R) < 0.1, `${tag}: the guides end at the plots' axis ends`);
+    check(Math.abs(stripX(T.ALLB[0]) - L) < 0.1 && Math.abs(stripX(T.ALLB[T.ALLB.length - 1]) - R) < 0.1, `${tag}: the strip spans the plots' inputs`);
   }
   checkControls("initial");
   // The better arrows: the script draws what the static render drew, and flips with the unit.

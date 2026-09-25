@@ -3991,7 +3991,6 @@ fn generate_svg(
     .zoom-grip-hit { fill: transparent; }
     .zoom-grip-bar { fill: #5b21b6; fill-opacity: 0.7; }
     .zoom-grip:hover .zoom-grip-bar { fill-opacity: 1; }
-    .zoom-guide { stroke: #5b21b6; stroke-opacity: 0.35; stroke-width: 1; stroke-dasharray: 3,2; }
     .value-label { font-size: 10px; font-weight: 700; }
     .series-name { font-size: 13px; font-weight: 700; }
     .series-detail { font-size: 10px; fill: #777777; }
@@ -4084,7 +4083,7 @@ fn generate_svg(
     .unwrap();
 
     /*
-     * Unit switch, in the header above the legend column: a vertical track with a knob
+     * Unit switch, in the header above the y titles it changes: a vertical track with a knob
      * that slides between GB/s (top) and ns/B (bottom). Clicking anywhere
      * on the switch flips every plot. The knob's position is the state;
      * the label beside it reads darker. Without script the graph stays in
@@ -4109,9 +4108,9 @@ fn generate_svg(
      * Zoom, a row above the first plot: the inputs every plot shows. A
      * strip spans the plots' width with a tick for every input the plots
      * have (a batch counts its messages' bytes), on the plots' logarithmic
-     * spacing; a band covers the inputs shown, and two guide lines run from
-     * its ends to the ends of the plots' axes below, so the band reads as
-     * "this part, drawn across the whole width". No numbers: each plot's
+     * spacing, spanning the x range of the plots' inputs, so at the full
+     * range each tick stands over its input below; a band covers the inputs
+     * shown, drawn across the whole width in the plots. No numbers: each plot's
      * own axis names its inputs, sizes or message counts. Two arrows at
      * the strip's left end move the first input shown, two at its right
      * end the last, and "all" shows every input; they never move. Without
@@ -4136,6 +4135,7 @@ fn generate_svg(
     };
     button(&mut svg, "zoom-from-dec", PLOT_LEFT, 16.0, "‹", "zoomStep('from', -1)", "Show one smaller input");
     button(&mut svg, "zoom-from-inc", PLOT_LEFT + 18.0, 16.0, "›", "zoomStep('from', 1)", "Hide the smallest input shown");
+    debug_assert!(PLOT_LEFT + 34.0 < ZOOM_STRIP_LEFT - 3.0 && PLOT_RIGHT - 34.0 > ZOOM_STRIP_RIGHT + 3.0, "the arrows fit beside the strip");
     writeln!(svg, r##"    <g><title>The inputs every plot shows, from smallest (left) to largest; drag an end of the band to change them</title><rect class="zoom-track-hit" x="{ZOOM_STRIP_LEFT:.1}" y="0" width="{:.1}" height="18"/><rect class="zoom-track" x="{ZOOM_STRIP_LEFT:.1}" y="7" width="{:.1}" height="4" rx="2"/></g>"##, ZOOM_STRIP_RIGHT - ZOOM_STRIP_LEFT, ZOOM_STRIP_RIGHT - ZOOM_STRIP_LEFT).unwrap();
     for &bytes in &all_bytes {
         writeln!(svg, r##"    <line class="zoom-tick" x1="{0:.1}" y1="4" x2="{0:.1}" y2="14"/>"##, strip_x(bytes)).unwrap();
@@ -4150,8 +4150,6 @@ fn generate_svg(
         )
         .unwrap();
     }
-    writeln!(svg, r##"    <line id="zoom-guide-from" class="zoom-guide" x1="{band_left:.1}" y1="17" x2="{:.1}" y2="{ZOOM_GUIDE_BOTTOM:.1}"/>"##, PLOT_LEFT + X_INSET).unwrap();
-    writeln!(svg, r##"    <line id="zoom-guide-to" class="zoom-guide" x1="{band_right:.1}" y1="17" x2="{:.1}" y2="{ZOOM_GUIDE_BOTTOM:.1}"/>"##, PLOT_RIGHT - X_INSET).unwrap();
     button(&mut svg, "zoom-to-dec", PLOT_RIGHT - 34.0, 16.0, "‹", "zoomStep('to', -1)", "Hide the largest input shown");
     button(&mut svg, "zoom-to-inc", PLOT_RIGHT - 16.0, 16.0, "›", "zoomStep('to', 1)", "Show one larger input");
     button(&mut svg, "zoom-all", PLOT_RIGHT + 14.0, 30.0, "all", "zoomAll()", "Show every input");
@@ -4392,7 +4390,7 @@ fn write_plot(svg: &mut String, plot: &Plot, roster: &Roster, results: &Results,
     let y_title = format!("{} (log scale) · higher is better", plot.use_case.rate_unit_long());
     writeln!(
         svg,
-        r##"  <text id="y-title-{p}" x="30" y="{:.1}" class="axis-title" text-anchor="middle" transform="rotate(-90 30 {:.1})">{}</text>"##,
+        r##"  <text id="y-title-{p}" x="{Y_TITLE_X:.0}" y="{:.1}" class="axis-title" text-anchor="middle" transform="rotate(-90 {Y_TITLE_X:.0} {:.1})">{}</text>"##,
         (top + bottom) / 2.0,
         (top + bottom) / 2.0,
         xml_escape(&y_title),
@@ -4776,8 +4774,11 @@ fn better_arrow_path(y0: f64, y1: f64, up: bool) -> String {
     format!("M{x:.1} {tail:.1} L{x:.1} {head:.1} M{:.1} {:.1} L{x:.1} {head:.1} L{:.1} {:.1}", x - 3.5, head + 5.0 * dir, x + 3.5, head + 5.0 * dir)
 }
 
+/// The y title's x: close to the tick numbers it names (right-aligned 10 px
+/// left of the plot, up to five characters), with the arrow between.
+const Y_TITLE_X: f64 = 54.0;
 /// The arrow's x: beside the rotated y title, on the side below its words.
-const BETTER_ARROW_X: f64 = 37.0;
+const BETTER_ARROW_X: f64 = Y_TITLE_X + 7.0;
 
 /// Why a hash of the run takes no part in a plot, for the tooltip on its
 /// pale name there.
@@ -4953,17 +4954,20 @@ fn place_value_labels(plot: &Plot, results: &Results, shown: &[bool]) -> Vec<Vec
     placed
 }
 
-/// The zoom strip's ends: inside the arrow pairs at the plots' ends.
-const ZOOM_STRIP_LEFT: f64 = PLOT_LEFT + 48.0;
-const ZOOM_STRIP_RIGHT: f64 = PLOT_RIGHT - 48.0;
+/// The zoom strip's ends: where the plots' first and last inputs sit, so
+/// at the full range each tick stands over its input in the plots; the
+/// arrow pairs sit between these and the plots' edges.
+const ZOOM_STRIP_LEFT: f64 = PLOT_LEFT + X_INSET;
+const ZOOM_STRIP_RIGHT: f64 = PLOT_RIGHT - X_INSET;
 /// Where the zoom guides end, below the zoom row's top, above the first
 /// plot's title.
 const ZOOM_GUIDE_BOTTOM: f64 = 26.0;
 /// The header's bottom: the sticky group's background reaches here.
 const HEADER_BOTTOM: f64 = ZOOM_ROW_TOP + ZOOM_GUIDE_BOTTOM + 2.0;
-/// The unit switch, in the header above the legend column.
-const UNIT_SWITCH_LEFT: f64 = PLOT_RIGHT + 80.0;
-const UNIT_SWITCH_TOP: f64 = 56.0;
+/// The unit switch, in the header straight above the y titles it changes:
+/// its track centred on their column.
+const UNIT_SWITCH_LEFT: f64 = Y_TITLE_X - 7.0;
+const UNIT_SWITCH_TOP: f64 = 86.0;
 
 /// The zoom row's top, between the method lines and the first plot's title.
 const ZOOM_ROW_TOP: f64 = 100.0;
@@ -5457,13 +5461,11 @@ window.addEventListener("pointercancel", gripUp);
 const stripX = bytes => DATA.stripLeft + (Math.log2(bytes) - Math.log2(ALLB[0])) / (Math.log2(ALLB[ALLB.length - 1]) - Math.log2(ALLB[0])) * (DATA.stripRight - DATA.stripLeft);
 function updateZoomControls() {
   const last = ALLB.length - 1;
-  /* The band over the inputs shown; its guides run to the plots' axis ends, which stay put. */
+  /* The band over the inputs shown. */
   const x0 = stripX(ALLB[zFrom]), x1 = stripX(ALLB[zTo]);
   const band = document.getElementById("zoom-band");
   band.setAttribute("x", (x0 - 3).toFixed(1));
   band.setAttribute("width", (x1 - x0 + 6).toFixed(1));
-  document.getElementById("zoom-guide-from").setAttribute("x1", x0.toFixed(1));
-  document.getElementById("zoom-guide-to").setAttribute("x1", x1.toFixed(1));
   document.getElementById("zoom-grip-from").setAttribute("transform", `translate(${x0.toFixed(1)} 0)`);
   document.getElementById("zoom-grip-to").setAttribute("transform", `translate(${x1.toFixed(1)} 0)`);
   const off = (id, disabled) => document.getElementById(id).setAttribute("data-off", disabled ? "true" : "false");

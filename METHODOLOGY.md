@@ -392,7 +392,7 @@ determined. The text report marks such cells with `~`.
 The SVG shows six plots, each use case solo and then shared, each with
 median lines and confidence bands on a log-log grid.
 
-A switch at the header's right flips every plot between rate (the
+A switch at the header's left, above the y axes' titles, flips every plot between rate (the
 default; higher is better: GB/s above, million messages per second
 below) and time (lower is better: ns/B above, ns per message below).
 Rate is the reciprocal of time, so on the log axis each plot mirrors
@@ -413,8 +413,8 @@ highlighting follows the mouse, since a finger has no way to leave.
 The strip at the top narrows every plot, in lock step, to a range of
 inputs. It has a tick for every input the plots have (a batch counts its
 messages' bytes) on the plots' logarithmic spacing; its band marks the
-range shown, and guide lines join the band's ends to the ends of the
-plots' axes, where the range's first and last inputs sit. The strip holds
+range shown. The strip spans the plots' own x range, so at the full range
+each tick stands over its input in the plots. The strip holds
 no numbers, since the plots' axes name their inputs in bytes or messages.
 Two arrows at its left end step the range's start by one input, two at its
 right end its end, and "all" restores every input; the arrows stay where
