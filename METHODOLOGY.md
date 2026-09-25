@@ -23,12 +23,14 @@ single-threaded (servil st),
 and SHA-256 from two crates, sha2 and ring, since each is the faster
 SHA-256 at some sizes. `--all` adds every other contender the machine can
 run: the crates.io BLAKE3 crate, single-threaded and on its Rayon pool
-(BLAKE3 mt), ab-blake3 (a crate with a `const fn` BLAKE3 and a batch
-entry point for many 64-byte messages), and SHA-1DC (SHA-1 with the
-collision detection git uses). `--contenders` names any set, including
-CommonCrypto's SHA-256 on Apple platforms (`sha256-cc`), which runs
-only when named: on Apple silicon the ring and sha2 crates are each
-faster at every size. `--list` shows every key.
+(BLAKE3 official mt), and ab-blake3 (a crate with a `const fn` BLAKE3 and a
+batch entry point for many 64-byte messages). `--contenders` names any
+set, including two that run only when named: SHA-1DC (`sha1dc`, SHA-1
+with the collision detection git uses), far slower than every other
+contender at every size, whose large inputs took a quarter of an `--all`
+run; and CommonCrypto's SHA-256 on Apple platforms (`sha256-cc`), which
+the ring and sha2 crates each beat at every size on Apple silicon.
+`--list` shows every key.
 
 ## Input sizes
 
@@ -71,7 +73,7 @@ piece, a larger one a piece per 64 KiB. Producing each piece costs one
 copy, as a read into memory does, and every contender pays it, timed.
 The synchronous incremental APIs get each piece copied into a 64 KiB
 buffer and then hash it, so producing and hashing take turns
-(`Hasher::update` in crates.io BLAKE3, `update_rayon` for BLAKE3 mt,
+(`Hasher::update` in crates.io BLAKE3, `update_rayon` for BLAKE3 official mt,
 `Digest::update` in sha2 and sha1-checked, ring's `Context::update`,
 CommonCrypto's `CC_SHA256_Update`). The servil fork's `Stream` takes the
 copy straight into its own buffers and hashes each full one on another
@@ -109,7 +111,7 @@ remainder past the sixteen-message groups ab-blake3 forms; from 64 up
 the per-batch overhead amortises and the rate settles. Results read in
 nanoseconds per message and million messages per second.
 
-BLAKE3 mt takes no part in this use case: a 64-byte message is a call
+BLAKE3 official mt takes no part in this use case: a 64-byte message is a call
 to `update_rayon` that no program would make, and the crate has no
 batch entry point. The bencher writes no wrapper of its own around any
 contender; the contenders' own entry points are the whole of what it
@@ -151,14 +153,14 @@ interval above 1; the worst come first.
 
 ## Hash implementations
 
-The `BLAKE3` and `BLAKE3 servil st` contenders call the one-shot `hash`
+The `BLAKE3 official` and `BLAKE3 servil st` contenders call the one-shot `hash`
 function, which is single-threaded on every platform.
 BLAKE3 may still use SIMD parallelism within the calling thread; that
 is single-threaded execution, not operating-system-level
 multithreading.
 
 The blake3 crate is built with its `rayon` feature so that the
-`BLAKE3 mt` contender can call `Hasher::update_rayon`; that feature
+`BLAKE3 official mt` contender can call `Hasher::update_rayon`; that feature
 adds the method and leaves `blake3::hash` and every other API
 single-threaded.
 
@@ -208,7 +210,7 @@ kernels its tree uses for parent nodes (sixteen per group on SME2, the
 NEON hybrids below a group), and `kernel_report_many()` describes that
 by batch size.
 
-BLAKE3 mt is the crates.io crate's own multithreading, called as a
+BLAKE3 official mt is the crates.io crate's own multithreading, called as a
 program calls it by default: `Hasher::new().update_rayon(input)` on
 Rayon's global pool, which Rayon sizes to one thread per logical CPU.
 The method splits the tree recursively with `rayon::join` down to the
@@ -275,7 +277,7 @@ fork runs an input of one chunk or less through one call of its scalar
 kernel (every block including the root compression, with the state in
 registers throughout), two to fifteen chunks on integer + NEON hybrid
 kernels, and groups of sixteen on the SME2 kernel (16 KiB and above).
-BLAKE3 mt leaves the caller's thread above one SIMD width of chunks;
+BLAKE3 official mt leaves the caller's thread above one SIMD width of chunks;
 BLAKE3 servil mt can split over threads from 64 KiB, its fourth path, drawn
 as a triangle. SHA-256 and SHA-1DC run one path at every size.
 
@@ -428,7 +430,7 @@ says what the page shows and on which computer; "How to read this graph"
 opens a panel on the lines, bands, and dot shapes; "About this run" at
 the bottom opens section by section onto the machine, the run, the
 sources, the method behind each dot shape, and each hash's version. A
-hash of the run that takes no part in a plot (BLAKE3 mt has no batch
+hash of the run that takes no part in a plot (BLAKE3 official mt has no batch
 function over threads, ab-blake3 no way to take an input in pieces) is
 listed under that plot's legend in pale type, "not measured here", with
 the reason as a tooltip; each name's tooltip says what the hash is. A

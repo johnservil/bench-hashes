@@ -46,23 +46,21 @@ const CALIBRATION_PROBE_NS: u128 = 250_000;
 const TARGET_SAMPLE_NS: u128 = 1_000_000;
 
 /*
- * Cells with a long hash get a time budget. A cell whose single hash
- * takes LONG_HASH_NS or more (every sample is then one hash, tens of
- * milliseconds for the plateau sizes) is sampled in every LONG_EVERY-th
- * round, at an offset of its own so its samples still span the run, and
- * in every LONG_EVERY_UNSURE-th round while the 95% interval of its median
- * is wider than LONG_PRECISION_PERMILLE of the median (or it has fewer
- * than LONG_MIN_SAMPLES). Steady cells take a quarter of the samples,
- * noisy ones half: past that, two runs of the same code differ by more
- * than further samples would narrow. Measured on the VM: a full --all
- * run from 150 s to 80 s; its medians against two full-sample runs at
- * x0.9955 and x1.0072, inside the x0.9886 those two runs differ by.
+ * Every cell samples in a share of the rounds, spread over the run at an
+ * offset of its own, so drift and other programs' load reach every cell
+ * alike: a steady cell aims at STEADY_SAMPLES samples, one whose median is
+ * not yet known to within PRECISION_PERMILLE (or that has fewer than
+ * UNSURE_BELOW samples) at twice that. A cell whose single hash takes
+ * LONG_HASH_NS or more (every sample is then one hash, tens of
+ * milliseconds for the plateau sizes, itself an average over the input)
+ * aims at LONG_SAMPLES, twice that while unsure. The shares follow the
+ * run's rounds, so a quick run samples every cell in every round.
  */
 const LONG_HASH_NS: u128 = 4_000_000;
-const LONG_EVERY: usize = 4;
-const LONG_PRECISION_PERMILLE: u64 = 20;
-const LONG_EVERY_UNSURE: usize = 2;
-const LONG_MIN_SAMPLES: usize = 8;
+const STEADY_SAMPLES: usize = 24;
+const LONG_SAMPLES: usize = 8;
+const PRECISION_PERMILLE: u64 = 20;
+const UNSURE_BELOW: usize = 6;
 
 /// Points on the one-message axis, and on the many-messages axis.
 const INPUT_COUNT: usize = 27;
@@ -484,13 +482,13 @@ impl Algorithm {
     /// Command-line key, as in `--contenders blake3,sha256-cc`.
     fn key(self) -> &'static str {
         match self {
-            Self::Blake3 => "blake3",
+            Self::Blake3 => "blake3-official",
             Self::Sha256 => "sha256",
             Self::Sha1Dc => "sha1dc",
             Self::Blake3ServilSt => "blake3-servil-st",
             Self::Sha256CommonCrypto => "sha256-cc",
             Self::Sha256Ring => "sha256-ring",
-            Self::Blake3Rayon => "blake3-mt",
+            Self::Blake3Rayon => "blake3-official-mt",
             Self::Blake3ServilMt => "blake3-servil-mt",
             Self::AbBlake3 => "ab-blake3",
         }
@@ -523,16 +521,6 @@ impl Algorithm {
         }
     }
 
-    /*
-     * Contenders that run only when named on the command line. They are
-     * kept for direct comparison; measured on the machines this benchmark
-     * targets, another member of the same family beats them at every size,
-     * so a default or --all run gains nothing from them.
-     */
-    fn on_request_only(self) -> bool {
-        matches!(self, Self::Sha256CommonCrypto)
-    }
-
     /// Whether this contender can run in this build, or why not. A
     /// property of the target platform alone, so --list reads the same on
     /// every machine of one platform; machine capacity (CPU count, which
@@ -560,13 +548,13 @@ impl Algorithm {
 
     fn name(self) -> &'static str {
         match self {
-            Self::Blake3 => "BLAKE3",
+            Self::Blake3 => "BLAKE3 official",
             Self::Sha256 => "SHA-256",
             Self::Sha1Dc => "SHA-1DC",
             Self::Blake3ServilSt => "BLAKE3 servil st",
             Self::Sha256CommonCrypto => "SHA-256 CommonCrypto",
             Self::Sha256Ring => "SHA-256 ring",
-            Self::Blake3Rayon => "BLAKE3 mt",
+            Self::Blake3Rayon => "BLAKE3 official mt",
             Self::Blake3ServilMt => "BLAKE3 servil mt",
             Self::AbBlake3 => "ab-blake3",
         }
@@ -955,13 +943,12 @@ shared with a second copy of the same contender
 
   bench-hashes                     BLAKE3 servil st and mt
                                    and SHA-256 (sha2 and ring)
-  bench-hashes --all               every contender this machine can run,
-                                   apart from those marked on-request in --list
+  bench-hashes --all               every contender this machine can run
   bench-hashes --contenders K,...  exactly these, in this column order
   bench-hashes --list              contenders and their availability here
 
-Keys: blake3, blake3-mt, ab-blake3, blake3-servil-st, blake3-servil-mt, sha256,
-      sha256-ring, sha1dc; sha256-cc on request
+Keys: blake3-servil-st, blake3-servil-mt, sha256, sha256-ring,
+      blake3-official, blake3-official-mt, ab-blake3, sha1dc, sha256-cc
 
 A run takes a few minutes: every point, to 128 MiB inputs and batches of
 262144 messages, 96 rounds, the longest cells sampled until their medians
@@ -1062,11 +1049,10 @@ fn parse_selection(arguments: &[String]) -> (Selection, Vec<Algorithm>) {
         [flag] if flag == "--list" => {
             for algorithm in Algorithm::ALL {
                 let status = match algorithm.availability() {
-                    Ok(()) if algorithm.on_request_only() => "available; runs only when named with --contenders".to_owned(),
                     Ok(()) => "available".to_owned(),
                     Err(reason) => format!("unavailable: {reason}"),
                 };
-                println!("  {:<18} {:<22} {status}", algorithm.key(), algorithm.name());
+                println!("  {:<20} {:<22} {status}", algorithm.key(), algorithm.name());
             }
             std::process::exit(0);
         }
@@ -1107,7 +1093,7 @@ fn main() {
             /* SHA-1DC, the slowest by far, runs in quick runs only when named. */
             Algorithm::ALL
                 .into_iter()
-                .filter(|algorithm| algorithm.availability().is_ok() && !algorithm.on_request_only())
+                .filter(|algorithm| algorithm.availability().is_ok())
                 .filter(|&algorithm| !quick || algorithm != Algorithm::Sha1Dc)
                 .collect(),
             String::from("every contender available on this machine"),
@@ -1318,9 +1304,13 @@ fn measure_all(roster: &Roster, mut trace: Option<&mut ClockTrace>) -> (Results,
                 }
                 let iterations =
                     batch_iterations[algorithm_index][size_index];
-                if budgeted[algorithm_index][size_index]
-                    && !long_cell_wants_sample(&samples.solo[algorithm_index][size_index], round + size_index)
-                {
+                if !cell_wants_sample(
+                    &samples.solo[algorithm_index][size_index],
+                    &samples.shared[algorithm_index][size_index],
+                    round + size_index,
+                    roster.rounds,
+                    budgeted[algorithm_index][size_index],
+                ) {
                     continue;
                 }
 
@@ -2493,22 +2483,38 @@ impl LoadMonitor {
     }
 }
 
-/// Whether a cell under the time budget takes a sample this round:
-/// in every LONG_EVERY-th round (`slot` is the round plus the cell's own
-/// offset), and in every round while its median is not yet known to within
-/// LONG_PRECISION_PERMILLE.
-fn long_cell_wants_sample(taken: &[u64], slot: usize) -> bool {
-    if slot % LONG_EVERY == 0 || taken.len() < LONG_MIN_SAMPLES {
+/// Whether a cell takes a sample this round (`slot` is the round plus the
+/// cell's own offset): in every `every`-th round of a run of `rounds`,
+/// where `every` spreads STEADY_SAMPLES (or, for a `long` cell,
+/// LONG_SAMPLES) over the run, and in every other one of those rounds
+/// between while its solo or shared median is unsure.
+fn cell_wants_sample(solo: &[u64], shared: &[u64], slot: usize, rounds: usize, long: bool) -> bool {
+    let target = if long { LONG_SAMPLES } else { STEADY_SAMPLES };
+    let every = (rounds / target).max(1);
+    if slot % every == 0 {
         return true;
     }
-    if slot % LONG_EVERY_UNSURE != 0 {
-        return false;
+    let unsure_every = (every / 2).max(1);
+    slot % unsure_every == 0 && (median_unsure(solo) || median_unsure(shared))
+}
+
+/// Whether the median of `taken` is still unsure: fewer than UNSURE_BELOW
+/// samples, or a 95% interval wider than PRECISION_PERMILLE of the
+/// median. The interval is the order-statistic one (ranks n/2 ± 0.98 √n),
+/// a sort and two look-ups, cheap enough to ask of every cell each round;
+/// the report's intervals come from the bootstrap.
+fn median_unsure(taken: &[u64]) -> bool {
+    let n = taken.len();
+    if n < UNSURE_BELOW {
+        return true;
     }
     let mut sorted = taken.to_vec();
     sorted.sort_unstable();
+    let half_width = 0.98 * (n as f64).sqrt();
+    let low = ((n as f64 / 2.0 - half_width).floor().max(0.0)) as usize;
+    let high = ((n as f64 / 2.0 + half_width).ceil() as usize).min(n - 1);
     let median = median_of_sorted(&sorted);
-    let (low, high) = bootstrap_median_interval(&sorted);
-    (high - low) * 1000 > LONG_PRECISION_PERMILLE * median
+    (sorted[high] - sorted[low]) * 1000 > PRECISION_PERMILLE * median
 }
 
 /// (iterations per sample, nanoseconds per iteration measured).
@@ -3444,6 +3450,8 @@ fn checks(roster: &Roster, results: &Results, samples: &RunSamples) -> (Vec<Stri
 /// Column heading that fits the 13-character summary columns.
 fn column_heading(algorithm: Algorithm) -> &'static str {
     match algorithm {
+        Algorithm::Blake3 => "B3 official",
+        Algorithm::Blake3Rayon => "B3 official mt",
         Algorithm::Sha256CommonCrypto => "SHA-256 CC",
         Algorithm::Sha256Ring => "SHA-256 ring",
         Algorithm::Blake3ServilSt => "B3 servil st",

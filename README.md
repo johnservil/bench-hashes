@@ -66,13 +66,18 @@ the machine, the hashes' versions, and the method behind each dot shape.
 The contenders:
 
 - **BLAKE3 servil mt**: [a fork](https://github.com/johnservil/BLAKE3) of
-  the official BLAKE3 Rust crate, with extra kernels for Apple M4-class
+  the official BLAKE3 Rust crate, with extra code for Apple M4-class
   chips, spreading large inputs over all your CPU cores. On other CPUs it
-  runs the official crate's kernels.
+  runs the official crate's code.
 - **BLAKE3 servil st**: the same on one thread.
 - **SHA-256** (the `sha2` crate) and **SHA-256 ring** (the `ring`
   crate): SHA-256 with the CPU's SHA-256 instructions where it has them.
   `sha2` is faster for the smallest inputs, `ring` from about 256 bytes.
+
+`cargo run --release -- --all` adds every other hash the benchmark knows
+(the official BLAKE3 crate on one thread and on its thread pool,
+ab-blake3, SHA-1DC, and on Apple CommonCrypto's SHA-256) and takes
+longer; `--contenders` picks any set by name (`--list` shows the names).
 
 ## Share your results
 

@@ -132,7 +132,7 @@ grows by about half). It exposes what one-shot calls hide: first quick
 run (VM), BLAKE3 servil through `Hasher` at 3 KiB 0.53 ns/B against 0.33
 one-shot, 3839 B 0.58 against 0.34, 7935 B 0.44 against 0.27 (the hasher
 cannot plan the whole input, and holds the last chunk back until
-finalize); BLAKE3 mt's `update_rayon` per 64 KiB piece 2.7-7 ns/B; the
+finalize); BLAKE3 official mt's `update_rayon` per 64 KiB piece 2.7-7 ns/B; the
 fork's `update_multithreaded` 0.09-0.14 from 64 KiB. `hash_batch` takes
 the `Point` (use case and message count) so a stream and a message of one
 size are told apart; `--points` names a streamed point `streamed LABEL`.
@@ -301,7 +301,7 @@ automatically.
 
     cargo run --release -- --all
     cargo run --release -- --quick --all
-    cargo run --release -- --contenders blake3,blake3-servil-mt
+    cargo run --release -- --contenders blake3-official,blake3-servil-mt
 
 Results are `benchmark-results/{CPU}.{OS}/bench-hashes.result.txt`,
 `.graph.svg`, and `.samples.tsv`. In the VM prefix commands with
@@ -313,3 +313,14 @@ The fork is a git dependency at the commit `Cargo.lock` pins; with
 it is the enclosing checkout, and its provenance records that
 checkout's commit and working-tree fingerprint. Keep that provenance
 with each measurement.
+
+**The sampling schedule, thinned (September 25, 2026).** Every cell samples
+in a share of the rounds at its own offset: a steady cell aims at 24
+samples of the 96 rounds, one whose median is unsure (a 95% order-statistic
+interval wider than 2%, or fewer than 6 samples) at 48; a long cell (one
+hash of 4 ms or more) at 8, 16 while unsure. VM, default roster, runs old /
+new / new / old: 99 s, 48 s, 48 s, 107 s. Cell medians, |log ratio|, solo:
+old against old median 4.3% (90th percentile 7.1%), new against new 1.1%
+(3.4%), new against old 1.5% (4.4-4.9%); shared alike (2.6%, 0.9%, 1.0-1.2%);
+new medians 0.3-0.6% slower on average, inside the noise; two-speed cells
+23-25 against 19-21. Most VM cells stay unsure at 2% and take 48.
