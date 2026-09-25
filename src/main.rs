@@ -3700,6 +3700,11 @@ const X_INSET: f64 = 40.0;
 /// Vertical room per right-hand label (name and detail line). Eight
 /// contenders, the most a run takes, stack in 7 × 34 px, inside a plot.
 const SERIES_LABEL_GAP: f64 = 34.0;
+/// The highest a legend name sits: this far below the plot's top, level
+/// with its top grid line, so the stack stays clear of the plot's title
+/// and of the header above it. Nine names at SERIES_LABEL_GAP fit between
+/// here and the bottom.
+const LABEL_TOP_ROOM: f64 = 4.0;
 /// Fixed shape slots before each right-hand name, so names align across
 /// contenders with different shape counts. Four covers every contender.
 const SWATCH_SLOTS: usize = 4;
@@ -3874,8 +3879,12 @@ impl Plot {
          * stack shifts up by the overrun. The script applies the same rule.
          */
         let overrun = (label_slots.last().map(|slot| slot.1).unwrap_or(0.0) + 20.0 - plot.bottom).max(0.0);
+        /* ...and never above the plot's top: from there the names space out again downward. */
+        let mut previous = f64::NEG_INFINITY;
         for (algorithm_index, label_y) in label_slots {
-            plot.label_y[algorithm_index] = Some(label_y - overrun);
+            let y = (label_y - overrun).max(plot.top + LABEL_TOP_ROOM).max(previous + SERIES_LABEL_GAP);
+            plot.label_y[algorithm_index] = Some(y);
+            previous = y;
         }
         plot
     }
@@ -5425,7 +5434,7 @@ fn write_interaction_script(
     }
     write!(
         data,
-        "],\"sharedProv\":{shared_count},\"svgWidth\":{SVG_WIDTH:.0},\"plotLeft\":{PLOT_LEFT},\"plotRight\":{PLOT_RIGHT},\"xInset\":{X_INSET},\"labelGap\":{SERIES_LABEL_GAP},\"rounds\":{},\"labelAbove\":{VALUE_LABEL_ABOVE},\"labelBelow\":{VALUE_LABEL_BELOW},\"labelHeight\":{VALUE_LABEL_HEIGHT},\"valueSpacing\":{VALUE_COLUMN_SPACING},\"valueRoom\":{VALUE_COLUMN_ROOM},\"spreadNoticeable\":0.{SPREAD_NOTICEABLE_PERMILLE:03},\"spreadWide\":0.{SPREAD_WIDE_PERMILLE:03},\"provTop\":{:.1},\"provLine\":{PROVENANCE_LINE_HEIGHT},\"stripLeft\":{ZOOM_STRIP_LEFT},\"betterX\":{BETTER_ARROW_X},\"stripRight\":{ZOOM_STRIP_RIGHT}}}",
+        "],\"sharedProv\":{shared_count},\"svgWidth\":{SVG_WIDTH:.0},\"plotLeft\":{PLOT_LEFT},\"plotRight\":{PLOT_RIGHT},\"xInset\":{X_INSET},\"labelGap\":{SERIES_LABEL_GAP},\"labelTopRoom\":{LABEL_TOP_ROOM},\"rounds\":{},\"labelAbove\":{VALUE_LABEL_ABOVE},\"labelBelow\":{VALUE_LABEL_BELOW},\"labelHeight\":{VALUE_LABEL_HEIGHT},\"valueSpacing\":{VALUE_COLUMN_SPACING},\"valueRoom\":{VALUE_COLUMN_ROOM},\"spreadNoticeable\":0.{SPREAD_NOTICEABLE_PERMILLE:03},\"spreadWide\":0.{SPREAD_WIDE_PERMILLE:03},\"provTop\":{:.1},\"provLine\":{PROVENANCE_LINE_HEIGHT},\"stripLeft\":{ZOOM_STRIP_LEFT},\"betterX\":{BETTER_ARROW_X},\"stripRight\":{ZOOM_STRIP_RIGHT}}}",
         roster.rounds,
         plots[0].provenance_top,
     )
@@ -5905,9 +5914,13 @@ function relayoutPlot(p) {
     slots[k][1] = Math.max(slots[k][1], slots[k - 1][1] + DATA.labelGap);
   }
   const overrun = Math.max(0, slots[slots.length - 1][1] + 20 - plot.bottom);
-  for (const [i, y] of slots) {
+  let previous = -Infinity;
+  for (const [i, y0] of slots) {
+    /* Never above the plot's top: from there the names space out again downward. */
+    const y = Math.max(y0 - overrun, plot.top + DATA.labelTopRoom, previous + DATA.labelGap);
+    previous = y;
     const lab = document.getElementById("series-" + p + "-" + i).querySelector(".series-label");
-    lab.setAttribute("transform", `translate(0 ${(y - overrun).toFixed(2)})`);
+    lab.setAttribute("transform", `translate(0 ${y.toFixed(2)})`);
     const detail = lab.querySelector(".series-detail");
     const s = plot.series[i];
     detail.textContent = s.two[last]
