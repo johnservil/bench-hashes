@@ -8,10 +8,10 @@ Every run measures each contender in three use cases and two scenarios.
 from 64 B to 128 MiB, reported per byte. **Many messages per call**: a
 call hashes a batch of 64-byte messages, at twenty-four batch sizes from
 1 to 262144 messages, reported per message. **Streamed**: the same
-inputs as one message, produced in 64 KiB pieces (the last one
-shorter), each copied as a read would copy it and fed to the contender's
-incremental API, then finalized, so the implementation never learns the
-total size in advance; reported per byte. **Solo**: one copy of the
+inputs as one message, fed to the contender's incremental API (an update
+per 64 KiB piece, the last one shorter, then finalize), so the
+implementation never learns the total size in advance; reported per
+byte. **Solo**: one copy of the
 contender, the machine otherwise idle. **Shared**: two copies at once.
 The report and the graph show each use case once per scenario, solo
 first.
@@ -64,20 +64,15 @@ feel it.
 ## The streamed use case
 
 A program that reads a file or a socket hands a hash its input piece by
-piece. The streamed axis measures that at the one-message sizes, with
-pieces of 64 KiB (a common read buffer): an input below 64 KiB is one
-piece, a larger one a piece per 64 KiB. Producing each piece costs one
-copy, as a read into memory does, and every contender pays it, timed.
-The synchronous incremental APIs get each piece copied into a 64 KiB
-buffer and then hash it, so producing and hashing take turns
-(`Hasher::update` in crates.io BLAKE3, `update_rayon` for BLAKE3 mt,
-`Digest::update` in sha2 and sha1-checked, ring's `Context::update`,
-CommonCrypto's `CC_SHA256_Update`). The servil fork's `Stream` takes the
-copy straight into its own buffers and hashes each full one on another
-thread while the next pieces arrive (`Stream::new` for BLAKE3 servil,
-`Stream::new_multithreaded` for BLAKE3 servil mt). ab-blake3 has no
-incremental API and sits out. The expected digests are the one-message
-ones. Not knowing the total costs where a one-shot
+piece: `update` per read, then `finalize`. The streamed axis measures
+that at the one-message sizes, with pieces of 64 KiB (a common read
+buffer): an input below 64 KiB is one update, a larger one an update per
+piece. Every contender takes part through its incremental API
+(`Hasher::update` in both BLAKE3 crates, `update_rayon` for BLAKE3 mt,
+`Hasher::update_multithreaded` for BLAKE3 servil mt, `Digest::update`
+in sha2 and sha1-checked, ring's `Context::update`, CommonCrypto's
+`CC_SHA256_Update`) but ab-blake3, which has none. The expected digests
+are the one-message ones. Not knowing the total costs where a one-shot
 call plans for it: a BLAKE3 `Hasher` hashes the whole subtrees it can
 and holds back the last chunk until `finalize`.
 
