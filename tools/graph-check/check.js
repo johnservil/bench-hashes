@@ -95,6 +95,14 @@ function checkLayout(tag) {
       && Math.abs(+w.document.getElementById("zoom-guide-to").getAttribute("x2") - R) < 0.1, `${tag}: the guides end at the plots' axis ends`);
   }
   checkControls("initial");
+  // The better arrows: the script draws what the static render drew, and flips with the unit.
+  const arrows = () => D.plots.map((_, p) => w.document.getElementById(`y-better-${p}`).getAttribute("d"));
+  const staticArrows = arrows();
+  D.plots.forEach((_, p) => w.betterArrow(p, w.document.getElementById(`y-title-${p}`).textContent, true));
+  check(arrows().every((d, p) => d === staticArrows[p]), "the script's better arrows match the static render's");
+  const headY = d => +d.match(/M[\d.]+ ([\d.]+) L[\d.]+ ([\d.]+)/).slice(1)[1];
+  const tailY = d => +d.match(/M[\d.]+ ([\d.]+)/)[1];
+  check(arrows().every(d => headY(d) < tailY(d)), "in rate the better arrows point up");
   check(w.document.querySelector("svg").lastElementChild.id === "sticky", "the header draws last, over the plots");
   console.log("ALLB", T.ALLB.length, "values;", range());
   // Step the lower end up five points.
@@ -114,6 +122,7 @@ function checkLayout(tag) {
   w.zoomAll(); await sleep(700);
   w.zoomStep("from", 3); w.zoomStep("to", -3); await sleep(100); w.flipUnit(); await sleep(900);
   checkLayout("steps + unit"); checkControls("steps + unit");
+  check(arrows().every(d => headY(d) > tailY(d)), "in time the better arrows point down");
   console.log("steps + unit:", range());
   // Drag each grip: its end follows the pointer to the nearest input, never past the other end.
   w.zoomAll(); await sleep(700);

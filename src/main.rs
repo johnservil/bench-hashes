@@ -3967,6 +3967,7 @@ fn generate_svg(
     .plot-title { font-size: 14px; font-weight: 700; fill: #333333; }
     .plot-sub { font-size: 11px; fill: #8a8a8a; }
     .axis-title { font-size: 12px; fill: #666666; }
+    .better-arrow { fill: none; stroke: #8a8a8a; stroke-width: 1.2; stroke-linecap: round; stroke-linejoin: round; }
     .tick-label { font-size: 11px; fill: #777777; }
     .size-label { font-size: 11px; font-weight: 600; fill: #333333; }
     .size-tick { stroke: #bbbbbb; stroke-width: 1; }
@@ -4388,12 +4389,25 @@ fn write_plot(svg: &mut String, plot: &Plot, roster: &Roster, results: &Results,
     }
     writeln!(svg, "  </g>").unwrap();
 
+    let y_title = format!("{} (log scale) · higher is better", plot.use_case.rate_unit_long());
     writeln!(
         svg,
-        r##"  <text id="y-title-{p}" x="30" y="{:.1}" class="axis-title" text-anchor="middle" transform="rotate(-90 30 {:.1})">{} (log scale) · higher is better</text>"##,
+        r##"  <text id="y-title-{p}" x="30" y="{:.1}" class="axis-title" text-anchor="middle" transform="rotate(-90 30 {:.1})">{}</text>"##,
         (top + bottom) / 2.0,
         (top + bottom) / 2.0,
-        plot.use_case.rate_unit_long(),
+        xml_escape(&y_title),
+    )
+        .unwrap();
+    /*
+     * An arrow under "higher is better" (or "lower is better"), parallel to
+     * the title and on the side below its words as they read, pointing the
+     * way that is better. The script's betterArrow draws the same.
+     */
+    let (y0, y1) = better_arrow_span(&y_title, (top + bottom) / 2.0);
+    writeln!(
+        svg,
+        r##"  <path id="y-better-{p}" class="better-arrow" d="{}"/>"##,
+        better_arrow_path(y0, y1, true),
     )
         .unwrap();
 
@@ -4741,6 +4755,29 @@ fn write_plot(svg: &mut String, plot: &Plot, roster: &Roster, results: &Results,
         writeln!(svg, "  </g>").unwrap();
     }
 }
+
+/// Screen y from and to of the phrase after the title's last " · ", for
+/// the y title `title` centred at `mid` and rotated to read upward, at the
+/// axis title's 12 px font (about 6.2 px a character; the script's
+/// betterArrow uses the same figure).
+fn better_arrow_span(title: &str, mid: f64) -> (f64, f64) {
+    let width = |t: &str| t.chars().count() as f64 * 6.2;
+    let phrase = title.rsplit(" · ").next().unwrap_or(title);
+    let end = mid - width(title) / 2.0;
+    (end + width(phrase), end)
+}
+
+/// The arrow beside the y title from `y0` (the phrase's start) to `y1` (its
+/// end, the top): its head at the top when higher is better, else at the
+/// bottom.
+fn better_arrow_path(y0: f64, y1: f64, up: bool) -> String {
+    let x = BETTER_ARROW_X;
+    let (tail, head, dir) = if up { (y0, y1, 1.0) } else { (y1, y0, -1.0) };
+    format!("M{x:.1} {tail:.1} L{x:.1} {head:.1} M{:.1} {:.1} L{x:.1} {head:.1} L{:.1} {:.1}", x - 3.5, head + 5.0 * dir, x + 3.5, head + 5.0 * dir)
+}
+
+/// The arrow's x: beside the rotated y title, on the side below its words.
+const BETTER_ARROW_X: f64 = 37.0;
 
 /// Why a hash of the run takes no part in a plot, for the tooltip on its
 /// pale name there.
@@ -5291,7 +5328,7 @@ fn write_interaction_script(
     }
     write!(
         data,
-        "],\"sharedProv\":{shared_count},\"svgWidth\":{SVG_WIDTH:.0},\"plotLeft\":{PLOT_LEFT},\"plotRight\":{PLOT_RIGHT},\"xInset\":{X_INSET},\"labelGap\":{SERIES_LABEL_GAP},\"rounds\":{},\"labelAbove\":{VALUE_LABEL_ABOVE},\"labelBelow\":{VALUE_LABEL_BELOW},\"labelHeight\":{VALUE_LABEL_HEIGHT},\"valueSpacing\":{VALUE_COLUMN_SPACING},\"valueRoom\":{VALUE_COLUMN_ROOM},\"spreadNoticeable\":0.{SPREAD_NOTICEABLE_PERMILLE:03},\"spreadWide\":0.{SPREAD_WIDE_PERMILLE:03},\"provTop\":{:.1},\"provLine\":{PROVENANCE_LINE_HEIGHT},\"stripLeft\":{ZOOM_STRIP_LEFT},\"stripRight\":{ZOOM_STRIP_RIGHT}}}",
+        "],\"sharedProv\":{shared_count},\"svgWidth\":{SVG_WIDTH:.0},\"plotLeft\":{PLOT_LEFT},\"plotRight\":{PLOT_RIGHT},\"xInset\":{X_INSET},\"labelGap\":{SERIES_LABEL_GAP},\"rounds\":{},\"labelAbove\":{VALUE_LABEL_ABOVE},\"labelBelow\":{VALUE_LABEL_BELOW},\"labelHeight\":{VALUE_LABEL_HEIGHT},\"valueSpacing\":{VALUE_COLUMN_SPACING},\"valueRoom\":{VALUE_COLUMN_ROOM},\"spreadNoticeable\":0.{SPREAD_NOTICEABLE_PERMILLE:03},\"spreadWide\":0.{SPREAD_WIDE_PERMILLE:03},\"provTop\":{:.1},\"provLine\":{PROVENANCE_LINE_HEIGHT},\"stripLeft\":{ZOOM_STRIP_LEFT},\"betterX\":{BETTER_ARROW_X},\"stripRight\":{ZOOM_STRIP_RIGHT}}}",
         roster.rounds,
         plots[0].provenance_top,
     )
@@ -5368,6 +5405,17 @@ function zoomStep(end, delta) {
   if (end === "from") setZoom(zFrom + delta, zTo); else setZoom(zFrom, zTo + delta);
 }
 function zoomAll() { setZoom(0, ALLB.length - 1); }
+/* The arrow beside a y title, under its "better" phrase, as the Rust side's better_arrow_path draws it. */
+function betterArrow(p, title, up) {
+  const width = t => [...t].length * 6.2;
+  const phrase = title.split(" · ").pop();
+  const mid = (DATA.plots[p].top + DATA.plots[p].bottom) / 2, end = mid - width(title) / 2;
+  const y0 = end + width(phrase), y1 = end, x = DATA.betterX;
+  const [tail, head, dir] = up ? [y0, y1, 1] : [y1, y0, -1];
+  const f = v => v.toFixed(1);
+  document.getElementById("y-better-" + p).setAttribute("d",
+    `M${f(x)} ${f(tail)} L${f(x)} ${f(head)} M${f(x - 3.5)} ${f(head + 5 * dir)} L${f(x)} ${f(head)} L${f(x + 3.5)} ${f(head + 5 * dir)}`);
+}
 /* The door under the title opens and closes the panel on how to read the graph. */
 function toggleHowto() {
   const panel = document.getElementById("howto"), open = panel.style.display === "none";
@@ -5488,8 +5536,9 @@ function setUnit(u) {
     /* Text follows the unit once the plot is past halfway. */
     unit = blend >= 0.5 ? "gbps" : "ns";
     DATA.plots.forEach((plot, p) => {
-      document.getElementById("y-title-" + p).textContent =
-        unit === "ns" ? plot.timeLong + " (log scale) · lower is better" : plot.rateLong + " (log scale) · higher is better";
+      const title = unit === "ns" ? plot.timeLong + " (log scale) · lower is better" : plot.rateLong + " (log scale) · higher is better";
+      document.getElementById("y-title-" + p).textContent = title;
+      betterArrow(p, title, unit !== "ns");
       outgoing[p].setAttribute("opacity", (1 - e).toFixed(3));
       incoming[p].setAttribute("opacity", e.toFixed(3));
     });
