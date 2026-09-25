@@ -417,8 +417,9 @@ range shown. The strip spans the plots' own x range, so at the full range
 each tick stands over its input in the plots. The strip holds
 no numbers, since the plots' axes name their inputs in bytes or messages.
 Two arrows at its left end step the range's start by one input, two at its
-right end its end, and "all" restores every input; the arrows stay where
-they are. The header (title, strip, and rate/time switch) stays at the top
+right end its end, and "all" restores every input; each shows only when
+it can act (at the full range the outward arrows and "all" are absent) and
+sits in the same place whenever it shows. The header (title, strip, and rate/time switch) stays at the top
 of the window while the page scrolls.
 
 The page is written for three readers at once: a newcomer who holds only

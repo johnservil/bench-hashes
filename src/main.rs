@@ -3975,7 +3975,7 @@ fn generate_svg(
     .zoom-btn rect { fill: #f1f1ee; stroke: #d2d2cd; stroke-width: 1; }
     .zoom-btn text { font-size: 13px; font-weight: 600; fill: #333333; }
     .zoom-btn:hover rect { fill: #e4e4de; }
-    .zoom-btn[data-off="true"] { opacity: 0.35; cursor: default; }
+    .zoom-btn[data-off="true"] { display: none; }
     .zoom-track { fill: #e6e6e1; }
     .zoom-track-hit { fill: transparent; }
     .door { fill: #5b21b6; cursor: pointer; }
@@ -4125,10 +4125,12 @@ fn generate_svg(
     let (lo, hi) = ((all_bytes[0] as f64).log2(), (*all_bytes.last().expect("a graph has points") as f64).log2());
     let strip_x = |bytes: usize| ZOOM_STRIP_LEFT + ((bytes as f64).log2() - lo) / (hi - lo) * (ZOOM_STRIP_RIGHT - ZOOM_STRIP_LEFT);
     writeln!(svg, r##"  <g id="zoom" transform="translate(0 {:.1})">"##, ZOOM_ROW_TOP).unwrap();
+    /* A button shows only when it can act; the page opens at the full range, where the outward arrows and "all" have nothing to do. */
     let button = |svg: &mut String, id: &str, x: f64, width: f64, glyph: &str, action: &str, title: &str| {
+        let off = matches!(id, "zoom-from-dec" | "zoom-to-inc" | "zoom-all");
         writeln!(
             svg,
-            r##"    <g class="zoom-btn" id="{id}" transform="translate({x:.1} 0)" onclick="event.stopPropagation(); {action}"><title>{title}</title><rect x="0" y="0" width="{width:.1}" height="18" rx="4"/><text x="{:.1}" y="13" text-anchor="middle">{glyph}</text></g>"##,
+            r##"    <g class="zoom-btn" id="{id}" data-off="{off}" transform="translate({x:.1} 0)" onclick="event.stopPropagation(); {action}"><title>{title}</title><rect x="0" y="0" width="{width:.1}" height="18" rx="4"/><text x="{:.1}" y="13" text-anchor="middle">{glyph}</text></g>"##,
             width / 2.0,
         )
         .unwrap();

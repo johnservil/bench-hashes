@@ -86,12 +86,21 @@ function checkLayout(tag) {
   const lg = v => Math.log2(v), a = lg(T.ALLB[0]), b = lg(T.ALLB[T.ALLB.length - 1]);
   const stripX = v => D.stripLeft + (lg(v) - a) / (b - a) * (D.stripRight - D.stripLeft);
   function checkControls(tag) {
+    const offs = buttons.map(id => w.document.getElementById(id).getAttribute("data-off") === "true");
+    const last = T.ALLB.length - 1;
+    const want = [T.zFrom === 0, T.zFrom + 1 >= T.zTo, T.zTo - 1 <= T.zFrom, T.zTo === last, T.zFrom === 0 && T.zTo === last];
+    check(offs.every((o, i) => o === want[i]), `${tag}: exactly the buttons that can act show (${offs})`);
     check(buttons.every((id, i) => Math.abs(tx(id) - buttonsAt[i]) < 0.01), `${tag}: the zoom buttons never move`);
     const band = w.document.getElementById("zoom-band"), x0 = +band.getAttribute("x") + 3, x1 = x0 + +band.getAttribute("width") - 6;
     check(Math.abs(x0 - stripX(T.ALLB[T.zFrom])) < 0.1 && Math.abs(x1 - stripX(T.ALLB[T.zTo])) < 0.1, `${tag}: the band covers ${range()}`);
     check(Math.abs(stripX(T.ALLB[0]) - L) < 0.1 && Math.abs(stripX(T.ALLB[T.ALLB.length - 1]) - R) < 0.1, `${tag}: the strip spans the plots' inputs`);
   }
   checkControls("initial");
+  {
+    const staticDom = new JSDOM(`<!DOCTYPE html><html><body>${markup}</body></html>`);
+    check(buttons.every(id => staticDom.window.document.getElementById(id).getAttribute("data-off") === w.document.getElementById(id).getAttribute("data-off")),
+      "the static render hides the same buttons as the script at the full range");
+  }
   // The better arrows: the script draws what the static render drew, and flips with the unit.
   const arrows = () => D.plots.map((_, p) => w.document.getElementById(`y-better-${p}`).getAttribute("d"));
   const staticArrows = arrows();
