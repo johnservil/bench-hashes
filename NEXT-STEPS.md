@@ -8,41 +8,39 @@ principles are in both repositories' `AGENTS.md`; the fork's hardware
 facts, design, and rejected ideas are in its `NOTES-servil.md` (read it
 before touching kernels or the pool); this repository's are in `NOTES.md`.
 
-## Resume here (checkpoint, September 25, 2026, midday)
+## Resume here (checkpoint, September 25, 2026, afternoon)
 
-Since the morning checkpoint (fork `servil` 1508573, pinned; records on it
-with the new streamed use case, both machines quiet):
+State: fork `servil` f70c758, pinned; records on it (bench-hashes 1fb6bcf),
+both machines quiet.
 
-- **The SME2 thread** (0366e48): a multithreaded call that gets the SME2
-  turn streams a prefix sized to its speed on SME2, beside the NEON pool.
-  Mac: 2 threads -20 to -25%, 4 threads -8 to -14%, all level to -7%; two
-  threads now beat one everywhere. **Two SME units are reachable** (two
-  raw SME2 threads 2.0-2.4x one): a second SME2 thread is the next idea.
-- **`Stream`** (59ad5c1 + c242b2e): hashing behind the caller, filled in
-  place (`buffer()`, `filled(n)`) or by copy (`update`, `io::Write`), four
-  1 MiB buffers, back-pressure by blocking `buffer()`; `Stream::new` and
-  `Stream::new_multithreaded`. The benchmark's streamed use case now
-  measures it (Zooko: the Hasher's take-turns streaming is no longer
-  supported for streams); every contender's producer copies each 64 KiB
-  piece, timed. Mac streamed: servil 8 MiB 0.157 ns/B, servil mt 0.041.
-- Two slips, fixed: 59ad5c1 shipped `stream.rs` without its module line
-  (bench-hashes main failed to build from 11:09 to 11:18 UTC, reverted, then
-  re-applied), and the Apple-only CommonCrypto path failed to build on the
-  Mac after 79cc466 (fixed in 83c8494). Lesson: check a commit's contents
-  (`git show --stat`) before promoting, and build the Mac path (a runner
-  job) before pushing bench-hashes changes that touch Apple-only code.
+- **Streaming scope** (Zooko): input in memory goes to one call (`hash`,
+  `hash_multithreaded`); input that arrives goes to a `Stream`, each read
+  landing in its buffers (`update_reader`, or `buffer()`/`filled(n)`).
+  `Hasher::update_multithreaded` and `Stream`'s copying `update`/`io::Write`
+  are gone from the API. The streamed use case reads each piece as a memory
+  copy (the cheapest read) for every contender; servil's reads go through
+  `buffer()`/`filled()`.
+- **Short streams**: servil now leads BLAKE3 official at every streamed size
+  (128 B had been lost by 1-3%; 87c3bbf).
+- **Schedule**: steady cells 24 samples, unsure 48, long cells 8/16; VM
+  default roster 48 s against 99-107 s, medians inside the old schedule's
+  run-to-run spread (NOTES.md). Mac `--all` with nine contenders: 124 s.
+- **Roster**: the default is the four standard contenders; `--all` is
+  every contender the build can run (SHA-1DC and CommonCrypto included);
+  `--contenders` picks. The crates.io crate is BLAKE3 official
+  (`blake3-official`, `blake3-official-mt`).
+- **Graph**: the band drags by its ends or whole, precisely (slow travel at
+  a third, 3 px hysteresis, lit ticks); chips show and hide plots by
+  scenario and use case; the better arrows are measured; the legend stays
+  inside its plot. The M3 Ultra result is unpublished (old Hasher streams).
 
 Next, in order:
 
-1. Stream: the short streams' pipeline fill and drain (VM: servil mt
-   streamed 2-8 MiB two-speed and slower than 1 MiB); the stream thread's
-   wake per stream; the per-call overhead at 64 B (0.91 ns/B against
-   hash()'s 0.70).
-2. A second SME2 thread in the pool (the second P-cluster's SME unit).
-3. For Zooko: the `efficient` module proposal (just below); whether
-   to deprecate or document `Hasher` for streams.
-4. Open from before: hash(256 KiB)'s partial slow state; the VM's
-   per-process two speeds.
+1. The text report's three-reader pass (CHECKS and TWO SPEEDS read as the
+   maintainer's).
+2. A second SME2 thread in the pool (two SME units reachable, job 187).
+3. Open: hash(256 KiB)'s partial slow state; the VM's per-process two
+   speeds; shared streamed 64 B two-speed on the VM.
 
 **The `efficient` module, as measured, for Zooko to decide** (fork NOTES,
 "Energy per byte"): SME2 is the cheapest kernel per byte, so an efficient
