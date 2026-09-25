@@ -1680,10 +1680,11 @@ fn hash_batch(
  * The streaming use case: one message produced in PIECE_LEN pieces, each
  * copied from `input` as a read would (one copy when the message is
  * shorter, none when empty), then finalized; one digest per pass into
- * `consume`. The synchronous incremental APIs get each piece copied into a
- * PIECE_LEN buffer and then hash it, so producing and hashing take turns;
- * the servil fork's Stream takes the copy straight into its own buffers
- * and hashes full ones on another thread while the next pieces arrive.
+ * `consume`. The copy stands for a read, the cheapest one there is. The
+ * synchronous incremental APIs get each piece read into a PIECE_LEN buffer
+ * and then hash it, so reading and hashing take turns; the servil fork's
+ * Stream has each read land in its own buffer (buffer(), filled()) and
+ * hashes full ones on another thread while the next pieces arrive.
  */
 fn hash_stream(algorithm: Algorithm, input: &[u8], iterations: usize, consume: impl FnMut(&[u8])) {
     use sha2::Digest as _;
@@ -1751,14 +1752,21 @@ fn each_stream<D: AsRef<[u8]>>(
     }
 }
 
-/// `iterations` streams of `input` into a fresh servil Stream from `new`,
-/// each PIECE_LEN piece copied into the stream's own buffers.
+/// `iterations` streams of `input` into a fresh servil Stream from `new`:
+/// each PIECE_LEN piece read (copied) straight into the stream's buffer,
+/// through buffer() and filled(), as a program's read would land there.
 #[inline(always)]
 fn each_stream_into(input: &[u8], iterations: usize, new: fn() -> blake3_servil::Stream, mut consume: impl FnMut(&[u8])) {
     for _ in 0..iterations {
         let mut stream = new();
-        for piece in black_box(input).chunks(PIECE_LEN) {
-            stream.update(piece);
+        for mut piece in black_box(input).chunks(PIECE_LEN) {
+            while !piece.is_empty() {
+                let buffer = stream.buffer();
+                let n = buffer.len().min(piece.len());
+                buffer[..n].copy_from_slice(&piece[..n]);
+                stream.filled(n);
+                piece = &piece[n..];
+            }
         }
         consume(stream.finalize().as_bytes());
     }
