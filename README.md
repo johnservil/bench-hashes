@@ -11,9 +11,6 @@ Results so far:
 
 - [Apple M4 Max, macOS](https://johnservil.github.io/bench-hashes/benchmark-results/AppleM4Max.darwin25/bench-hashes.graph.svg)
 - [A Linux VM on that Mac](https://johnservil.github.io/bench-hashes/benchmark-results/aarch64.linux618520virt/bench-hashes.graph.svg)
-- [Apple M3 Ultra, macOS](https://johnservil.github.io/bench-hashes/benchmark-results/AppleM3Ultra.darwin25/bench-hashes.graph.svg)
-  (a user's run of September 25, 2026, on an earlier version: fork
-  b74b59e, bench-hashes d28326e)
 
 ## Run it on your computer
 
