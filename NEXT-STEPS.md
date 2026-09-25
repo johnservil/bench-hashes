@@ -39,10 +39,20 @@ Next, in order:
    wake per stream; the per-call overhead at 64 B (0.91 ns/B against
    hash()'s 0.70).
 2. A second SME2 thread in the pool (the second P-cluster's SME unit).
-3. For Zooko: the `efficient` module proposal (below, unchanged); whether
+3. For Zooko: the `efficient` module proposal (just below); whether
    to deprecate or document `Hasher` for streams.
 4. Open from before: hash(256 KiB)'s partial slow state; the VM's
    per-process two speeds.
+
+**The `efficient` module, as measured, for Zooko to decide** (fork NOTES,
+"Energy per byte"): SME2 is the cheapest kernel per byte, so an efficient
+mode keeps it; its single-threaded calls would equal today's, apart from
+the "minimax" NEON plans for 2-15 KiB (E-core cycles -16-24%, P +17%). What
+differs is multithreading: the caller on SME2 with the E-cores' NEON
+helpers at background QoS hashed 8 MiB 10-27% faster than hash() for a
+third less energy, level at 1 MiB, slower below; it needs a second,
+sleeping pool. Also to weigh: the pool's idle workers poll through a call,
+which doubles the energy of calls with a small thread budget.
 
 ## Where things stand (September 25, 2026)
 
