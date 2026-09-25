@@ -18,7 +18,8 @@ first.
 
 ## Contenders
 
-A default run measures BLAKE3 servil, single-threaded and multithreaded,
+A default run measures BLAKE3 servil, multithreaded (servil mt) and
+single-threaded (servil st),
 and SHA-256 from two crates, sha2 and ring, since each is the faster
 SHA-256 at some sizes. `--all` adds every other contender the machine can
 run: the crates.io BLAKE3 crate, single-threaded and on its Rayon pool
@@ -74,7 +75,7 @@ buffer and then hash it, so producing and hashing take turns
 `Digest::update` in sha2 and sha1-checked, ring's `Context::update`,
 CommonCrypto's `CC_SHA256_Update`). The servil fork's `Stream` takes the
 copy straight into its own buffers and hashes each full one on another
-thread while the next pieces arrive (`Stream::new` for BLAKE3 servil,
+thread while the next pieces arrive (`Stream::new` for BLAKE3 servil st,
 `Stream::new_multithreaded` for BLAKE3 servil mt). ab-blake3 has no
 incremental API and sits out. The expected digests are the one-message
 ones. Not knowing the total costs where a one-shot
@@ -150,7 +151,7 @@ interval above 1; the worst come first.
 
 ## Hash implementations
 
-The `BLAKE3` and `BLAKE3 servil` contenders call the one-shot `hash`
+The `BLAKE3` and `BLAKE3 servil st` contenders call the one-shot `hash`
 function, which is single-threaded on every platform.
 BLAKE3 may still use SIMD parallelism within the calling thread; that
 is single-threaded execution, not operating-system-level

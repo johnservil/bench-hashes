@@ -15,7 +15,7 @@ const a = load();
 const T = a.__t;
 T.setZoom(T.ALLB.findIndex(v => v >= 2048), T.ALLB.findIndex(v => v >= 8192));
 setTimeout(() => {
-  const servil = T.DATA.names.indexOf("BLAKE3 servil");
+  const servil = T.DATA.names.indexOf("BLAKE3 servil st");
   const k = T.DATA.plots[0].sizes.indexOf("4 KiB");
   a.hoverDot({ pointerType: "mouse", stopPropagation() {} }, 0, servil, k);
   save(a, outZoom);

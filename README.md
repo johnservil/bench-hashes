@@ -56,11 +56,11 @@ when the computer is quieter: other programs slow the results down.
 
 The contenders:
 
-- **BLAKE3 servil**: [a fork](https://github.com/johnservil/BLAKE3) of the
-  official BLAKE3 Rust crate, with extra kernels for Apple M4-class chips.
-  On other CPUs it runs the official crate's kernels.
-- **BLAKE3 servil mt**: the same, spreading large inputs over all your
-  CPU cores.
+- **BLAKE3 servil mt**: [a fork](https://github.com/johnservil/BLAKE3) of
+  the official BLAKE3 Rust crate, with extra kernels for Apple M4-class
+  chips, spreading large inputs over all your CPU cores. On other CPUs it
+  runs the official crate's kernels.
+- **BLAKE3 servil st**: the same on one thread.
 - **SHA-256** (the `sha2` crate) and **SHA-256 ring** (the `ring`
   crate): SHA-256 with the CPU's SHA-256 instructions where it has them.
   `sha2` is faster for the smallest inputs, `ring` from about 256 bytes.

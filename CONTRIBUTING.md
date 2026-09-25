@@ -25,7 +25,8 @@ node tools/graph-check/check.js benchmark-results/FOLDER/bench-hashes.graph.svg
 
 ## Working on the fork alongside
 
-The `blake3-servil` contender is a git dependency on the `servil` branch of
+The BLAKE3 servil contenders (`blake3-servil-st`, `blake3-servil-mt`) use
+the crate `blake3-servil`, a git dependency on the `servil` branch of
 [github.com/johnservil/BLAKE3](https://github.com/johnservil/BLAKE3), at
 the commit `Cargo.lock` pins. To measure your own checkout of the fork,
 put this repository inside it and point the dependency there:

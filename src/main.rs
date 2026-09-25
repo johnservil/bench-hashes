@@ -423,7 +423,7 @@ enum Algorithm {
     Sha1Dc,
     /// The servil fork's single-threaded hash; its kernels are chosen at
     /// run time (SME2 where the CPU has it, integer + NEON hybrids elsewhere).
-    Blake3Servil,
+    Blake3ServilSt,
     /// Apple's CommonCrypto SHA-256 through CC_SHA256_Init/Update/Final.
     Sha256CommonCrypto,
     /// ring's SHA-256: BoringSSL's assembly, with runtime CPU detection.
@@ -464,7 +464,7 @@ impl Algorithm {
         Algorithm::Blake3,
         Algorithm::Sha256,
         Algorithm::Sha1Dc,
-        Algorithm::Blake3Servil,
+        Algorithm::Blake3ServilSt,
         Algorithm::Sha256CommonCrypto,
         Algorithm::Sha256Ring,
         Algorithm::Blake3Rayon,
@@ -478,7 +478,7 @@ impl Algorithm {
             Self::Blake3 => "blake3",
             Self::Sha256 => "sha256",
             Self::Sha1Dc => "sha1dc",
-            Self::Blake3Servil => "blake3-servil",
+            Self::Blake3ServilSt => "blake3-servil-st",
             Self::Sha256CommonCrypto => "sha256-cc",
             Self::Sha256Ring => "sha256-ring",
             Self::Blake3Rayon => "blake3-mt",
@@ -489,7 +489,7 @@ impl Algorithm {
 
     fn family(self) -> Family {
         match self {
-            Self::Blake3 | Self::Blake3Servil | Self::Blake3Rayon | Self::Blake3ServilMt | Self::AbBlake3 => Family::Blake3,
+            Self::Blake3 | Self::Blake3ServilSt | Self::Blake3Rayon | Self::Blake3ServilMt | Self::AbBlake3 => Family::Blake3,
             Self::Sha256 | Self::Sha256CommonCrypto | Self::Sha256Ring => Family::Sha256,
             Self::Sha1Dc => Family::Sha1Dc,
         }
@@ -535,7 +535,7 @@ impl Algorithm {
             | Self::Sha256
             | Self::Sha1Dc
             | Self::Sha256Ring
-            | Self::Blake3Servil
+            | Self::Blake3ServilSt
             | Self::Blake3Rayon
             | Self::Blake3ServilMt
             | Self::AbBlake3 => Ok(()),
@@ -554,7 +554,7 @@ impl Algorithm {
             Self::Blake3 => "BLAKE3",
             Self::Sha256 => "SHA-256",
             Self::Sha1Dc => "SHA-1DC",
-            Self::Blake3Servil => "BLAKE3 servil",
+            Self::Blake3ServilSt => "BLAKE3 servil st",
             Self::Sha256CommonCrypto => "SHA-256 CommonCrypto",
             Self::Sha256Ring => "SHA-256 ring",
             Self::Blake3Rayon => "BLAKE3 mt",
@@ -573,7 +573,7 @@ impl Algorithm {
             Self::Blake3 => "#3b82f6",
             Self::Sha256 => "#e07a45",
             Self::Sha1Dc => "#8a7a1e",
-            Self::Blake3Servil => "#7c3aed",
+            Self::Blake3ServilSt => "#7c3aed",
             Self::Sha256CommonCrypto => "#0e9aa7",
             Self::Sha256Ring => "#c2410c",
             Self::Blake3Rayon => "#1e3a8a",
@@ -588,7 +588,7 @@ impl Algorithm {
             Self::Blake3 => BLAKE3_SOURCE_INFO,
             Self::Sha256 => SHA2_SOURCE_INFO,
             Self::Sha1Dc => SHA1_CHECKED_SOURCE_INFO,
-            Self::Blake3Servil => BLAKE3_SERVIL_SOURCE_INFO,
+            Self::Blake3ServilSt => BLAKE3_SERVIL_SOURCE_INFO,
             Self::Sha256CommonCrypto => "CommonCrypto CC_SHA256_Init/Update/Final from the running macOS (libSystem); version follows the OS",
             Self::Sha256Ring => RING_SOURCE_INFO,
             Self::Blake3Rayon => BLAKE3_SOURCE_INFO,
@@ -607,7 +607,7 @@ impl Algorithm {
             | Self::Sha1Dc
             | Self::Sha256CommonCrypto
             | Self::Sha256Ring => "single-threaded",
-            Self::Blake3Servil => "single-threaded; blake3_servil::hash for one message, blake3_servil::hash_many for a batch, Stream for a stream",
+            Self::Blake3ServilSt => "single-threaded; blake3_servil::hash for one message, blake3_servil::hash_many for a batch, Stream for a stream",
             Self::AbBlake3 => "single-threaded; ab_blake3::const_hash for one message, ab_blake3::single_block_hash_many_exact::<N> for a batch of N 64-byte messages",
             Self::Blake3Rayon => "multithreaded; Hasher::update_rayon (per piece, for a stream) on Rayon's global pool, the crate's own multithreading as a program gets it by default: the tree splits recursively over the pool, and inputs under a few chunks stay on the caller's thread",
             Self::Blake3ServilMt => "multithreaded; blake3_servil::hash_multithreaded for one message, hash_many_multithreaded for a batch, and Stream::new_multithreaded for a stream: the fork chooses whether to use its shared resident workers; the kernel tables below show the thresholds",
@@ -900,7 +900,7 @@ fn williams_orders(n: usize) -> Vec<Vec<usize>> {
  * every batch of 64-byte messages), ring from 256 B up, so both run.
  */
 const DEFAULT_CONTENDERS: [Algorithm; 4] =
-    [Algorithm::Blake3Servil, Algorithm::Blake3ServilMt, Algorithm::Sha256, Algorithm::Sha256Ring];
+    [Algorithm::Blake3ServilSt, Algorithm::Blake3ServilMt, Algorithm::Sha256, Algorithm::Sha256Ring];
 
 /*
  * The contenders the graph shows when it opens; a click on a name shows
@@ -928,14 +928,14 @@ const USAGE: &str = "\
 bench-hashes: hash speed by input size and by messages per batch, alone and
 shared with a second copy of the same contender
 
-  bench-hashes                     BLAKE3 servil (single- and multithreaded)
+  bench-hashes                     BLAKE3 servil st and mt
                                    and SHA-256 (sha2 and ring)
   bench-hashes --all               every contender this machine can run,
                                    apart from those marked on-request in --list
   bench-hashes --contenders K,...  exactly these, in this column order
   bench-hashes --list              contenders and their availability here
 
-Keys: blake3, blake3-mt, ab-blake3, blake3-servil, blake3-servil-mt, sha256,
+Keys: blake3, blake3-mt, ab-blake3, blake3-servil-st, blake3-servil-mt, sha256,
       sha256-ring, sha1dc; sha256-cc on request
 
 A run takes a few minutes: every point, to 128 MiB inputs and batches of
@@ -1626,7 +1626,7 @@ fn hash_batch(
             digest.copy_from_slice(result.hash());
             digest
         }, consume),
-        Algorithm::Blake3Servil => {
+        Algorithm::Blake3ServilSt => {
             if messages == 1 {
                 each_message(input, messages, iterations, |m| *blake3_servil::hash(m).as_bytes(), consume)
             } else {
@@ -1684,7 +1684,7 @@ fn hash_stream(algorithm: Algorithm, input: &[u8], iterations: usize, consume: i
             pieces(&mut |piece| { hasher.update_rayon(piece); });
             *hasher.finalize().as_bytes()
         }, consume),
-        Algorithm::Blake3Servil => each_stream_into(input, iterations, blake3_servil::Stream::new, consume),
+        Algorithm::Blake3ServilSt => each_stream_into(input, iterations, blake3_servil::Stream::new, consume),
         Algorithm::Blake3ServilMt => each_stream_into(input, iterations, blake3_servil::Stream::new_multithreaded, consume),
         Algorithm::Sha256 => each_stream(input, iterations, |pieces| {
             let mut hasher = Sha256::new();
@@ -2892,7 +2892,7 @@ fn detect_kernels(algorithm: Algorithm, use_case: UseCase) -> Kernels {
         Algorithm::Blake3 => detect_blake3_kernels(),
         Algorithm::Sha256 => detect_sha256_kernels(),
         Algorithm::Sha1Dc => detect_sha1dc_kernels(),
-        Algorithm::Blake3Servil => servil_kernels(blake3_servil::kernel_report()),
+        Algorithm::Blake3ServilSt => servil_kernels(blake3_servil::kernel_report()),
         Algorithm::Sha256CommonCrypto => detect_common_crypto_kernels(),
         Algorithm::Sha256Ring => detect_ring_kernels(),
         Algorithm::Blake3Rayon => detect_blake3_rayon_kernels(),
@@ -2904,7 +2904,7 @@ fn detect_kernels(algorithm: Algorithm, use_case: UseCase) -> Kernels {
         /* A stream runs the one-message kernels piece by piece, so those that start past PIECE_LEN never run. */
         UseCase::Streaming => one_message.up_to(PIECE_LEN),
         UseCase::ManyMessages if algorithm == Algorithm::AbBlake3 => detect_ab_blake3_many_kernels(),
-        UseCase::ManyMessages if algorithm == Algorithm::Blake3Servil => {
+        UseCase::ManyMessages if algorithm == Algorithm::Blake3ServilSt => {
             servil_kernels(blake3_servil::kernel_report_many())
         }
         UseCase::ManyMessages if algorithm == Algorithm::Blake3ServilMt => {
@@ -3124,7 +3124,7 @@ fn generate_text(roster: &Roster, results: &Results, samples: &RunSamples, machi
     let (findings, two_speed) = checks(roster, results, samples);
     writeln!(
         output,
-        "CHECKS: where BLAKE3 servil or servil mt is slower than another contender, or slower per unit on larger work than on a size that divides it; compared round by round (samples taken in the same moment), judged at the worse ratio where the ratios split in two, by {}% or more with the ratio's 95% interval above 1.",
+        "CHECKS: where BLAKE3 servil st or servil mt is slower than another contender, or slower per unit on larger work than on a size that divides it; compared round by round (samples taken in the same moment), judged at the worse ratio where the ratios split in two, by {}% or more with the ratio's 95% interval above 1.",
         CHECK_GAP_PERMILLE / 10,
     )
     .unwrap();
@@ -3203,7 +3203,7 @@ fn append_table(output: &mut String, roster: &Roster, results: &Results, scenari
  * contenders. A cell is judged by its slower speed, which a user may meet.
  * Each check compares two such speeds whose 95% intervals are apart and
  * whose medians differ by CHECK_GAP_PERMILLE or more:
- * - slower than another contender at the same point: BLAKE3 servil
+ * - slower than another contender at the same point: BLAKE3 servil st
  *   against the single-threaded ones, BLAKE3 servil mt against all (BLAKE3
  *   servil too: it could have run single-threaded);
  * - slower per unit at a point N than at a smaller point M that divides
@@ -3260,7 +3260,7 @@ fn checks(roster: &Roster, results: &Results, samples: &RunSamples) -> (Vec<Stri
     let mut claims: Vec<Claim> = Vec::new();
     let mut pairs: Vec<Claim> = Vec::new();
     for (a, &algorithm) in roster.algorithms.iter().enumerate() {
-        if !matches!(algorithm, Algorithm::Blake3Servil | Algorithm::Blake3ServilMt) {
+        if !matches!(algorithm, Algorithm::Blake3ServilSt | Algorithm::Blake3ServilMt) {
             continue;
         }
         for scenario in Scenario::ALL {
@@ -3411,6 +3411,7 @@ fn column_heading(algorithm: Algorithm) -> &'static str {
     match algorithm {
         Algorithm::Sha256CommonCrypto => "SHA-256 CC",
         Algorithm::Sha256Ring => "SHA-256 ring",
+        Algorithm::Blake3ServilSt => "B3 servil st",
         Algorithm::Blake3ServilMt => "B3 servil mt",
         other => other.name(),
     }
@@ -5001,7 +5002,7 @@ fn contender_provenance_lines(
             package_name_and_version(SHA1_CHECKED_SOURCE_INFO),
             algorithm.mode(),
         )],
-        Algorithm::Blake3Servil => vec![
+        Algorithm::Blake3ServilSt => vec![
             format!("{name}: {} · hash, hash_many for a batch, Stream for a stream", short_git_source(BLAKE3_SERVIL_SOURCE_INFO)),
             format!("{name}: single-threaded · platform {platform}"),
         ],
@@ -6099,7 +6100,7 @@ mod correctness_tests {
     fn checks_flag_slower_cells_and_divisible_work_only() {
         let many = |label| point(label, UseCase::ManyMessages);
         let points = vec![many("2"), many("3"), many("64"), many("128")];
-        let roster = Roster::new(vec![Algorithm::Blake3Servil, Algorithm::Sha256], true, Some(points.clone()), Some(24));
+        let roster = Roster::new(vec![Algorithm::Blake3ServilSt, Algorithm::Sha256], true, Some(points.clone()), Some(24));
         /* A little jitter per round, so intervals have width. */
         let jitter = |r: usize| (r % 5) as u64 * 20;
 
@@ -6191,8 +6192,8 @@ mod correctness_tests {
     }
 
     #[test]
-    #[should_panic(expected = "blake3-servil (BLAKE3) disagrees with golden vector on 65 input bytes, seed 0")]
+    #[should_panic(expected = "blake3-servil-st (BLAKE3) disagrees with golden vector on 65 input bytes, seed 0")]
     fn digest_mismatch_fails_stop_with_context() {
-        assert_digest_matches(Algorithm::Blake3Servil, 65, 1, 0, &[0; 32], &[1; 32]);
+        assert_digest_matches(Algorithm::Blake3ServilSt, 65, 1, 0, &[0; 32], &[1; 32]);
     }
 }
