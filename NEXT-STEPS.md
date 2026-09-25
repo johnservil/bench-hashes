@@ -8,56 +8,41 @@ principles are in both repositories' `AGENTS.md`; the fork's hardware
 facts, design, and rejected ideas are in its `NOTES-servil.md` (read it
 before touching kernels or the pool); this repository's are in `NOTES.md`.
 
-## Resume here (checkpoint, September 25, 2026, early morning)
+## Resume here (checkpoint, September 25, 2026, midday)
 
-Done overnight (fork `servil` b74b59e, pinned here; records on it, both
-machines quiet; details and numbers in the fork's NOTES-servil.md):
+Since the morning checkpoint (fork `servil` 1508573, pinned; records on it
+with the new streamed use case, both machines quiet):
 
-- **The flat walk** promoted (4e368ab), widened to 32 KiB (f12cc06), and
-  run down to the two children on SME2 with its scratch per thread, off
-  the stack (483162d): Mac hash() 32 KiB -15%, 64 KiB -19%, 128 KiB -20%,
-  256 KiB-1 MiB -5 to -15% against the morning's servil; `kernel_report()`
-  names it; the streamed use case lists only the kernels its pieces reach.
-- **The SME unit's slow state, found**: about 0.2 us of other work between
-  SME2 kernels, 32-byte stores off 32-byte boundaries, stack probes of a
-  large frame landing among the kernels' buffers, and buffers sharing an
-  address mod 4 KiB each put it there (fork NOTES, "The slow state,
-  measured directly").
-- **The Hasher** pushes one chaining value per SME2 subtree past its first
-  input (0220e69): 256 KiB pieces -4.8%.
-- **Energy per byte** measured (probe/energy): SME2 2.5-3x cheaper than
-  NEON on both core kinds, E-cores 8-9x cheaper than P-cores, the pool
-  2.7x hash()'s energy. **The pool's caller on SME2**: rejected on both
-  machines (probe/sme2-caller).
-- **"For best performance"** in the crate docs, with a README pointer.
+- **The SME2 thread** (0366e48): a multithreaded call that gets the SME2
+  turn streams a prefix sized to its speed on SME2, beside the NEON pool.
+  Mac: 2 threads -20 to -25%, 4 threads -8 to -14%, all level to -7%; two
+  threads now beat one everywhere. **Two SME units are reachable** (two
+  raw SME2 threads 2.0-2.4x one): a second SME2 thread is the next idea.
+- **`Stream`** (59ad5c1 + c242b2e): hashing behind the caller, filled in
+  place (`buffer()`, `filled(n)`) or by copy (`update`, `io::Write`), four
+  1 MiB buffers, back-pressure by blocking `buffer()`; `Stream::new` and
+  `Stream::new_multithreaded`. The benchmark's streamed use case now
+  measures it (Zooko: the Hasher's take-turns streaming is no longer
+  supported for streams); every contender's producer copies each 64 KiB
+  piece, timed. Mac streamed: servil 8 MiB 0.157 ns/B, servil mt 0.041.
+- Two slips, fixed: 59ad5c1 shipped `stream.rs` without its module line
+  (bench-hashes main failed to build from 11:09 to 11:18 UTC, reverted, then
+  re-applied), and the Apple-only CommonCrypto path failed to build on the
+  Mac after 79cc466 (fixed in 83c8494). Lesson: check a commit's contents
+  (`git show --stat`) before promoting, and build the Mac path (a runner
+  job) before pushing bench-hashes changes that touch Apple-only code.
 
-For Zooko to decide:
+Next, in order:
 
-1. **The `efficient` module, as measured** (fork NOTES, "Energy per
-   byte"): SME2 is the cheapest kernel, so an efficient mode keeps it.
-   The single-threaded calls would equal today's, apart from the "minimax"
-   NEON plans for 2-15 KiB (E-core cycles -16-24%, P +17%). What differs is
-   multithreading: the caller on SME2 with the E-cores' NEON helpers at
-   background QoS hashed 8 MiB 10-27% faster than hash() for a third less
-   energy, level at 1 MiB, and slower below. That design needs a second,
-   sleeping pool; worth building? Also to weigh: the pool's idle workers
-   poll through a call, which doubles the energy of calls with a small
-   thread budget.
-
-Next, in order (minimax: the widest remaining gaps first):
-
-1. The Hasher in 64 KiB pieces: 0.204 ns/B against 0.147 whole (3.21
-   cycles per ns, the slow state). Next idea: fold the stack's merges into
-   the walk's padded SME2 levels; find what else runs between its kernels.
-2. hash(256 KiB): 3.49 cycles per ns (2.12x the time of 128 KiB) with the
-   same kernels the Hasher's 256 KiB pieces run at 3.70.
-3. The VM's per-process two speeds at 32-64 KiB (0.172 or 0.210 ns/B, the
-   scratch on or off the stack), and servil mt against servil at 32 KiB,
-   two-speed with the same code on both sides.
-4. Zooko's list: the E-core scenario in the benchmark; the pipelined
-   streaming hasher (below); the single-session tree (one streaming entry
-   for chunks and parents: the flat walk now makes several back-to-back
-   sessions, each about 0.2 us).
+1. Stream: the short streams' pipeline fill and drain (VM: servil mt
+   streamed 2-8 MiB two-speed and slower than 1 MiB); the stream thread's
+   wake per stream; the per-call overhead at 64 B (0.91 ns/B against
+   hash()'s 0.70).
+2. A second SME2 thread in the pool (the second P-cluster's SME unit).
+3. For Zooko: the `efficient` module proposal (below, unchanged); whether
+   to deprecate or document `Hasher` for streams.
+4. Open from before: hash(256 KiB)'s partial slow state; the VM's
+   per-process two speeds.
 
 ## Where things stand (September 25, 2026)
 
