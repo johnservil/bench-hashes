@@ -84,6 +84,17 @@ description, a kernel description (`detect_kernels`), an arm in
 streamed use case). The harness handles selection, interleaving, checking, and
 reporting for any count from two to eight.
 
+## Text in the graph and the report
+
+The graph and the report are read by newcomers holding only the page as
+well as by regulars: text in them uses words a newcomer knows or the page
+introduces, describes the page as it is, and is computed from the run's
+own data (it names only contenders the run has). Details go behind the
+page's doors (tooltips, "How to read this graph", "About this run").
+`AGENTS.md`, "Presentation: write each page for a reader who holds only
+the page", has the whole practice. Check a change with
+`node tools/graph-check/check.js` and by looking at a render.
+
 ## Maintainers' notes
 
 `AGENTS.md`, `NEXT-STEPS.md`, and `NOTES.md` are the maintainers' working
