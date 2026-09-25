@@ -56,10 +56,12 @@ shown, the arrows at its left end move where that part starts, the arrows
 at its right end where it stops, and "all" shows everything. The strip
 and the rate/time switch stay at the top of the window as you scroll.
 
-At the bottom, the Provenance section says what was measured and on
-what machine. Its Machine line also says whether the computer was quiet
-during the run or busy with other programs. If it says busy, run again
-when the computer is quieter: other programs slow the results down.
+Under the title, the graph names the computer and the day, and says so
+when other programs were busy during the run; if it does, run again
+when the computer is quieter, since other programs slow the results
+down. "How to read this graph" beside it explains the lines, bands, and
+dot shapes, and "About this run" at the bottom opens onto the details:
+the machine, the hashes' versions, and the method behind each dot shape.
 
 The contenders:
 

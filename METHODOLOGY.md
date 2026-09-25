@@ -392,7 +392,7 @@ determined. The text report marks such cells with `~`.
 The SVG shows six plots, each use case solo and then shared, each with
 median lines and confidence bands on a log-log grid.
 
-A switch above the first y axis flips every plot between rate (the
+A switch at the header's right flips every plot between rate (the
 default; higher is better: GB/s above, million messages per second
 below) and time (lower is better: ns/B above, ns per message below).
 Rate is the reciprocal of time, so on the log axis each plot mirrors
@@ -402,7 +402,7 @@ every label, value, and hover figure follows the chosen unit. Ratios
 between contenders are unitless and stay put.
 
 Hovering a dot opens a panel for that point: the hovered
-contender's median, range, and code path, then every visible contender
+contender's median, range, and method (its code path), then every visible contender
 of that plot ranked fastest first with its time, rate, and speed
 relative to the hovered one ("▲ 1.35× faster" in green, "about the same" in grey, "▼ 3.22×
 slower" in red; contender colours stay away from those two hues).
@@ -420,6 +420,19 @@ Two arrows at its left end step the range's start by one input, two at its
 right end its end, and "all" restores every input; the arrows stay where
 they are. The header (title, strip, and rate/time switch) stays at the top
 of the window while the page scrolls.
+
+The page is written for three readers at once: a newcomer who holds only
+the page, a regular who knows the benchmark, and a maintainer. The header
+says what the page shows and on which computer; "How to read this graph"
+opens a panel on the lines, bands, and dot shapes; "About this run" at
+the bottom opens section by section onto the machine, the run, the
+sources, the method behind each dot shape, and each hash's version. A
+hash of the run that takes no part in a plot (BLAKE3 mt has no batch
+function over threads, ab-blake3 no way to take an input in pieces) is
+listed under that plot's legend in pale type, "not measured here", with
+the reason as a tooltip; each name's tooltip says what the hash is. A
+comment at the top of the SVG source points maintainers to the code and
+data behind it.
 
 The names at the right edge of each plot are toggles. Clicking one
 hides that contender in every plot: its marks fade out, each y axis
@@ -448,7 +461,7 @@ other programs took. Linux also reports steal time, CPU time a
 hypervisor withheld from a virtual machine's CPUs for other work on the
 host. The OS counts both in 10 ms ticks, so the run sums them over
 windows of 5 seconds. The report, the samples file, and the graph's
-Provenance section give the run's average and its busiest window, in
+"About this run" section give the run's average and its busiest window, in
 CPUs kept busy, and call the run busy when the busiest window reached a
 whole CPU (other programs or steal). Measured in a quiet 16-CPU Linux
 VM: 0.02 CPUs on average; with two busy loops beside the run: 2.04. An
@@ -469,6 +482,6 @@ measured.
 The build script reads `Cargo.lock` and embeds each contender crate's
 resolved version, registry checksum or git commit, and source, and this
 repository's own commit and whether its tree was clean. The report, the
-samples file, and the graph's Provenance section carry them, so a result
+samples file, and the graph's "About this run" section carry them, so a result
 names the exact code it measured. `Cargo.lock` is checked in, so every
 build of one commit measures the same code.

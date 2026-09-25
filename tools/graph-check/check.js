@@ -115,6 +115,18 @@ function checkLayout(tag) {
   w.zoomStep("from", 3); w.zoomStep("to", -3); await sleep(100); w.flipUnit(); await sleep(900);
   checkLayout("steps + unit"); checkControls("steps + unit");
   console.log("steps + unit:", range());
+  // Drag each grip: its end follows the pointer to the nearest input, never past the other end.
+  w.zoomAll(); await sleep(700);
+  const pev = x => ({ clientX: x, pointerId: 1, stopPropagation() {}, preventDefault() {} });
+  w.gripDown(pev(stripX(T.ALLB[0])), "from"); w.gripMove(pev(stripX(T.ALLB[4]) + 1)); w.gripUp();
+  check(T.zFrom === 4, `dragging the start grip to input 4 moved the start to ${T.zFrom}`);
+  w.gripDown(pev(0), "to"); w.gripMove(pev(stripX(T.ALLB[2]))); w.gripUp();
+  check(T.zTo === 5, `dragging the end grip past the start stops one input after it (${T.zTo})`);
+  w.gripMove(pev(stripX(T.ALLB[T.ALLB.length - 1])));
+  check(T.zTo === 5, "a pointer moving after release moves nothing");
+  await sleep(300); checkLayout("dragged"); checkControls("dragged");
+  const grip = +((w.document.getElementById("zoom-grip-from").getAttribute("transform") || "").match(/translate\(([-\d.]+)/) || [0, 0])[1];
+  check(Math.abs(grip - stripX(T.ALLB[T.zFrom])) < 0.1, "the start grip sits at the band's start");
   // Hover every point of every plot: the panel holds its widest line.
   w.zoomAll(); await sleep(700);
   const ev0 = { pointerType: "mouse", stopPropagation() {} };

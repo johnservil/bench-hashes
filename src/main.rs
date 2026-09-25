@@ -292,15 +292,24 @@ impl UseCase {
         match self {
             Self::OneMessage => "Input size (logarithmic spacing)",
             Self::ManyMessages => "Messages per batch, 64 B each (logarithmic spacing)",
-            Self::Streaming => "Input size, fed in 64 KiB pieces (logarithmic spacing)",
+            Self::Streaming => "Input size (logarithmic spacing)",
         }
     }
 
     fn heading(self) -> &'static str {
         match self {
-            Self::OneMessage => "One message per call",
-            Self::ManyMessages => "Many 64-byte messages per call",
-            Self::Streaming => "One message, streamed in 64 KiB pieces",
+            Self::OneMessage => "One input at a time",
+            Self::ManyMessages => "Batches of 64-byte messages",
+            Self::Streaming => "One input arriving in 64 KiB pieces",
+        }
+    }
+
+    /// The plot's name in a list of plots.
+    fn short(self) -> &'static str {
+        match self {
+            Self::OneMessage => "one input",
+            Self::ManyMessages => "batches",
+            Self::Streaming => "pieces",
         }
     }
 
@@ -563,6 +572,22 @@ impl Algorithm {
         }
     }
 
+    /// What the hash is, in a line for a reader who has never heard of it
+    /// (the tooltip on its name in the graph's legend).
+    fn blurb(self) -> &'static str {
+        match self {
+            Self::Blake3 => "the official BLAKE3 Rust crate, on one thread",
+            Self::Blake3Rayon => "the official BLAKE3 Rust crate, spreading large inputs over its thread pool",
+            Self::Blake3ServilSt => "a fork of the official BLAKE3 Rust crate with extra code for Apple M4-class chips, on one thread",
+            Self::Blake3ServilMt => "a fork of the official BLAKE3 Rust crate with extra code for Apple M4-class chips, spreading large inputs over every CPU core",
+            Self::AbBlake3 => "another Rust crate for BLAKE3, on one thread",
+            Self::Sha256 => "SHA-256 from the sha2 Rust crate, with the CPU's SHA-256 instructions where it has them",
+            Self::Sha256Ring => "SHA-256 from the ring Rust crate, with the CPU's SHA-256 instructions where it has them",
+            Self::Sha256CommonCrypto => "SHA-256 from Apple's CommonCrypto library",
+            Self::Sha1Dc => "SHA-1 with collision detection, from the sha1-checked Rust crate",
+        }
+    }
+
     /*
      * Contender colours stay off pure green and pure red, which the hover
      * panel reserves for "faster" and "slower". A multithreaded contender
@@ -743,8 +768,8 @@ impl Scenario {
     /// The scenario in a plot's subtitle.
     fn subtitle(self) -> &'static str {
         match self {
-            Self::Solo => "one copy, the machine otherwise idle",
-            Self::Shared => "two copies at once, each timed",
+            Self::Solo => "one program hashing, the computer otherwise idle",
+            Self::Shared => "two programs hashing at once; the time of either",
         }
     }
 
@@ -2668,6 +2693,16 @@ enum Mark {
 }
 
 impl Mark {
+    /// The shape as a character, for text beside the drawn marks.
+    fn glyph(self) -> char {
+        match self {
+            Mark::Circle => '●',
+            Mark::Diamond => '◆',
+            Mark::Square => '■',
+            Mark::Triangle => '▲',
+        }
+    }
+
     fn name(self) -> &'static str {
         match self {
             Self::Circle => "circle",
@@ -2727,27 +2762,27 @@ fn detect_blake3_kernels() -> Kernels {
         let (platform, one, wide, degree) = if std::arch::is_x86_feature_detected!("avx512f")
             && std::arch::is_x86_feature_detected!("avx512vl")
         {
-            ("AVX-512", "AVX-512 compression", "AVX-512 hash_many (16-way)", 16)
+            ("AVX-512", "AVX-512 vectors, one chunk at a time", "AVX-512 vectors, sixteen chunks at a time", 16)
         } else if std::arch::is_x86_feature_detected!("avx2") {
-            ("AVX2", "SSE4.1 compression", "AVX2 hash_many (8-way)", 8)
+            ("AVX2", "SSE4.1 vectors, one chunk at a time", "AVX2 vectors, eight chunks at a time", 8)
         } else if std::arch::is_x86_feature_detected!("sse4.1") {
-            ("SSE4.1", "SSE4.1 compression", "SSE4.1 hash_many (4-way)", 4)
+            ("SSE4.1", "SSE4.1 vectors, one chunk at a time", "SSE4.1 vectors, four chunks at a time", 4)
         } else if std::arch::is_x86_feature_detected!("sse2") {
-            ("SSE2", "SSE2 compression", "SSE2 hash_many (4-way)", 4)
+            ("SSE2", "SSE2 vectors, one chunk at a time", "SSE2 vectors, four chunks at a time", 4)
         } else {
-            ("portable", "portable compression", "portable hash_many", 1)
+            ("portable", "portable code, one chunk at a time", "portable code", 1)
         };
         let mut kernels = vec![Kernel {
             first: 0,
             name: one.to_owned(),
-            why: "Up to one chunk, so a single compression handles the whole input.".to_owned(),
+            why: "Each chunk (1 KiB) is hashed on its own, one after another.".to_owned(),
             mark: Mark::Circle,
         }];
         if degree > 4 {
             kernels.push(Kernel {
                 first: 4 * 1024,
-                name: "SSE4.1 hash_many (4-way fallback)".to_owned(),
-                why: "Four whole chunks fill the narrowest SIMD batch; wider batches wait for more chunks.".to_owned(),
+                name: "SSE4.1 vectors, four chunks at a time".to_owned(),
+                why: "Four whole chunks fill the narrowest vectors; the wider ones wait for more chunks.".to_owned(),
                 mark: Mark::Diamond,
             });
         }
@@ -2755,7 +2790,7 @@ fn detect_blake3_kernels() -> Kernels {
             kernels.push(Kernel {
                 first: degree * 1024,
                 name: wide.to_owned(),
-                why: "Enough whole chunks to fill the widest SIMD batch on this CPU.".to_owned(),
+                why: "Enough whole chunks to fill this CPU's widest vectors.".to_owned(),
                 mark: if degree > 4 { Mark::Square } else { Mark::Diamond },
             });
         }
@@ -2769,14 +2804,14 @@ fn detect_blake3_kernels() -> Kernels {
             vec![
                 Kernel {
                     first: 0,
-                    name: "portable compression".to_owned(),
-                    why: "Fewer than four whole chunks: each runs through the portable single-chunk compressor, so 2 KiB and 3 KiB take this path too.".to_owned(),
+                    name: "portable code, one chunk at a time".to_owned(),
+                    why: "Below four whole chunks (4 KiB), each chunk is hashed by the crate's portable code, one after another.".to_owned(),
                     mark: Mark::Circle,
                 },
                 Kernel {
                     first: 4 * 1024,
-                    name: "NEON hash_many (4-way)".to_owned(),
-                    why: "Four whole chunks fill a NEON batch; from here the bulk of the input runs four chunks at a time.".to_owned(),
+                    name: "NEON vectors, four chunks at a time".to_owned(),
+                    why: "Four whole chunks fill the NEON vector units; from here most of the input runs four chunks at a time.".to_owned(),
                     mark: Mark::Diamond,
                 },
             ],
@@ -2788,8 +2823,8 @@ fn detect_blake3_kernels() -> Kernels {
         "portable",
         vec![Kernel {
             first: 0,
-            name: "portable compression".to_owned(),
-            why: "This build has no SIMD path; every size runs the portable compressor.".to_owned(),
+            name: "portable code".to_owned(),
+            why: "This build hashes every size with the crate's portable code.".to_owned(),
             mark: Mark::Circle,
         }],
     )
@@ -2801,18 +2836,18 @@ fn detect_blake3_kernels() -> Kernels {
  */
 fn detect_sha256_kernels() -> Kernels {
     let name = if cfg!(target_arch = "aarch64") {
-        "sha2 aarch64_sha2 backend (ARMv8 SHA-256 instructions)"
+        "the CPU's SHA-256 instructions"
     } else if cfg!(any(target_arch = "x86", target_arch = "x86_64")) {
-        "sha2 x86_sha backend (SHA-NI where present)"
+        "the CPU's SHA-256 instructions, where it has them"
     } else {
-        "sha2 portable"
+        "portable code"
     };
     Kernels::new(
         "sha2",
         vec![Kernel {
             first: 0,
             name: name.to_owned(),
-            why: "One kernel at every size.".to_owned(),
+            why: "One method at every size.".to_owned(),
             mark: Mark::Circle,
         }],
     )
@@ -2823,8 +2858,8 @@ fn detect_sha1dc_kernels() -> Kernels {
         "sha1-checked",
         vec![Kernel {
             first: 0,
-            name: "SHA-1 with collision detection, pure Rust".to_owned(),
-            why: "One kernel at every size.".to_owned(),
+            name: "portable code with collision detection".to_owned(),
+            why: "One method at every size.".to_owned(),
             mark: Mark::Circle,
         }],
     )
@@ -2835,8 +2870,8 @@ fn detect_common_crypto_kernels() -> Kernels {
         "CommonCrypto",
         vec![Kernel {
             first: 0,
-            name: "CC_SHA256_Init/Update/Final (corecrypto, ARMv8 SHA-256 instructions)".to_owned(),
-            why: "One kernel at every size.".to_owned(),
+            name: "Apple's library, with the CPU's SHA-256 instructions".to_owned(),
+            why: "One method at every size.".to_owned(),
             mark: Mark::Circle,
         }],
     )
@@ -2844,18 +2879,18 @@ fn detect_common_crypto_kernels() -> Kernels {
 
 fn detect_ring_kernels() -> Kernels {
     let name = if cfg!(target_arch = "aarch64") {
-        "sha256_block_data_order_hw (ARMv8 SHA-256 instructions, pipelined schedule)"
+        "the CPU's SHA-256 instructions, interleaved"
     } else if cfg!(any(target_arch = "x86", target_arch = "x86_64")) {
-        "sha256_block_data_order_hw (SHA-NI) or _avx / _ssse3"
+        "the CPU's SHA-256 instructions, or vector code"
     } else {
-        "sha256_block_data_order_nohw"
+        "portable code"
     };
     Kernels::new(
         "ring",
         vec![Kernel {
             first: 0,
             name: name.to_owned(),
-            why: "One kernel at every size.".to_owned(),
+            why: "One method at every size.".to_owned(),
             mark: Mark::Circle,
         }],
     )
@@ -2917,8 +2952,8 @@ fn detect_kernels(algorithm: Algorithm, use_case: UseCase) -> Kernels {
                 one_message.platform,
                 vec![Kernel {
                     first: 0,
-                    name: format!("{} · one 64 B message per call", kernel.name),
-                    why: "Every message is its own call of the one-message entry point; the batch size changes nothing in the code path.".to_owned(),
+                    name: format!("{}, one message per call", kernel.name),
+                    why: "Each message is its own call; the size of the batch changes nothing.".to_owned(),
                     mark: Mark::Circle,
                 }],
             )
@@ -2936,8 +2971,8 @@ fn detect_ab_blake3_kernels() -> Kernels {
         "portable",
         vec![Kernel {
             first: 0,
-            name: "const_hash (const fn reference tree, portable compression)".to_owned(),
-            why: "One kernel at every size: a const fn has no run-time SIMD dispatch.".to_owned(),
+            name: "portable code".to_owned(),
+            why: "One method at every size: the crate's one-input function is written so it can also run while a program compiles, which leaves out vector code.".to_owned(),
             mark: Mark::Circle,
         }],
     )
@@ -2956,14 +2991,14 @@ fn detect_ab_blake3_many_kernels() -> Kernels {
         vec![
             Kernel {
                 first: 0,
-                name: "single_block_hash_many_exact::<N>, one compression per block".to_owned(),
-                why: "Below sixteen messages the batch entry point compresses each block on its own; the messages queue through one compression function.".to_owned(),
+                name: "one message at a time".to_owned(),
+                why: "Below sixteen messages, the batch function hashes each message on its own, one after another.".to_owned(),
                 mark: Mark::Circle,
             },
             Kernel {
                 first: 16 * MESSAGE_LEN,
-                name: format!("single_block_hash_many_exact::<N>, {wide} per sixteen blocks"),
-                why: "From sixteen messages each full group of sixteen blocks goes through the blake3 crate's SIMD hash_many, several blocks per instruction; blocks past the last full group are compressed one at a time.".to_owned(),
+                name: "vectors, sixteen messages at a time".to_owned(),
+                why: format!("From sixteen messages, each full group of sixteen goes through the blake3 crate's vector code ({wide}); messages past the last full group are hashed one at a time."),
                 mark: Mark::Diamond,
             },
         ],
@@ -2983,14 +3018,14 @@ fn detect_blake3_rayon_kernels() -> Kernels {
         vec![
             Kernel {
                 first: 0,
-                name: "caller's thread (below one SIMD width of chunks)".to_owned(),
-                why: "One SIMD width of chunks or less is one hash_many call; update_rayon has nothing to split.".to_owned(),
+                name: "on the calling thread".to_owned(),
+                why: "Up to one vector width of chunks, there is nothing to split.".to_owned(),
                 mark: Mark::Circle,
             },
             Kernel {
                 first: 2 * degree_bytes,
-                name: "rayon::join over the pool".to_owned(),
-                why: "Above one SIMD width of chunks the tree splits recursively with rayon::join, and idle pool threads steal the halves.".to_owned(),
+                name: "split over Rayon's threads".to_owned(),
+                why: "Above that, the input splits in halves, again and again, and idle threads of the Rayon pool take them.".to_owned(),
                 mark: Mark::Diamond,
             },
         ],
@@ -3665,9 +3700,9 @@ const FOOTNOTE_LINE_HEIGHT: f64 = 15.0;
  * last plot; a graph with no two-speed point has none.
  */
 const TWO_SPEEDS_FOOTNOTE: [&str; 3] = [
-    "[*] Two speeds: at some points the samples ran at two clearly different speeds, so the line splits in two there. The rarer speed is drawn fainter,",
-    "in proportion to how rarely it occurred. A common cause is a chip with performance cores and slower efficiency cores: the operating system runs the work",
-    "on either kind. Two copies sharing one unit of the chip, and a virtual machine whose host moves it between cores, split speeds too.",
+    "[*] Two speeds: at some sizes the timings fell into two clearly different speeds, so the line splits in two there, the rarer speed drawn fainter",
+    "in proportion to how rarely it occurred. A common cause is a chip with fast performance cores and slower efficiency cores, where the operating",
+    "system may run the work on either kind. Two programs sharing one part of the chip, or a virtual machine its host moves between cores, split speeds too.",
 ];
 const PROVENANCE_LINE_HEIGHT: f64 = 14.0;
 
@@ -3883,6 +3918,13 @@ fn generate_svg(
 
     let mut provenance_cats = shared_provenance_cats(machine, selection_note);
     provenance_cats.push(code_path_cat(roster, &plots));
+    /* The hashes' own lines follow this header, in the first plot's series groups. */
+    provenance_cats.push(ProvCat {
+        key: "hashes",
+        name: "Hashes",
+        summary: "the version and settings of each hash shown".to_owned(),
+        lines: Vec::new(),
+    });
     let provenance_total = provenance_cats.len()
         + provenance_cats.iter().map(|cat| cat.lines.len()).sum::<usize>()
         + roster
@@ -3906,6 +3948,13 @@ fn generate_svg(
 
     writeln!(
         svg,
+        "  <!-- For maintainers: bench-hashes' src/main.rs (generate_svg) writes this file. The script at the end carries the measurements and \
+         layout constants as DATA and redraws from them; <metadata> holds the full provenance and crate checksums; the samples file beside \
+         this one holds every timing. The text for readers follows the fork's AGENTS.md, \"Write each page for a reader who holds only the page\". -->"
+    )
+    .unwrap();
+    writeln!(
+        svg,
         r##"  <rect width="{SVG_WIDTH:.0}" height="{svg_height:.0}" fill="#fdfdfc"/>"##
     )
         .unwrap();
@@ -3927,9 +3976,20 @@ fn generate_svg(
     .zoom-btn:hover rect { fill: #e4e4de; }
     .zoom-btn[data-off="true"] { opacity: 0.35; cursor: default; }
     .zoom-track { fill: #e6e6e1; }
+    .zoom-track-hit { fill: transparent; }
+    .door { fill: #5b21b6; cursor: pointer; }
+    .door:hover { text-decoration: underline; }
+    .howto-box { fill: #ffffff; fill-opacity: 0.98; stroke: #c8c8c4; stroke-width: 1; }
+    .howto-line { font-size: 12px; fill: #333333; }
+    .series-absent { font-size: 12px; fill: #b8b8b2; }
+    .series-absent-detail { font-size: 9px; fill: #c4c4be; }
     .sticky-edge { stroke: #ecece8; stroke-width: 1; }
     .zoom-tick { stroke: #b4b4ae; stroke-width: 1; }
     .zoom-band { fill: #5b21b6; fill-opacity: 0.16; stroke: #5b21b6; stroke-opacity: 0.55; stroke-width: 1; }
+    .zoom-grip { cursor: ew-resize; touch-action: none; }
+    .zoom-grip-hit { fill: transparent; }
+    .zoom-grip-bar { fill: #5b21b6; fill-opacity: 0.7; }
+    .zoom-grip:hover .zoom-grip-bar { fill-opacity: 1; }
     .zoom-guide { stroke: #5b21b6; stroke-opacity: 0.35; stroke-width: 1; stroke-dasharray: 3,2; }
     .value-label { font-size: 10px; font-weight: 700; }
     .series-name { font-size: 13px; font-weight: 700; }
@@ -3997,17 +4057,30 @@ fn generate_svg(
     )
         .unwrap();
 
+    /*
+     * Under the title: where and when, then what a reader can do, with a
+     * door to how the graph is drawn. Everything a newcomer needs to read
+     * the plots is here; the finer points wait behind the door.
+     */
+    let os_name = match machine.os_type.as_str() {
+        os if os.starts_with("darwin") => "macOS",
+        os if os.starts_with("linux") => "Linux",
+        os => os,
+    };
+    let date = machine.timestamp.split(' ').next().unwrap_or(&machine.timestamp);
+    let busy = machine.load.as_ref().is_some_and(|load| load.busy());
     writeln!(
         svg,
-        r##"  <text x="{PLOT_LEFT:.0}" y="72" class="method">Line and dot: median of up to {} interleaved samples · shaded band: 95% confidence interval of that median; a deeper tint marks a median that is less certain</text>"##,
-        2 * roster.rounds,
+        r##"  <text x="{PLOT_LEFT:.0}" y="72" class="method">How fast each hash runs on {} ({os_name}), measured {date}{}</text>"##,
+        xml_escape(&machine.cpu_type),
+        if busy { " · other programs were busy during the run, so some results may read slow" } else { "" },
     )
     .unwrap();
     writeln!(
         svg,
-        r##"  <text x="{PLOT_LEFT:.0}" y="88" class="method">Dot shape: the code path a contender used at that point · hover or tap a dot to compare there · click a name at right to show or hide it</text>"##
+        r##"  <text x="{PLOT_LEFT:.0}" y="88" class="method">Hover or tap a dot to compare the hashes there · click a name at right to show or hide it · <tspan id="howto-door" class="door" onclick="event.stopPropagation(); toggleHowto()">How to read this graph ▸</tspan></text>"##
     )
-        .unwrap();
+    .unwrap();
 
     /*
      * Unit switch, in the header above the legend column: a vertical track with a knob
@@ -4062,12 +4135,20 @@ fn generate_svg(
     };
     button(&mut svg, "zoom-from-dec", PLOT_LEFT, 16.0, "‹", "zoomStep('from', -1)", "Show one smaller input");
     button(&mut svg, "zoom-from-inc", PLOT_LEFT + 18.0, 16.0, "›", "zoomStep('from', 1)", "Hide the smallest input shown");
-    writeln!(svg, r##"    <rect class="zoom-track" x="{ZOOM_STRIP_LEFT:.1}" y="7" width="{:.1}" height="4" rx="2"/>"##, ZOOM_STRIP_RIGHT - ZOOM_STRIP_LEFT).unwrap();
+    writeln!(svg, r##"    <g><title>The inputs every plot shows, from smallest (left) to largest; drag an end of the band to change them</title><rect class="zoom-track-hit" x="{ZOOM_STRIP_LEFT:.1}" y="0" width="{:.1}" height="18"/><rect class="zoom-track" x="{ZOOM_STRIP_LEFT:.1}" y="7" width="{:.1}" height="4" rx="2"/></g>"##, ZOOM_STRIP_RIGHT - ZOOM_STRIP_LEFT, ZOOM_STRIP_RIGHT - ZOOM_STRIP_LEFT).unwrap();
     for &bytes in &all_bytes {
         writeln!(svg, r##"    <line class="zoom-tick" x1="{0:.1}" y1="4" x2="{0:.1}" y2="14"/>"##, strip_x(bytes)).unwrap();
     }
     let (band_left, band_right) = (ZOOM_STRIP_LEFT, ZOOM_STRIP_RIGHT);
     writeln!(svg, r##"    <rect id="zoom-band" class="zoom-band" x="{:.1}" y="1" width="{:.1}" height="16" rx="3"/>"##, band_left - 3.0, band_right - band_left + 6.0).unwrap();
+    // A grip at each end of the band: drag it to move that end.
+    for (end, x) in [("from", band_left), ("to", band_right)] {
+        writeln!(
+            svg,
+            r##"    <g class="zoom-grip" id="zoom-grip-{end}" transform="translate({x:.1} 0)" onpointerdown="gripDown(event, '{end}')" onclick="event.stopPropagation()"><title>Drag to move this end</title><rect class="zoom-grip-hit" x="-8" y="-3" width="16" height="24"/><rect class="zoom-grip-bar" x="-1.5" y="3" width="3" height="12" rx="1.5"/></g>"##
+        )
+        .unwrap();
+    }
     writeln!(svg, r##"    <line id="zoom-guide-from" class="zoom-guide" x1="{band_left:.1}" y1="17" x2="{:.1}" y2="{ZOOM_GUIDE_BOTTOM:.1}"/>"##, PLOT_LEFT + X_INSET).unwrap();
     writeln!(svg, r##"    <line id="zoom-guide-to" class="zoom-guide" x1="{band_right:.1}" y1="17" x2="{:.1}" y2="{ZOOM_GUIDE_BOTTOM:.1}"/>"##, PLOT_RIGHT - X_INSET).unwrap();
     button(&mut svg, "zoom-to-dec", PLOT_RIGHT - 34.0, 16.0, "‹", "zoomStep('to', -1)", "Hide the largest input shown");
@@ -4075,6 +4156,27 @@ fn generate_svg(
     button(&mut svg, "zoom-all", PLOT_RIGHT + 14.0, 30.0, "all", "zoomAll()", "Show every input");
     writeln!(svg, "  </g>").unwrap();
     writeln!(svg, r##"  <line class="sticky-edge" x1="0" y1="{HEADER_BOTTOM:.0}" x2="{SVG_WIDTH:.0}" y2="{HEADER_BOTTOM:.0}"/>"##).unwrap();
+    /*
+     * Behind the door: how the plots are drawn, for a reader who wants it.
+     * A panel under the header, over the plots, shown by the door's click.
+     */
+    let mut howto = vec![
+        format!("Each line is one hash. Each dot is the median of up to {} timings at that size.", 2 * roster.rounds),
+        "The shaded band around a line shows how precisely its median is known (95% confidence); a deeper tint marks a less certain median.".to_owned(),
+        "A dot's shape marks the method the hash used at that size. The section \"Code paths\" at the bottom names each method.".to_owned(),
+        "Rate counts bytes or messages per second, time the nanoseconds per byte or message; the switch at right changes every plot.".to_owned(),
+        "The strip at the top narrows every plot to part of its inputs: drag an end of its band, or use the arrows at its ends.".to_owned(),
+    ];
+    if two_speeds {
+        howto.push("Where a line splits in two, the timings ran at two different speeds; the note under the last plot says why.".to_owned());
+    }
+    let howto_height = 16.0 + howto.len() as f64 * 16.0;
+    writeln!(svg, r##"  <g id="howto" style="display:none" onclick="event.stopPropagation(); toggleHowto()">"##).unwrap();
+    writeln!(svg, r##"    <rect class="howto-box" x="{:.0}" y="{:.0}" width="{:.0}" height="{howto_height:.0}" rx="6"/>"##, PLOT_LEFT - 10.0, HEADER_BOTTOM + 4.0, PLOT_RIGHT - PLOT_LEFT + 20.0).unwrap();
+    for (i, line) in howto.iter().enumerate() {
+        writeln!(svg, r##"    <text class="howto-line" x="{PLOT_LEFT:.0}" y="{:.0}">{}</text>"##, HEADER_BOTTOM + 22.0 + i as f64 * 16.0, xml_escape(line)).unwrap();
+    }
+    writeln!(svg, "  </g>").unwrap();
     writeln!(svg, "  </g>").unwrap();
 
     /*
@@ -4166,7 +4268,7 @@ fn generate_svg(
 
     writeln!(
         svg,
-        r##"  <text x="{PLOT_LEFT:.1}" y="{:.1}" class="prov-head">PROVENANCE</text>"##,
+        r##"  <text x="{PLOT_LEFT:.1}" y="{:.1}" class="prov-head">ABOUT THIS RUN</text>"##,
         provenance_top + 20.0,
     )
         .unwrap();
@@ -4230,11 +4332,11 @@ fn write_plot(svg: &mut String, plot: &Plot, roster: &Roster, results: &Results,
     let top = plot.top;
     let bottom = plot.bottom;
 
-    let heading_note = format!("{} · {}", plot.scenario.subtitle(), match plot.use_case {
-        UseCase::OneMessage => "one input of the size per call",
-        UseCase::ManyMessages => "a call per message, or per batch where the crate offers one; BLAKE3 mt sits out",
-        UseCase::Streaming => "each 64 KiB piece copied, as a read would, into the crate's incremental API, then finalize; ab-blake3 sits out",
-    });
+    let heading_note = match plot.use_case {
+        UseCase::OneMessage => plot.scenario.subtitle().to_owned(),
+        UseCase::ManyMessages => format!("{} · each hash takes the whole batch where it can, else one message at a time", plot.scenario.subtitle()),
+        UseCase::Streaming => format!("{} · as a program reading a file receives it", plot.scenario.subtitle()),
+    };
     writeln!(
         svg,
         r##"  <text x="{PLOT_LEFT:.0}" y="{:.1}" class="plot-title">{}</text>"##,
@@ -4542,8 +4644,9 @@ fn write_plot(svg: &mut String, plot: &Plot, roster: &Roster, results: &Results,
             .unwrap();
         writeln!(
             svg,
-            r##"      <title>Click to hide or show {}</title>"##,
+            r##"      <title>{}: {}. Click to hide or show it.</title>"##,
             xml_escape(algorithm.name()),
+            algorithm.blurb(),
         )
             .unwrap();
         writeln!(
@@ -4624,47 +4727,30 @@ fn write_plot(svg: &mut String, plot: &Plot, roster: &Roster, results: &Results,
     }
 
     /*
-     * Shape legend under the plot's right end: one entry per mark in use,
-     * in neutral grey, since colour belongs to contenders and shape to
-     * code paths.
+     * The hashes of this run that take no part in this plot: listed under
+     * the legend in a pale, still style, apart from the hidden ones (which
+     * keep their place and a click), with the reason as a tooltip.
      */
-    let mut marks: Vec<Mark> = Vec::new();
-    for &algorithm_index in &plot.contenders {
-        for kernel in &plot.kernels(algorithm_index).kernels {
-            if !marks.contains(&kernel.mark) {
-                marks.push(kernel.mark);
-            }
-        }
+    let absent: Vec<Algorithm> = roster.algorithms.iter().copied().filter(|algorithm| !algorithm.takes_part(plot.use_case)).collect();
+    for (i, algorithm) in absent.iter().enumerate() {
+        let y = bottom + 30.0 + i as f64 * 30.0;
+        let label_x = PLOT_RIGHT + 14.0 + 14.0 + (SWATCH_SLOTS as f64) * 13.0;
+        writeln!(svg, r##"  <g class="series-absent-row"><title>{}</title>"##, xml_escape(&absent_reason(*algorithm, plot.use_case))).unwrap();
+        writeln!(svg, r##"    <text class="series-absent" x="{label_x:.1}" y="{y:.1}">{}</text>"##, xml_escape(algorithm.name())).unwrap();
+        writeln!(svg, r##"    <text class="series-absent-detail" x="{label_x:.1}" y="{:.1}">not measured here</text>"##, y + 14.0).unwrap();
+        writeln!(svg, "  </g>").unwrap();
     }
-    let legend_y = bottom + 68.0;
-    let mut x = PLOT_RIGHT;
-    let entries: Vec<(Mark, &str)> = marks
-        .iter()
-        .enumerate()
-        .map(|(index, &mark)| {
-            (mark, match index { 0 => "first code path", 1 => "second", 2 => "third", _ => "fourth" })
-        })
-        .collect();
-    /* Lay out right-to-left so the row ends flush with the plot edge. */
-    for (mark, label) in entries.iter().rev() {
-        let label_width = label.len() as f64 * 5.6;
-        x -= label_width;
-        writeln!(
-            svg,
-            r##"  <text x="{x:.1}" y="{:.1}" class="legend">{label}</text>"##,
-            legend_y,
-        )
-            .unwrap();
-        x -= 12.0;
-        writeln!(
-            svg,
-            r##"  <g transform="translate({x:.1} {:.1}) scale(0.75)">{}</g>"##,
-            legend_y - 3.5,
-            mark_shape(*mark, "#8a8a8a", 5.0),
-        )
-            .unwrap();
-        x -= 18.0;
-    }
+}
+
+/// Why a hash of the run takes no part in a plot, for the tooltip on its
+/// pale name there.
+fn absent_reason(algorithm: Algorithm, use_case: UseCase) -> String {
+    let how = match use_case {
+        UseCase::OneMessage => "it has no way to hash one input",
+        UseCase::ManyMessages => "it has no way to hash a batch of messages over threads",
+        UseCase::Streaming => "it has no way to take an input in pieces",
+    };
+    format!("{} is measured in the other plots; {how}.", algorithm.name())
 }
 
 /*
@@ -4912,19 +4998,6 @@ struct ProvCat {
 fn shared_provenance_cats(machine: &MachineMetadata, selection_note: &str) -> Vec<ProvCat> {
     vec![
         ProvCat {
-            key: "run",
-            name: "Run",
-            summary: format!("{} · bench-hashes {BENCH_VERSION}", machine.timestamp),
-            lines: vec![
-                format!(
-                    "Run: {} · bench-hashes {BENCH_VERSION}",
-                    machine.timestamp,
-                ),
-                format!("Contenders: {selection_note}"),
-                format!("Tag: {GIT_TAG} · Working tree: {GIT_CLEAN_STATUS}"),
-            ],
-        },
-        ProvCat {
             key: "machine",
             name: "Machine",
             summary: format!(
@@ -4952,6 +5025,19 @@ fn shared_provenance_cats(machine: &MachineMetadata, selection_note: &str) -> Ve
             ],
         },
         ProvCat {
+            key: "run",
+            name: "Run",
+            summary: format!("{} · bench-hashes {}", machine.timestamp, BENCH_VERSION.split('+').next().unwrap_or(BENCH_VERSION)),
+            lines: vec![
+                format!(
+                    "Run: {} · bench-hashes {BENCH_VERSION}",
+                    machine.timestamp,
+                ),
+                format!("Contenders: {selection_note}"),
+                format!("Tag: {GIT_TAG} · Working tree: {GIT_CLEAN_STATUS}"),
+            ],
+        },
+        ProvCat {
             key: "sources",
             name: "Sources",
             summary: format!("bench-hashes @ {}", &GIT_COMMIT[..12.min(GIT_COMMIT.len())]),
@@ -4972,29 +5058,44 @@ fn shared_provenance_cats(machine: &MachineMetadata, selection_note: &str) -> Ve
 fn code_path_cat(roster: &Roster, plots: &[Plot]) -> ProvCat {
     let mut lines = Vec::new();
     for (algorithm_index, algorithm) in roster.algorithms.iter().enumerate() {
+        /* Each method once per hash, with the plots it runs in when that is not all of them. */
+        let mut methods: Vec<(&Kernel, Vec<UseCase>)> = Vec::new();
+        let mut takes_part: Vec<UseCase> = Vec::new();
         for use_case in UseCase::ALL {
             let Some(plot) = plots.iter().find(|plot| plot.use_case == use_case) else { continue };
             let Some(kernels) = &plot.kernels[algorithm_index] else { continue };
+            takes_part.push(use_case);
             for kernel in &kernels.kernels {
-                let from = if kernel.first == 0 { "from the start".to_owned() } else { format!("from {}", format_bytes(kernel.first)) };
-                let text = format!("{} · {} · {} {from}: {}", algorithm.name(), use_case.heading(), kernel.name, kernel.why);
-                /* One line to about 180 characters; longer ones continue indented. */
-                let mut line = String::new();
-                for word in text.split(' ') {
-                    if !line.is_empty() && line.len() + word.len() > 180 {
-                        lines.push(std::mem::take(&mut line));
-                        line.push_str("    ");
-                    }
-                    if !line.is_empty() && !line.ends_with("    ") {
-                        line.push(' ');
-                    }
-                    line.push_str(word);
+                match methods.iter_mut().find(|(k, _)| k.name == kernel.name && k.why == kernel.why && k.first == kernel.first) {
+                    Some((_, use_cases)) => use_cases.push(use_case),
+                    None => methods.push((kernel, vec![use_case])),
                 }
-                lines.push(line);
             }
         }
+        for (kernel, use_cases) in methods {
+            let from = if kernel.first == 0 { "from the start".to_owned() } else { format!("from {}", format_bytes(kernel.first)) };
+            let plots_named = if use_cases.len() == takes_part.len() {
+                String::new()
+            } else {
+                format!(" ({})", use_cases.iter().map(|u| u.short()).collect::<Vec<_>>().join(", "))
+            };
+            let text = format!("{} · {} {}, {from}{plots_named}: {}", algorithm.name(), kernel.mark.glyph(), kernel.name, kernel.why);
+            /* One line to about 180 characters; longer ones continue indented. */
+            let mut line = String::new();
+            for word in text.split(' ') {
+                if !line.is_empty() && line.len() + word.len() > 180 {
+                    lines.push(std::mem::take(&mut line));
+                    line.push_str("    ");
+                }
+                if !line.is_empty() && !line.ends_with("    ") {
+                    line.push(' ');
+                }
+                line.push_str(word);
+            }
+            lines.push(line);
+        }
     }
-    ProvCat { key: "paths", name: "Code paths", summary: "what each dot shape's code path is, contender by contender".to_owned(), lines }
+    ProvCat { key: "paths", name: "Code paths", summary: "the method behind each dot shape, hash by hash".to_owned(), lines }
 }
 
 /* Provenance that belongs to one contender and hides with it: the
@@ -5237,7 +5338,7 @@ function xsFor(p) {
   const left = DATA.plotLeft + DATA.xInset, width = DATA.plotRight - DATA.plotLeft - 2 * DATA.xInset;
   return DATA.plots[p].bytes.map(v => left + (Math.log2(v) - w0) / (w1 - w0) * width);
 }
-function setZoom(from, to) {
+function setZoom(from, to, duration = 600) {
   from = Math.max(0, from); to = Math.min(ALLB.length - 1, to);
   if (to <= from || (from === zFrom && to === zTo)) return;
   /* A click during a transition starts from where that one was headed. */
@@ -5246,10 +5347,10 @@ function setZoom(from, to) {
   winFrom = win;
   win = DATA.plots.map((_, p) => windowFor(p, ALLB[zFrom], ALLB[zTo]));
   updateZoomControls();
-  const startTime = performance.now(), DURATION = 600;
+  const startTime = performance.now();
   const ease = x => x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
   const step = now => {
-    const raw = Math.min(1, (now - startTime) / DURATION);
+    const raw = Math.min(1, (now - startTime) / duration);
     zoomE = ease(raw);
     relayout();
     if (hovered) showHover(hovered[0], hovered[1], hovered[2]);
@@ -5267,6 +5368,43 @@ function zoomStep(end, delta) {
   if (end === "from") setZoom(zFrom + delta, zTo); else setZoom(zFrom, zTo + delta);
 }
 function zoomAll() { setZoom(0, ALLB.length - 1); }
+/* The door under the title opens and closes the panel on how to read the graph. */
+function toggleHowto() {
+  const panel = document.getElementById("howto"), open = panel.style.display === "none";
+  panel.style.display = open ? "" : "none";
+  document.getElementById("howto-door").textContent = open ? "How to read this graph ▾" : "How to read this graph ▸";
+}
+/*
+ * Dragging a grip moves its end of the range to the input nearest the
+ * pointer, never past the other end; the plots follow in a short glide.
+ */
+let dragging = null;
+function stripIndexAt(x) {
+  let best = 0;
+  ALLB.forEach((v, i) => { if (Math.abs(stripX(v) - x) < Math.abs(stripX(ALLB[best]) - x)) best = i; });
+  return best;
+}
+function svgXOf(ev) {
+  const root = document.getElementById("zoom").ownerSVGElement;
+  if (!root || !root.getScreenCTM || !root.getScreenCTM()) return ev.clientX;
+  const pt = root.createSVGPoint();
+  pt.x = ev.clientX; pt.y = ev.clientY;
+  return pt.matrixTransform(root.getScreenCTM().inverse()).x;
+}
+function gripDown(ev, end) {
+  ev.stopPropagation(); ev.preventDefault();
+  dragging = end;
+}
+function gripMove(ev) {
+  if (!dragging) return;
+  const i = stripIndexAt(svgXOf(ev));
+  if (dragging === "from") setZoom(Math.min(i, zTo - 1), zTo, 150);
+  else setZoom(zFrom, Math.max(i, zFrom + 1), 150);
+}
+function gripUp() { dragging = null; }
+window.addEventListener("pointermove", gripMove);
+window.addEventListener("pointerup", gripUp);
+window.addEventListener("pointercancel", gripUp);
 /* The zoom strip's x of an input, on the log spacing the Rust side draws its ticks with. */
 const stripX = bytes => DATA.stripLeft + (Math.log2(bytes) - Math.log2(ALLB[0])) / (Math.log2(ALLB[ALLB.length - 1]) - Math.log2(ALLB[0])) * (DATA.stripRight - DATA.stripLeft);
 function updateZoomControls() {
@@ -5278,6 +5416,8 @@ function updateZoomControls() {
   band.setAttribute("width", (x1 - x0 + 6).toFixed(1));
   document.getElementById("zoom-guide-from").setAttribute("x1", x0.toFixed(1));
   document.getElementById("zoom-guide-to").setAttribute("x1", x1.toFixed(1));
+  document.getElementById("zoom-grip-from").setAttribute("transform", `translate(${x0.toFixed(1)} 0)`);
+  document.getElementById("zoom-grip-to").setAttribute("transform", `translate(${x1.toFixed(1)} 0)`);
   const off = (id, disabled) => document.getElementById(id).setAttribute("data-off", disabled ? "true" : "false");
   off("zoom-from-dec", zFrom === 0);
   off("zoom-from-inc", zFrom + 1 >= zTo);
@@ -5656,7 +5796,7 @@ DATA.plots.forEach((plot, p) => plot.series.forEach((s, i) => {
   });
 }));
 
-const provOpen = {run: false, machine: false, sources: false, paths: false};
+const provOpen = {run: false, machine: false, sources: false, paths: false, hashes: false};
 
 function toggleProv(cat) {
   provOpen[cat] = !provOpen[cat];
@@ -5684,7 +5824,9 @@ function layoutProv() {
   /* Contender lines live in the first plot's series groups. */
   DATA.names.forEach((_, i) => {
     document.getElementById("series-0-" + i).querySelectorAll(".series-prov").forEach(t => {
-      if (on[i]) t.setAttribute("y", (DATA.provTop + 40 + slot++ * DATA.provLine).toFixed(1));
+      const shown = on[i] && provOpen.hashes;
+      t.style.display = shown ? "" : "none";
+      if (shown) t.setAttribute("y", (DATA.provTop + 40 + slot++ * DATA.provLine).toFixed(1));
     });
   });
   const h = DATA.provTop + 40 + slot * DATA.provLine + 8;
@@ -5794,21 +5936,21 @@ function showHover(p, focus, k) {
   };
   if (f.two[k]) {
     const total = f.cnt[k] + f.cnt2[k];
-    body.appendChild(note(textEl(PAD, y, "hover-sub", "Two speeds observed. See footnote [*].", { "font-weight": "700" })));
+    body.appendChild(note(textEl(PAD, y, "hover-sub", "Two speeds here: see the note [*] under the last plot.", { "font-weight": "700" })));
     y += 13;
-    speedRow("median", f.med[k], f.low[k], f.high[k], ` · ${Math.round(f.cnt[k] * 100 / total)}% of samples`);
-    speedRow("median", f.med2[k], f.low2[k], f.high2[k], ` · ${Math.round(f.cnt2[k] * 100 / total)}% of samples`);
+    speedRow("median", f.med[k], f.low[k], f.high[k], ` · ${Math.round(f.cnt[k] * 100 / total)}% of timings`);
+    speedRow("median", f.med2[k], f.low2[k], f.high2[k], ` · ${Math.round(f.cnt2[k] * 100 / total)}% of timings`);
   } else {
     speedRow("median", f.med[k], f.low[k], f.high[k], "");
   }
-  body.appendChild(note(textEl(PAD, y, "hover-sub", `extremes ${fmt(rLo, p)}–${fmt(rHi, p)} ${unitLabel(p)} over ${f.n[k]} samples`)));
+  body.appendChild(note(textEl(PAD, y, "hover-sub", `fastest and slowest of ${f.n[k]} timings: ${fmt(rLo, p)}–${fmt(rHi, p)} ${unitLabel(p)}`)));
 
   /* Code path at this point, by name; the Code paths section at the bottom says what it is. */
   let ri = 0;
   f.kernels.forEach((r, j) => { if (k >= r.from) ri = j; });
   const kernel = f.kernels[ri];
   y += 14;
-  const pathRow = textEl(PAD + 14, y, "hover-sub", "code path: " + kernel.name);
+  const pathRow = textEl(PAD + 14, y, "hover-sub", "method: " + kernel.name);
   const shape = markGlyph(kernel.mark, DATA.colors[focus]);
   shape.setAttribute("transform", `translate(${PAD + 5} ${y - 3.5}) scale(0.8)`);
   body.appendChild(shape);
@@ -5844,7 +5986,7 @@ function showHover(p, focus, k) {
     const relW = colW("rel", "hover-ratio", `relative to ${name(focus)}`);
     wide = Math.max(wide, otherEnd + GAP + relW + PAD);
     y += LINE;
-    body.appendChild(textEl(PAD, y, "hover-sub", "contender"));
+    body.appendChild(textEl(PAD, y, "hover-sub", "hash"));
     body.appendChild(textEl(valueEnd, y, "hover-sub", unitLabel(p), { "text-anchor": "end" }));
     body.appendChild(textEl(otherEnd, y, "hover-sub", otherUnitLabel(p), { "text-anchor": "end" }));
     const relHead = textEl(0, y, "hover-sub", `relative to ${name(focus)}`, { "text-anchor": "end" });
@@ -5931,6 +6073,10 @@ window.setUnit = setUnit;
 window.flipUnit = flipUnit;
 window.zoomStep = zoomStep;
 window.zoomAll = zoomAll;
+window.toggleHowto = toggleHowto;
+window.gripDown = gripDown;
+window.gripMove = gripMove;
+window.gripUp = gripUp;
 updateZoomControls();
 relayout();
 
