@@ -3921,13 +3921,16 @@ fn generate_svg(
     .tick-label { font-size: 11px; fill: #777777; }
     .size-label { font-size: 11px; font-weight: 600; fill: #333333; }
     .size-tick { stroke: #bbbbbb; stroke-width: 1; }
-    .zoom-word { font-size: 11px; fill: #777777; }
-    .zoom-label { font-size: 12px; font-weight: 600; fill: #333333; }
     .zoom-btn { cursor: pointer; }
     .zoom-btn rect { fill: #f1f1ee; stroke: #d2d2cd; stroke-width: 1; }
     .zoom-btn text { font-size: 13px; font-weight: 600; fill: #333333; }
     .zoom-btn:hover rect { fill: #e4e4de; }
     .zoom-btn[data-off="true"] { opacity: 0.35; cursor: default; }
+    .zoom-track { fill: #e6e6e1; }
+    .sticky-edge { stroke: #ecece8; stroke-width: 1; }
+    .zoom-tick { stroke: #b4b4ae; stroke-width: 1; }
+    .zoom-band { fill: #5b21b6; fill-opacity: 0.16; stroke: #5b21b6; stroke-opacity: 0.55; stroke-width: 1; }
+    .zoom-guide { stroke: #5b21b6; stroke-opacity: 0.35; stroke-width: 1; stroke-dasharray: 3,2; }
     .value-label { font-size: 10px; font-weight: 700; }
     .series-name { font-size: 13px; font-weight: 700; }
     .series-detail { font-size: 10px; fill: #777777; }
@@ -3980,6 +3983,14 @@ fn generate_svg(
 "##,
     );
 
+    /*
+     * The header (title, method lines, unit switch, zoom row) is one group
+     * that the script keeps at the top of the window as the page scrolls,
+     * over a background of the page's colour, so its controls stay in reach
+     * beside every plot. Without script it sits at the top of the page.
+     */
+    writeln!(svg, r##"  <g id="sticky">"##).unwrap();
+    writeln!(svg, r##"  <rect id="sticky-bg" x="0" y="0" width="{SVG_WIDTH:.0}" height="{HEADER_BOTTOM:.0}" fill="#fdfdfc"/>"##).unwrap();
     writeln!(
         svg,
         r##"  <text x="{PLOT_LEFT:.0}" y="44" class="title">Cryptographic Hash Performance</text>"##
@@ -3999,7 +4010,7 @@ fn generate_svg(
         .unwrap();
 
     /*
-     * Unit switch, above the first y axis: a vertical track with a knob
+     * Unit switch, in the header above the legend column: a vertical track with a knob
      * that slides between GB/s (top) and ns/B (bottom). Clicking anywhere
      * on the switch flips every plot. The knob's position is the state;
      * the label beside it reads darker. Without script the graph stays in
@@ -4008,8 +4019,8 @@ fn generate_svg(
     writeln!(
         svg,
         r##"  <g id="unit-switch" transform="translate({:.1} {:.1})" onclick="event.stopPropagation(); flipUnit()">"##,
-        PLOT_LEFT - 60.0,
-        PLOT_TOP - 50.0,
+        UNIT_SWITCH_LEFT,
+        UNIT_SWITCH_TOP,
     )
         .unwrap();
     writeln!(svg, r##"    <title>Switch every plot between rate (GB/s, million messages per second) and time (ns per byte, ns per message)</title>"##).unwrap();
@@ -4021,16 +4032,25 @@ fn generate_svg(
     writeln!(svg, "  </g>").unwrap();
 
     /*
-     * Zoom, a row above the first plot: the inputs every plot shows, as a
-     * range of input sizes (a batch counts its messages' bytes). The first
-     * input shown sits at the left, over the axis's small end, the last at
-     * the right; each arrow steps its end by one data point, and "all"
-     * shows every point. Arrows hug their labels (width estimated from the
-     * characters, as the script does when it relabels). Without script the
-     * graph shows every point and the controls are inert.
+     * Zoom, a row above the first plot: the inputs every plot shows. A
+     * strip spans the plots' width with a tick for every input the plots
+     * have (a batch counts its messages' bytes), on the plots' logarithmic
+     * spacing; a band covers the inputs shown, and two guide lines run from
+     * its ends to the ends of the plots' axes below, so the band reads as
+     * "this part, drawn across the whole width". No numbers: each plot's
+     * own axis names its inputs, sizes or message counts. Two arrows at
+     * the strip's left end move the first input shown, two at its right
+     * end the last, and "all" shows every input; they never move. Without
+     * script the graph shows every input and the controls are inert.
      */
-    let smallest = plots.iter().map(|plot| POINTS[plot.points.start].bytes).min().expect("a graph has plots");
-    let largest = plots.iter().map(|plot| POINTS[plot.points.end - 1].bytes).max().expect("a graph has plots");
+    let all_bytes: Vec<usize> = {
+        let mut v: Vec<usize> = plots.iter().flat_map(|plot| plot.points.clone().map(|i| POINTS[i].bytes)).collect();
+        v.sort_unstable();
+        v.dedup();
+        v
+    };
+    let (lo, hi) = ((all_bytes[0] as f64).log2(), (*all_bytes.last().expect("a graph has points") as f64).log2());
+    let strip_x = |bytes: usize| ZOOM_STRIP_LEFT + ((bytes as f64).log2() - lo) / (hi - lo) * (ZOOM_STRIP_RIGHT - ZOOM_STRIP_LEFT);
     writeln!(svg, r##"  <g id="zoom" transform="translate(0 {:.1})">"##, ZOOM_ROW_TOP).unwrap();
     let button = |svg: &mut String, id: &str, x: f64, width: f64, glyph: &str, action: &str, title: &str| {
         writeln!(
@@ -4040,21 +4060,21 @@ fn generate_svg(
         )
         .unwrap();
     };
-    let from_label = format_bytes(smallest);
-    let to_label = format_bytes(largest);
-    writeln!(svg, r##"    <text class="zoom-word" x="{PLOT_LEFT:.1}" y="13">inputs from</text>"##).unwrap();
-    let from_x = PLOT_LEFT + ZOOM_FROM_WORD;
-    button(&mut svg, "zoom-from-dec", from_x, 16.0, "‹", "zoomStep('from', -1)", "Show one smaller input");
-    writeln!(svg, r##"    <text class="zoom-label" id="zoom-from" x="{:.1}" y="13">{from_label}</text>"##, from_x + 16.0 + ZOOM_PAD).unwrap();
-    button(&mut svg, "zoom-from-inc", from_x + 16.0 + 2.0 * ZOOM_PAD + zoom_label_width(&from_label), 16.0, "›", "zoomStep('from', 1)", "Hide the smallest input shown");
-    let to_inc_x = PLOT_RIGHT - 16.0;
-    let to_label_end = to_inc_x - ZOOM_PAD;
-    let to_dec_x = to_label_end - zoom_label_width(&to_label) - ZOOM_PAD - 16.0;
-    writeln!(svg, r##"    <text class="zoom-word" id="zoom-to-word" x="{:.1}" y="13" text-anchor="end">to</text>"##, to_dec_x - 6.0).unwrap();
-    button(&mut svg, "zoom-to-dec", to_dec_x, 16.0, "‹", "zoomStep('to', -1)", "Hide the largest input shown");
-    writeln!(svg, r##"    <text class="zoom-label" id="zoom-to" x="{to_label_end:.1}" y="13" text-anchor="end">{to_label}</text>"##).unwrap();
-    button(&mut svg, "zoom-to-inc", to_inc_x, 16.0, "›", "zoomStep('to', 1)", "Show one larger input");
+    button(&mut svg, "zoom-from-dec", PLOT_LEFT, 16.0, "‹", "zoomStep('from', -1)", "Show one smaller input");
+    button(&mut svg, "zoom-from-inc", PLOT_LEFT + 18.0, 16.0, "›", "zoomStep('from', 1)", "Hide the smallest input shown");
+    writeln!(svg, r##"    <rect class="zoom-track" x="{ZOOM_STRIP_LEFT:.1}" y="7" width="{:.1}" height="4" rx="2"/>"##, ZOOM_STRIP_RIGHT - ZOOM_STRIP_LEFT).unwrap();
+    for &bytes in &all_bytes {
+        writeln!(svg, r##"    <line class="zoom-tick" x1="{0:.1}" y1="4" x2="{0:.1}" y2="14"/>"##, strip_x(bytes)).unwrap();
+    }
+    let (band_left, band_right) = (ZOOM_STRIP_LEFT, ZOOM_STRIP_RIGHT);
+    writeln!(svg, r##"    <rect id="zoom-band" class="zoom-band" x="{:.1}" y="1" width="{:.1}" height="16" rx="3"/>"##, band_left - 3.0, band_right - band_left + 6.0).unwrap();
+    writeln!(svg, r##"    <line id="zoom-guide-from" class="zoom-guide" x1="{band_left:.1}" y1="17" x2="{:.1}" y2="{ZOOM_GUIDE_BOTTOM:.1}"/>"##, PLOT_LEFT + X_INSET).unwrap();
+    writeln!(svg, r##"    <line id="zoom-guide-to" class="zoom-guide" x1="{band_right:.1}" y1="17" x2="{:.1}" y2="{ZOOM_GUIDE_BOTTOM:.1}"/>"##, PLOT_RIGHT - X_INSET).unwrap();
+    button(&mut svg, "zoom-to-dec", PLOT_RIGHT - 34.0, 16.0, "‹", "zoomStep('to', -1)", "Hide the largest input shown");
+    button(&mut svg, "zoom-to-inc", PLOT_RIGHT - 16.0, 16.0, "›", "zoomStep('to', 1)", "Show one larger input");
     button(&mut svg, "zoom-all", PLOT_RIGHT + 14.0, 30.0, "all", "zoomAll()", "Show every input");
+    writeln!(svg, "  </g>").unwrap();
+    writeln!(svg, r##"  <line class="sticky-edge" x1="0" y1="{HEADER_BOTTOM:.0}" x2="{SVG_WIDTH:.0}" y2="{HEADER_BOTTOM:.0}"/>"##).unwrap();
     writeln!(svg, "  </g>").unwrap();
 
     /*
@@ -4810,22 +4830,22 @@ fn place_value_labels(plot: &Plot, results: &Results, shown: &[bool]) -> Vec<Vec
     placed
 }
 
+/// The zoom strip's ends: inside the arrow pairs at the plots' ends.
+const ZOOM_STRIP_LEFT: f64 = PLOT_LEFT + 48.0;
+const ZOOM_STRIP_RIGHT: f64 = PLOT_RIGHT - 48.0;
+/// Where the zoom guides end, below the zoom row's top, above the first
+/// plot's title.
+const ZOOM_GUIDE_BOTTOM: f64 = 26.0;
+/// The header's bottom: the sticky group's background reaches here.
+const HEADER_BOTTOM: f64 = ZOOM_ROW_TOP + ZOOM_GUIDE_BOTTOM + 2.0;
+/// The unit switch, in the header above the legend column.
+const UNIT_SWITCH_LEFT: f64 = PLOT_RIGHT + 80.0;
+const UNIT_SWITCH_TOP: f64 = 56.0;
+
 /// The zoom row's top, between the method lines and the first plot's title.
 const ZOOM_ROW_TOP: f64 = 100.0;
-/// Room for "inputs from" before the first arrow.
-const ZOOM_FROM_WORD: f64 = 68.0;
-/// Gap between an arrow and its label.
-const ZOOM_PAD: f64 = 4.0;
-
-/// A zoom label's width at its bold 12 px font, estimated from its
-/// characters; the script's zoomLabelWidth uses the same figure.
-fn zoom_label_width(label: &str) -> f64 {
-    label.chars().count() as f64 * 7.6
-}
-
 /// An input size: whole MiB or KiB where it is one, else exact bytes
-/// ("16 MiB", "3 KiB", "2304 B", "1025 B"). The script's fmtBytes writes
-/// the same.
+/// ("16 MiB", "3 KiB", "2304 B", "1025 B").
 fn format_bytes(bytes: usize) -> String {
     if bytes >= 1 << 20 && bytes % (1 << 20) == 0 {
         format!("{} MiB", bytes >> 20)
@@ -5170,7 +5190,7 @@ fn write_interaction_script(
     }
     write!(
         data,
-        "],\"sharedProv\":{shared_count},\"svgWidth\":{SVG_WIDTH:.0},\"plotLeft\":{PLOT_LEFT},\"plotRight\":{PLOT_RIGHT},\"xInset\":{X_INSET},\"labelGap\":{SERIES_LABEL_GAP},\"rounds\":{},\"labelAbove\":{VALUE_LABEL_ABOVE},\"labelBelow\":{VALUE_LABEL_BELOW},\"labelHeight\":{VALUE_LABEL_HEIGHT},\"valueSpacing\":{VALUE_COLUMN_SPACING},\"valueRoom\":{VALUE_COLUMN_ROOM},\"spreadNoticeable\":0.{SPREAD_NOTICEABLE_PERMILLE:03},\"spreadWide\":0.{SPREAD_WIDE_PERMILLE:03},\"provTop\":{:.1},\"provLine\":{PROVENANCE_LINE_HEIGHT}}}",
+        "],\"sharedProv\":{shared_count},\"svgWidth\":{SVG_WIDTH:.0},\"plotLeft\":{PLOT_LEFT},\"plotRight\":{PLOT_RIGHT},\"xInset\":{X_INSET},\"labelGap\":{SERIES_LABEL_GAP},\"rounds\":{},\"labelAbove\":{VALUE_LABEL_ABOVE},\"labelBelow\":{VALUE_LABEL_BELOW},\"labelHeight\":{VALUE_LABEL_HEIGHT},\"valueSpacing\":{VALUE_COLUMN_SPACING},\"valueRoom\":{VALUE_COLUMN_ROOM},\"spreadNoticeable\":0.{SPREAD_NOTICEABLE_PERMILLE:03},\"spreadWide\":0.{SPREAD_WIDE_PERMILLE:03},\"provTop\":{:.1},\"provLine\":{PROVENANCE_LINE_HEIGHT},\"stripLeft\":{ZOOM_STRIP_LEFT},\"stripRight\":{ZOOM_STRIP_RIGHT}}}",
         roster.rounds,
         plots[0].provenance_top,
     )
@@ -5217,12 +5237,6 @@ function xsFor(p) {
   const left = DATA.plotLeft + DATA.xInset, width = DATA.plotRight - DATA.plotLeft - 2 * DATA.xInset;
   return DATA.plots[p].bytes.map(v => left + (Math.log2(v) - w0) / (w1 - w0) * width);
 }
-/* Whole MiB or KiB where the size is one, else bytes, as the Rust side's format_bytes writes. */
-function fmtBytes(bytes) {
-  if (bytes >= 1048576 && bytes % 1048576 === 0) return bytes / 1048576 + " MiB";
-  if (bytes >= 1024 && bytes % 1024 === 0) return bytes / 1024 + " KiB";
-  return bytes + " B";
-}
 function setZoom(from, to) {
   from = Math.max(0, from); to = Math.min(ALLB.length - 1, to);
   if (to <= from || (from === zFrom && to === zTo)) return;
@@ -5253,20 +5267,17 @@ function zoomStep(end, delta) {
   if (end === "from") setZoom(zFrom + delta, zTo); else setZoom(zFrom, zTo + delta);
 }
 function zoomAll() { setZoom(0, ALLB.length - 1); }
-/* A zoom label's width, as the Rust side's zoom_label_width estimates it. */
-const zoomLabelWidth = text => text.length * 7.6;
+/* The zoom strip's x of an input, on the log spacing the Rust side draws its ticks with. */
+const stripX = bytes => DATA.stripLeft + (Math.log2(bytes) - Math.log2(ALLB[0])) / (Math.log2(ALLB[ALLB.length - 1]) - Math.log2(ALLB[0])) * (DATA.stripRight - DATA.stripLeft);
 function updateZoomControls() {
   const last = ALLB.length - 1;
-  const from = fmtBytes(ALLB[zFrom]), to = fmtBytes(ALLB[zTo]);
-  document.getElementById("zoom-from").textContent = from;
-  document.getElementById("zoom-to").textContent = to;
-  /* Arrows hug their labels: the first range's right arrow, the last range's left arrow and its word. */
-  const fromLabelX = +document.getElementById("zoom-from").getAttribute("x");
-  document.getElementById("zoom-from-inc").setAttribute("transform", `translate(${(fromLabelX + zoomLabelWidth(from) + 4).toFixed(1)} 0)`);
-  const toLabelEnd = +document.getElementById("zoom-to").getAttribute("x");
-  const toDecX = toLabelEnd - zoomLabelWidth(to) - 4 - 16;
-  document.getElementById("zoom-to-dec").setAttribute("transform", `translate(${toDecX.toFixed(1)} 0)`);
-  document.getElementById("zoom-to-word").setAttribute("x", (toDecX - 6).toFixed(1));
+  /* The band over the inputs shown; its guides run to the plots' axis ends, which stay put. */
+  const x0 = stripX(ALLB[zFrom]), x1 = stripX(ALLB[zTo]);
+  const band = document.getElementById("zoom-band");
+  band.setAttribute("x", (x0 - 3).toFixed(1));
+  band.setAttribute("width", (x1 - x0 + 6).toFixed(1));
+  document.getElementById("zoom-guide-from").setAttribute("x1", x0.toFixed(1));
+  document.getElementById("zoom-guide-to").setAttribute("x1", x1.toFixed(1));
   const off = (id, disabled) => document.getElementById(id).setAttribute("data-off", disabled ? "true" : "false");
   off("zoom-from-dec", zFrom === 0);
   off("zoom-from-inc", zFrom + 1 >= zTo);
@@ -5922,6 +5933,25 @@ window.zoomStep = zoomStep;
 window.zoomAll = zoomAll;
 updateZoomControls();
 relayout();
+
+/*
+ * The header stays at the top of the window: moved last, so it draws over
+ * the plots, and shifted down by the scroll, in the SVG's own units (the
+ * browser may scale the drawing to fit the window).
+ */
+{
+  const sticky = document.getElementById("sticky"), root = sticky.ownerSVGElement;
+  root.appendChild(sticky);
+  const place = () => {
+    const box = root.getBoundingClientRect();
+    const scale = box.height > 0 && root.viewBox ? root.viewBox.baseVal.height / box.height : 1;
+    const y = Math.max(0, -box.top) * scale;
+    sticky.setAttribute("transform", `translate(0 ${y.toFixed(1)})`);
+  };
+  window.addEventListener("scroll", place, { passive: true });
+  window.addEventListener("resize", place);
+  place();
+}
 "##;
 
 /// "source URL · branch B · commit C" for a git-dependency provenance line.

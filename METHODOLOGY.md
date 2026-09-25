@@ -410,6 +410,17 @@ Hidden contenders stay out of the ranking. On a touch screen, tapping a
 dot pins the panel; tapping it again or the background clears it. Name
 highlighting follows the mouse, since a finger has no way to leave.
 
+The strip at the top narrows every plot, in lock step, to a range of
+inputs. It has a tick for every input the plots have (a batch counts its
+messages' bytes) on the plots' logarithmic spacing; its band marks the
+range shown, and guide lines join the band's ends to the ends of the
+plots' axes, where the range's first and last inputs sit. The strip holds
+no numbers, since the plots' axes name their inputs in bytes or messages.
+Two arrows at its left end step the range's start by one input, two at its
+right end its end, and "all" restores every input; the arrows stay where
+they are. The header (title, strip, and rate/time switch) stays at the top
+of the window while the page scrolls.
+
 The names at the right edge of each plot are toggles. Clicking one
 hides that contender in every plot: its marks fade out, each y axis
 rescales to the contenders still showing, and its provenance line drops

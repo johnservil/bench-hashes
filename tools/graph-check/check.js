@@ -1,6 +1,6 @@
 // Drive the graph's script in jsdom: zoom steps, in/out/all, unit switch
-// during a zoom, toggles, hover; check positions, labels, and that no
-// attribute holds NaN.
+// during a zoom, toggles, hover; check positions, labels, the zoom band and
+// its fixed buttons, and that no attribute holds NaN.
 const fs = require("fs");
 const { JSDOM } = require("jsdom");
 const path = process.argv[2];
@@ -78,32 +78,43 @@ function checkLayout(tag) {
   // Initial layout matches the static render's x positions.
   D.plots.forEach((plot, p) => plot.x.forEach((x, k) => check(Math.abs(T.currentX[p][k] - x) < 0.02, `initial x plot ${p} point ${k}: ${T.currentX[p][k]} vs ${x}`)));
   checkLayout("initial");
-  const text = id => w.document.getElementById(id).textContent;
-  console.log("ALLB", T.ALLB.length, "values;", text("zoom-from"), "to", text("zoom-to"));
+  // The range shown, as the band covers it (no numbers in the controls).
+  const range = () => `${T.ALLB[T.zFrom]} to ${T.ALLB[T.zTo]} bytes`;
+  const tx = id => +((w.document.getElementById(id).getAttribute("transform") || "").match(/translate\(([-\d.]+)/) || [0, 0])[1];
+  const buttons = ["zoom-from-dec", "zoom-from-inc", "zoom-to-dec", "zoom-to-inc", "zoom-all"];
+  const buttonsAt = buttons.map(tx);
+  const lg = v => Math.log2(v), a = lg(T.ALLB[0]), b = lg(T.ALLB[T.ALLB.length - 1]);
+  const stripX = v => D.stripLeft + (lg(v) - a) / (b - a) * (D.stripRight - D.stripLeft);
+  function checkControls(tag) {
+    check(buttons.every((id, i) => Math.abs(tx(id) - buttonsAt[i]) < 0.01), `${tag}: the zoom buttons never move`);
+    const band = w.document.getElementById("zoom-band"), x0 = +band.getAttribute("x") + 3, x1 = x0 + +band.getAttribute("width") - 6;
+    check(Math.abs(x0 - stripX(T.ALLB[T.zFrom])) < 0.1 && Math.abs(x1 - stripX(T.ALLB[T.zTo])) < 0.1, `${tag}: the band covers ${range()}`);
+    check(Math.abs(+w.document.getElementById("zoom-guide-from").getAttribute("x1") - x0) < 0.1
+      && Math.abs(+w.document.getElementById("zoom-guide-to").getAttribute("x1") - x1) < 0.1, `${tag}: the guides start at the band's ends`);
+    check(Math.abs(+w.document.getElementById("zoom-guide-from").getAttribute("x2") - L) < 0.1
+      && Math.abs(+w.document.getElementById("zoom-guide-to").getAttribute("x2") - R) < 0.1, `${tag}: the guides end at the plots' axis ends`);
+  }
+  checkControls("initial");
+  check(w.document.querySelector("svg").lastElementChild.id === "sticky", "the header draws last, over the plots");
+  console.log("ALLB", T.ALLB.length, "values;", range());
   // Step the lower end up five points.
   for (let i = 0; i < 5; i++) w.zoomStep("from", 1);
   await sleep(700);
-  checkLayout("from+5");
-  console.log("after from+5:", text("zoom-from"), "to", text("zoom-to"), "windows", T.win().map(x => `${x.k0}-${x.k1}`).join(" "));
+  checkLayout("from+5"); checkControls("from+5");
+  console.log("after from+5:", range(), "windows", T.win().map(x => `${x.k0}-${x.k1}`).join(" "));
   // Zoom to 2 KiB .. 4 KiB exactly by steps.
   w.zoomAll(); await sleep(700);
   while (T.ALLB[T.zFrom] < 2048) w.zoomStep("from", 1);
   while (T.ALLB[T.zTo] > 4096) w.zoomStep("to", -1);
   await sleep(700);
-  checkLayout("2-4 KiB");
-  console.log("2-4 KiB:", text("zoom-from"), "to", text("zoom-to"), "windows", T.win().map(x => `${x.k0}-${x.k1}`).join(" "),
+  checkLayout("2-4 KiB"); checkControls("2-4 KiB");
+  console.log("2-4 KiB:", range(), "windows", T.win().map(x => `${x.k0}-${x.k1}`).join(" "),
     "sizes", D.plots.map((pl, p) => pl.sizes.slice(T.win()[p].k0, T.win()[p].k1 + 1).join(",")).join(" | "));
   // Step both ends, switching the unit mid-transition.
   w.zoomAll(); await sleep(700);
   w.zoomStep("from", 3); w.zoomStep("to", -3); await sleep(100); w.flipUnit(); await sleep(900);
-  checkLayout("steps + unit");
-  console.log("steps + unit:", text("zoom-from"), "to", text("zoom-to"));
-  // The arrows hug their labels.
-  const tx = id => +((w.document.getElementById(id).getAttribute("transform") || "").match(/translate\(([-\d.]+)/) || [0, 0])[1];
-  const fromEnd = +w.document.getElementById("zoom-from").getAttribute("x") + text("zoom-from").length * 7.6;
-  check(Math.abs(tx("zoom-from-inc") - (fromEnd + 4)) < 0.2, "the first range's right arrow follows its label");
-  const toStart = +w.document.getElementById("zoom-to").getAttribute("x") - text("zoom-to").length * 7.6;
-  check(Math.abs(tx("zoom-to-dec") + 16 + 4 - toStart) < 0.2, "the last range's left arrow precedes its label");
+  checkLayout("steps + unit"); checkControls("steps + unit");
+  console.log("steps + unit:", range());
   // Hover every point of every plot: the panel holds its widest line.
   w.zoomAll(); await sleep(700);
   const ev0 = { pointerType: "mouse", stopPropagation() {} };
@@ -126,8 +137,8 @@ function checkLayout(tag) {
   // Beyond the batch axis: the batch plots keep their two nearest points.
   w.zoomAll(); await sleep(700);
   while (T.zTo - T.zFrom > 1) w.zoomStep("from", 1);
-  await sleep(700); checkLayout("last two");
-  console.log("last two:", text("zoom-from"), "to", text("zoom-to"), "windows", T.win().map(x => `${x.k0}-${x.k1}`).join(" "));
+  await sleep(700); checkLayout("last two"); checkControls("last two");
+  console.log("last two:", range(), "windows", T.win().map(x => `${x.k0}-${x.k1}`).join(" "));
   // Toggle a series, hover a visible dot and a hidden one.
   w.toggleSeries(0); await sleep(50); checkLayout("toggle");
   const ev = { pointerType: "mouse", stopPropagation() {} };

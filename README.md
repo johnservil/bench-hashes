@@ -47,7 +47,11 @@ same inputs as the first, handed over in 64 KiB pieces as a program
 reading a file would, so the hash never learns the total size in
 advance. Higher is faster.
 Hover over a dot, or tap it, to compare every contender at that point.
-Click a name at the right to show or hide that contender.
+Click a name at the right to show or hide that contender. The strip at
+the top narrows every plot to part of its inputs: its band marks the part
+shown, the arrows at its left end move where that part starts, the arrows
+at its right end where it stops, and "all" shows everything. The strip
+and the rate/time switch stay at the top of the window as you scroll.
 
 At the bottom, the Provenance section says what was measured and on
 what machine. Its Machine line also says whether the computer was quiet
