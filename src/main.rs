@@ -118,10 +118,11 @@ const AB_BLAKE3_SOURCE_INFO: &str = env!("AB_BLAKE3_SOURCE_INFO");
  * and dropped: interpolated from 8 and 32 MiB, every contender's median
  * fell within the difference between two runs, on both machines.
  *
- * The streamed axis repeats the one-message sizes, each input fed to the
- * contender's incremental API (update, then finalize) in PIECE_LEN
- * pieces: below PIECE_LEN one update, above it one per piece, so the
- * implementation never sees the total up front.
+ * The streamed axis repeats the one-message sizes, each input produced
+ * in PIECE_LEN pieces, each piece copied as a read would copy it, and fed
+ * to the contender's incremental API (then finalized): below PIECE_LEN one
+ * piece, above it one per PIECE_LEN, so the implementation never sees the
+ * total up front. The servil fork takes the pieces into its Stream.
  *
  * The many-messages axis counts 64-byte messages per batch, from one to
  * 262144 (16 MiB of input). Powers of two from 1 to 16 show a SIMD batch
@@ -270,7 +271,8 @@ impl RunSamples {
 enum UseCase {
     OneMessage,
     ManyMessages,
-    /// One message fed through the incremental API in PIECE_LEN pieces.
+    /// One message produced in PIECE_LEN pieces, each copied as a read
+    /// would, through the incremental API (the fork's Stream).
     Streaming,
 }
 
@@ -605,10 +607,10 @@ impl Algorithm {
             | Self::Sha1Dc
             | Self::Sha256CommonCrypto
             | Self::Sha256Ring => "single-threaded",
-            Self::Blake3Servil => "single-threaded; blake3_servil::hash for one message, blake3_servil::hash_many for a batch, Hasher::update for a stream",
+            Self::Blake3Servil => "single-threaded; blake3_servil::hash for one message, blake3_servil::hash_many for a batch, Stream for a stream",
             Self::AbBlake3 => "single-threaded; ab_blake3::const_hash for one message, ab_blake3::single_block_hash_many_exact::<N> for a batch of N 64-byte messages",
             Self::Blake3Rayon => "multithreaded; Hasher::update_rayon (per piece, for a stream) on Rayon's global pool, the crate's own multithreading as a program gets it by default: the tree splits recursively over the pool, and inputs under a few chunks stay on the caller's thread",
-            Self::Blake3ServilMt => "multithreaded; blake3_servil::hash_multithreaded for one message, hash_many_multithreaded for a batch, and Hasher::update_multithreaded for a stream: the fork chooses whether to use its shared resident workers; the kernel tables below show the thresholds",
+            Self::Blake3ServilMt => "multithreaded; blake3_servil::hash_multithreaded for one message, hash_many_multithreaded for a batch, and Stream::new_multithreaded for a stream: the fork chooses whether to use its shared resident workers; the kernel tables below show the thresholds",
         }
     }
 
@@ -1660,9 +1662,13 @@ fn hash_batch(
 }
 
 /*
- * The streaming use case: each contender's incremental API, fed `input` in
- * PIECE_LEN pieces (one update when it is shorter, none when empty), then
- * finalized; one digest per pass into `consume`.
+ * The streaming use case: one message produced in PIECE_LEN pieces, each
+ * copied from `input` as a read would (one copy when the message is
+ * shorter, none when empty), then finalized; one digest per pass into
+ * `consume`. The synchronous incremental APIs get each piece copied into a
+ * PIECE_LEN buffer and then hash it, so producing and hashing take turns;
+ * the servil fork's Stream takes the copy straight into its own buffers
+ * and hashes full ones on another thread while the next pieces arrive.
  */
 fn hash_stream(algorithm: Algorithm, input: &[u8], iterations: usize, consume: impl FnMut(&[u8])) {
     use sha2::Digest as _;
@@ -1670,33 +1676,25 @@ fn hash_stream(algorithm: Algorithm, input: &[u8], iterations: usize, consume: i
     match algorithm {
         Algorithm::Blake3 => each_stream(input, iterations, |pieces| {
             let mut hasher = blake3::Hasher::new();
-            pieces.for_each(|piece| { hasher.update(piece); });
+            pieces(&mut |piece| { hasher.update(piece); });
             *hasher.finalize().as_bytes()
         }, consume),
         Algorithm::Blake3Rayon => each_stream(input, iterations, |pieces| {
             let mut hasher = blake3::Hasher::new();
-            pieces.for_each(|piece| { hasher.update_rayon(piece); });
+            pieces(&mut |piece| { hasher.update_rayon(piece); });
             *hasher.finalize().as_bytes()
         }, consume),
-        Algorithm::Blake3Servil => each_stream(input, iterations, |pieces| {
-            let mut hasher = blake3_servil::Hasher::new();
-            pieces.for_each(|piece| { hasher.update(piece); });
-            *hasher.finalize().as_bytes()
-        }, consume),
-        Algorithm::Blake3ServilMt => each_stream(input, iterations, |pieces| {
-            let mut hasher = blake3_servil::Hasher::new();
-            pieces.for_each(|piece| { hasher.update_multithreaded(piece); });
-            *hasher.finalize().as_bytes()
-        }, consume),
+        Algorithm::Blake3Servil => each_stream_into(input, iterations, blake3_servil::Stream::new, consume),
+        Algorithm::Blake3ServilMt => each_stream_into(input, iterations, blake3_servil::Stream::new_multithreaded, consume),
         Algorithm::Sha256 => each_stream(input, iterations, |pieces| {
             let mut hasher = Sha256::new();
-            pieces.for_each(|piece| hasher.update(piece));
+            pieces(&mut |piece| hasher.update(piece));
             let digest: [u8; 32] = hasher.finalize().into();
             digest
         }, consume),
         Algorithm::Sha256Ring => each_stream(input, iterations, |pieces| {
             let mut context = ring::digest::Context::new(&ring::digest::SHA256);
-            pieces.for_each(|piece| context.update(piece));
+            pieces(&mut |piece| context.update(piece));
             let mut digest = [0u8; 32];
             digest.copy_from_slice(context.finish().as_ref());
             digest
@@ -1704,7 +1702,7 @@ fn hash_stream(algorithm: Algorithm, input: &[u8], iterations: usize, consume: i
         Algorithm::Sha256CommonCrypto => each_stream(input, iterations, |pieces| common_crypto::sha256_pieces(pieces), consume),
         Algorithm::Sha1Dc => each_stream(input, iterations, |pieces| {
             let mut hasher = sha1_checked::Sha1::new();
-            pieces.for_each(|piece| hasher.update(piece));
+            pieces(&mut |piece| hasher.update(piece));
             let mut digest = [0u8; 20];
             digest.copy_from_slice(hasher.try_finalize().hash());
             digest
@@ -1713,18 +1711,41 @@ fn hash_stream(algorithm: Algorithm, input: &[u8], iterations: usize, consume: i
     }
 }
 
+/// The pieces of one stream, each copied into a PIECE_LEN buffer (the
+/// producer's read) and handed to the callback in order.
+type Pieces<'a> = &'a mut dyn FnMut(&mut dyn FnMut(&[u8]));
+
 /// `iterations` streams of `input` through `hash`, which receives the
-/// pieces in order; the digest of each goes to `consume`.
+/// pieces, copied, in order; the digest of each goes to `consume`.
 #[inline(always)]
 fn each_stream<D: AsRef<[u8]>>(
     input: &[u8],
     iterations: usize,
-    hash: impl Fn(&mut dyn Iterator<Item = &[u8]>) -> D,
+    hash: impl Fn(Pieces) -> D,
     mut consume: impl FnMut(&[u8]),
 ) {
+    let mut buffer = vec![0u8; PIECE_LEN];
     for _ in 0..iterations {
-        let mut pieces = black_box(input).chunks(PIECE_LEN);
+        let mut pieces = |each: &mut dyn FnMut(&[u8])| {
+            for piece in black_box(input).chunks(PIECE_LEN) {
+                buffer[..piece.len()].copy_from_slice(piece);
+                each(black_box(&buffer[..piece.len()]));
+            }
+        };
         consume(hash(&mut pieces).as_ref());
+    }
+}
+
+/// `iterations` streams of `input` into a fresh servil Stream from `new`,
+/// each PIECE_LEN piece copied into the stream's own buffers.
+#[inline(always)]
+fn each_stream_into(input: &[u8], iterations: usize, new: fn() -> blake3_servil::Stream, mut consume: impl FnMut(&[u8])) {
+    for _ in 0..iterations {
+        let mut stream = new();
+        for piece in black_box(input).chunks(PIECE_LEN) {
+            stream.update(piece);
+        }
+        consume(stream.finalize().as_bytes());
     }
 }
 
@@ -1996,7 +2017,7 @@ mod common_crypto {
     }
 
     /// One Update per piece, in order.
-    pub fn sha256_pieces(pieces: &mut dyn Iterator<Item = &[u8]>) -> [u8; DIGEST_LEN] {
+    pub fn sha256_pieces(pieces: super::Pieces) -> [u8; DIGEST_LEN] {
         let mut context = Context { count: [0; 2], hash: [0; 8], wbuf: [0; 16] };
         let mut digest = [0u8; DIGEST_LEN];
         // Safe: `context` is a valid CC_SHA256_CTX for every call, each
@@ -2004,10 +2025,10 @@ mod common_crypto {
         // bytes to `digest`. Each call returns 1 on success.
         unsafe {
             assert_eq!(CC_SHA256_Init(&mut context), 1, "CC_SHA256_Init failed");
-            for piece in pieces {
+            pieces(&mut |piece| {
                 let len = u32::try_from(piece.len()).expect("CC_SHA256_Update takes a 32-bit length");
                 assert_eq!(CC_SHA256_Update(&mut context, piece.as_ptr(), len), 1, "CC_SHA256_Update failed");
-            }
+            });
             assert_eq!(CC_SHA256_Final(digest.as_mut_ptr(), &mut context), 1, "CC_SHA256_Final failed");
         }
         digest
@@ -2021,7 +2042,7 @@ mod common_crypto {
         unreachable!("CommonCrypto SHA-256 is an Apple-only contender")
     }
 
-    pub fn sha256_pieces(_pieces: &mut dyn Iterator<Item = &[u8]>) -> [u8; 32] {
+    pub fn sha256_pieces(_pieces: super::Pieces) -> [u8; 32] {
         unreachable!("CommonCrypto SHA-256 is an Apple-only contender")
     }
 }
@@ -4191,7 +4212,7 @@ fn write_plot(svg: &mut String, plot: &Plot, roster: &Roster, results: &Results,
     let heading_note = format!("{} · {}", plot.scenario.subtitle(), match plot.use_case {
         UseCase::OneMessage => "one input of the size per call",
         UseCase::ManyMessages => "a call per message, or per batch where the crate offers one; BLAKE3 mt sits out",
-        UseCase::Streaming => "the crate's incremental API: update per 64 KiB piece, then finalize; ab-blake3 sits out",
+        UseCase::Streaming => "each 64 KiB piece copied, as a read would, into the crate's incremental API, then finalize; ab-blake3 sits out",
     });
     writeln!(
         svg,
@@ -4981,7 +5002,7 @@ fn contender_provenance_lines(
             algorithm.mode(),
         )],
         Algorithm::Blake3Servil => vec![
-            format!("{name}: {} · hash, hash_many for a batch, Hasher::update for a stream", short_git_source(BLAKE3_SERVIL_SOURCE_INFO)),
+            format!("{name}: {} · hash, hash_many for a batch, Stream for a stream", short_git_source(BLAKE3_SERVIL_SOURCE_INFO)),
             format!("{name}: single-threaded · platform {platform}"),
         ],
         Algorithm::Sha256CommonCrypto => vec![format!("{name}: {} · {}", algorithm.mode(), kernels.kernels[0].name)],
@@ -4999,7 +5020,7 @@ fn contender_provenance_lines(
             format!("{name}: {}", algorithm.thread_resources().expect("BLAKE3 mt runs on Rayon's pool")),
         ],
         Algorithm::Blake3ServilMt => vec![
-            format!("{name}: {} · hash_multithreaded, hash_many_multithreaded for a batch, Hasher::update_multithreaded for a stream", short_git_source(BLAKE3_SERVIL_SOURCE_INFO)),
+            format!("{name}: {} · hash_multithreaded, hash_many_multithreaded for a batch, Stream::new_multithreaded for a stream", short_git_source(BLAKE3_SERVIL_SOURCE_INFO)),
             format!("{name}: multithreaded on the fork's own threads · platform {platform}"),
         ],
         Algorithm::AbBlake3 => vec![format!(
