@@ -9,8 +9,10 @@ const script = svg.match(/<script><!\[CDATA\[([\s\S]*)\]\]><\/script>/)[1];
 const markup = svg.replace(/<script><!\[CDATA\[[\s\S]*\]\]><\/script>/, "");
 const dom = new JSDOM(`<!DOCTYPE html><html><body>${markup}</body></html>`, { runScripts: "outside-only", pretendToBeVisual: true });
 const w = dom.window;
-w.eval(script + "\n;window.__on = on; window.__t = {DATA, ALLB, win: () => win, currentX, get zFrom() { return zFrom; }, get zTo() { return zTo; }};");
+w.eval(script + "\n;window.__on = on; window.__t = {DATA, ALLB, setZoom, plotShift, get belowShift() { return belowShift; }, win: () => win, currentX, get zFrom() { return zFrom; }, get zTo() { return zTo; }};");
 const T = w.__t, D = T.DATA;
+// Step an end of the range, as the band's grips do one tick at a time.
+w.zoomStep = (end, delta) => end === "from" ? T.setZoom(T.zFrom + delta, T.zTo) : T.setZoom(T.zFrom, T.zTo + delta);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 let failures = 0;
 const check = (cond, what) => { if (!cond) { failures++; console.log("FAIL", what); } };
@@ -81,14 +83,14 @@ function checkLayout(tag) {
   // The range shown, as the band covers it (no numbers in the controls).
   const range = () => `${T.ALLB[T.zFrom]} to ${T.ALLB[T.zTo]} bytes`;
   const tx = id => +((w.document.getElementById(id).getAttribute("transform") || "").match(/translate\(([-\d.]+)/) || [0, 0])[1];
-  const buttons = ["zoom-from-dec", "zoom-from-inc", "zoom-to-dec", "zoom-to-inc", "zoom-all"];
+  const buttons = ["zoom-all"];
   const buttonsAt = buttons.map(tx);
   const lg = v => Math.log2(v), a = lg(T.ALLB[0]), b = lg(T.ALLB[T.ALLB.length - 1]);
   const stripX = v => D.stripLeft + (lg(v) - a) / (b - a) * (D.stripRight - D.stripLeft);
   function checkControls(tag) {
     const offs = buttons.map(id => w.document.getElementById(id).getAttribute("data-off") === "true");
     const last = T.ALLB.length - 1;
-    const want = [T.zFrom === 0, T.zFrom + 1 >= T.zTo, T.zTo - 1 <= T.zFrom, T.zTo === last, T.zFrom === 0 && T.zTo === last];
+    const want = [T.zFrom === 0 && T.zTo === last];
     check(offs.every((o, i) => o === want[i]), `${tag}: exactly the buttons that can act show (${offs})`);
     check(buttons.every((id, i) => Math.abs(tx(id) - buttonsAt[i]) < 0.01), `${tag}: the zoom buttons never move`);
     const band = w.document.getElementById("zoom-band"), x0 = +band.getAttribute("x") + 3, x1 = x0 + +band.getAttribute("width") - 6;
@@ -130,19 +132,52 @@ function checkLayout(tag) {
   checkLayout("steps + unit"); checkControls("steps + unit");
   check(arrows().every(d => headY(d) > tailY(d)), "in time the better arrows point down");
   console.log("steps + unit:", range());
-  // Drag each grip: its end follows the pointer to the nearest input, never past the other end.
+  // Drag each grip and the band: an end follows the pointer's travel to the nearest input, never past the other end.
   w.zoomAll(); await sleep(700);
   const pev = x => ({ clientX: x, pointerId: 1, stopPropagation() {}, preventDefault() {} });
-  w.gripDown(pev(stripX(T.ALLB[0])), "from"); w.gripMove(pev(stripX(T.ALLB[4]) + 1)); w.gripUp();
+  w.gripDown(pev(stripX(T.ALLB[0])), "from"); w.gripMove(pev(stripX(T.ALLB[4]) + 1));
+  check(w.document.getElementById("zoom-tick-4").getAttribute("data-at") === "true", "while dragging, the tick under the end lights up");
+  w.gripUp();
   check(T.zFrom === 4, `dragging the start grip to input 4 moved the start to ${T.zFrom}`);
-  w.gripDown(pev(0), "to"); w.gripMove(pev(stripX(T.ALLB[2]))); w.gripUp();
+  check(w.document.getElementById("zoom-tick-4").getAttribute("data-at") === "false", "after the drag, the ticks go quiet");
+  w.gripDown(pev(stripX(T.ALLB[T.zTo])), "to"); w.gripMove(pev(stripX(T.ALLB[2]))); w.gripUp();
   check(T.zTo === 5, `dragging the end grip past the start stops one input after it (${T.zTo})`);
   w.gripMove(pev(stripX(T.ALLB[T.ALLB.length - 1])));
   check(T.zTo === 5, "a pointer moving after release moves nothing");
+  T.setZoom(3, 9); await sleep(700);
+  w.gripDown(pev(stripX(T.ALLB[3]) + 5), "both"); w.gripMove(pev(stripX(T.ALLB[5]) + 5)); w.gripUp();
+  check(T.zFrom === 5 && T.zTo === 11, `dragging the band moves both ends by two inputs (${T.zFrom}-${T.zTo})`);
+  w.gripDown(pev(stripX(T.ALLB[T.zFrom])), "both"); w.gripMove(pev(stripX(T.ALLB[0]) - 500)); w.gripUp();
+  check(T.zFrom === 0 && T.zTo === 6, `the band stops at the strip's start (${T.zFrom}-${T.zTo})`);
+  // A slow drag moves at a third of the pointer's travel.
+  T.setZoom(0, T.ALLB.length - 1); await sleep(700);
+  const now0 = w.performance.now;
+  let clock = 0; w.performance.now = () => clock;
+  w.gripDown(pev(stripX(T.ALLB[0])), "from");
+  const target = stripX(T.ALLB[6]) - stripX(T.ALLB[0]);
+  for (let moved = 0; moved < target; moved += 2) { clock += 20; w.gripMove(pev(stripX(T.ALLB[0]) + moved + 2)); }
+  w.gripUp(); w.performance.now = now0;
+  check(T.zFrom < 6 && T.zFrom >= 1, `a slow drag of six inputs' distance moves the start less far (${T.zFrom})`);
   await sleep(300); checkLayout("dragged"); checkControls("dragged");
   const grip = +((w.document.getElementById("zoom-grip-from").getAttribute("transform") || "").match(/translate\(([-\d.]+)/) || [0, 0])[1];
   check(Math.abs(grip - stripX(T.ALLB[T.zFrom])) < 0.1, "the start grip sits at the band's start");
-  // Hover every point of every plot: the panel holds its widest line.
+  // The chips: hide the solo plots, and the shared ones move up; a row keeps one chip.
+  w.zoomAll(); await sleep(700);
+  const solo = D.plots.map((pl, p) => pl.scenario === "solo" ? p : -1).filter(p => p >= 0);
+  const shared = D.plots.map((pl, p) => pl.scenario === "shared" ? p : -1).filter(p => p >= 0);
+  if (solo.length && shared.length) {
+    const pitch = D.plots[1].top - D.plots[0].top;
+    w.toggleChip("scenario", "solo");
+    check(solo.every(p => w.document.getElementById("plot-" + p).classList.contains("plot-off")), "the solo plots hide");
+    check(shared.every((p, i) => T.plotShift[p] === (i - p) * pitch), "the shared plots move up into the solo plots' places");
+    check(T.belowShift === -solo.length * pitch, "what lies below follows them up");
+    w.toggleChip("scenario", "shared");
+    check(shared.every(p => !w.document.getElementById("plot-" + p).classList.contains("plot-off")), "the last chip of a row stays pressed");
+    w.toggleChip("scenario", "solo");
+    check(D.plots.every((_, p) => T.plotShift[p] === 0) && T.belowShift === 0, "pressing solo again restores every plot's place");
+    noNaN("chips");
+  }
+  // Hover every point of every plot  // Hover every point of every plot: the panel holds its widest line.
   w.zoomAll(); await sleep(700);
   const ev0 = { pointerType: "mouse", stopPropagation() {} };
   let widest = 0;

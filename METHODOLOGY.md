@@ -69,20 +69,25 @@ feel it.
 A program that reads a file or a socket hands a hash its input piece by
 piece. The streamed axis measures that at the one-message sizes, with
 pieces of 64 KiB (a common read buffer): an input below 64 KiB is one
-piece, a larger one a piece per 64 KiB. Producing each piece costs one
-copy, as a read into memory does, and every contender pays it, timed.
-The synchronous incremental APIs get each piece copied into a 64 KiB
-buffer and then hash it, so producing and hashing take turns
-(`Hasher::update` in crates.io BLAKE3, `update_rayon` for BLAKE3 official mt,
-`Digest::update` in sha2 and sha1-checked, ring's `Context::update`,
-CommonCrypto's `CC_SHA256_Update`). The servil fork's `Stream` takes the
-copy straight into its own buffers and hashes each full one on another
-thread while the next pieces arrive (`Stream::new` for BLAKE3 servil st,
-`Stream::new_multithreaded` for BLAKE3 servil mt). ab-blake3 has no
+piece, a larger one a piece per 64 KiB. Each piece is read, timed, as a
+memory copy from the input, the cheapest read there is (a read from the
+operating system's page cache adds a system call per piece), and every
+contender pays it once per byte.
+
+Where each read lands follows the contender's API. The synchronous
+incremental APIs get each piece read into a 64 KiB buffer of the
+program's and then hash it, so reading and hashing take turns
+(`Hasher::update` in crates.io BLAKE3, `update_rayon` for BLAKE3 official
+mt, `Digest::update` in sha2 and sha1-checked, ring's `Context::update`,
+CommonCrypto's `CC_SHA256_Update`). The servil fork's `Stream` has each
+read land in its own buffers (`buffer()` and `filled(n)`) and hashes each
+full 1 MiB buffer on another thread while the next pieces are read
+(`Stream::new` for BLAKE3 servil st, `Stream::new_multithreaded` for
+BLAKE3 servil mt): its time is about the slower of the reading and the
+hashing, plus the first buffer's reading and the last one's hashing. A
+stream shorter than one buffer is hashed when it ends. ab-blake3 has no
 incremental API and sits out. The expected digests are the one-message
-ones. Not knowing the total costs where a one-shot
-call plans for it: a BLAKE3 `Hasher` hashes the whole subtrees it can
-and holds back the last chunk until `finalize`.
+ones.
 
 ## The many-messages use case
 
@@ -418,11 +423,17 @@ messages' bytes) on the plots' logarithmic spacing; its band marks the
 range shown. The strip spans the plots' own x range, so at the full range
 each tick stands over its input in the plots. The strip holds
 no numbers, since the plots' axes name their inputs in bytes or messages.
-Two arrows at its left end step the range's start by one input, two at its
-right end its end, and "all" restores every input; each shows only when
-it can act (at the full range the outward arrows and "all" are absent) and
-sits in the same place whenever it shows. The header (title, strip, and rate/time switch) stays at the top
-of the window while the page scrolls.
+Dragging either end of the band moves that end of the range, and
+dragging the band moves both, from tick to tick and never past each
+other. A slowly moving pointer moves the band's end at a third of its
+travel, so a slow hand can settle on one of several close ticks, and an
+end leaves its tick only once the pointer aims 3 px nearer another; the
+ticks under the ends light up while dragging. "All", shown whenever the
+range is narrowed, restores every input. The chips at the header's right
+show and hide plots, by scenario (solo, shared) and by use case (one
+input, batches, pieces); the plots shown close ranks, and a row keeps at
+least one chip pressed. The header (title, strip, chips, and rate/time
+switch) stays at the top of the window while the page scrolls.
 
 The page is written for three readers at once: a newcomer who holds only
 the page, a regular who knows the benchmark, and a maintainer. The header

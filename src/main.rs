@@ -4005,6 +4005,16 @@ fn generate_svg(
     .zoom-tick { stroke: #b4b4ae; stroke-width: 1; }
     .zoom-band { fill: #5b21b6; fill-opacity: 0.16; stroke: #5b21b6; stroke-opacity: 0.55; stroke-width: 1; }
     .zoom-grip { cursor: ew-resize; touch-action: none; }
+    .zoom-band { cursor: grab; touch-action: none; }
+    .zoom-tick[data-at="true"] { stroke: #5b21b6; stroke-width: 2; }
+    .chip { cursor: pointer; }
+    .chip rect { fill: #ffffff; stroke: #cfcfca; stroke-width: 1; }
+    .chip text { font-size: 11px; fill: #8a8a8a; }
+    .chip[data-on="true"] rect { fill: #ede9fe; stroke: #a78bfa; }
+    .chip[data-on="true"] text { fill: #3b0764; font-weight: 600; }
+    .chip-label { font-size: 10px; fill: #9a9a9a; }
+    .plot-off { visibility: hidden; pointer-events: none; }
+    .plot-off .series-prov { visibility: visible; }
     .zoom-grip-hit { fill: transparent; }
     .zoom-grip-bar { fill: #5b21b6; fill-opacity: 0.7; }
     .zoom-grip:hover .zoom-grip-bar { fill-opacity: 1; }
@@ -4142,9 +4152,9 @@ fn generate_svg(
     let (lo, hi) = ((all_bytes[0] as f64).log2(), (*all_bytes.last().expect("a graph has points") as f64).log2());
     let strip_x = |bytes: usize| ZOOM_STRIP_LEFT + ((bytes as f64).log2() - lo) / (hi - lo) * (ZOOM_STRIP_RIGHT - ZOOM_STRIP_LEFT);
     writeln!(svg, r##"  <g id="zoom" transform="translate(0 {:.1})">"##, ZOOM_ROW_TOP).unwrap();
-    /* A button shows only when it can act; the page opens at the full range, where the outward arrows and "all" have nothing to do. */
+    /* "all" shows only when it can act; the page opens at the full range. */
     let button = |svg: &mut String, id: &str, x: f64, width: f64, glyph: &str, action: &str, title: &str| {
-        let off = matches!(id, "zoom-from-dec" | "zoom-to-inc" | "zoom-all");
+        let off = id == "zoom-all";
         writeln!(
             svg,
             r##"    <g class="zoom-btn" id="{id}" data-off="{off}" transform="translate({x:.1} 0)" onclick="event.stopPropagation(); {action}"><title>{title}</title><rect x="0" y="0" width="{width:.1}" height="18" rx="4"/><text x="{:.1}" y="13" text-anchor="middle">{glyph}</text></g>"##,
@@ -4152,15 +4162,13 @@ fn generate_svg(
         )
         .unwrap();
     };
-    button(&mut svg, "zoom-from-dec", PLOT_LEFT, 16.0, "‹", "zoomStep('from', -1)", "Show one smaller input");
-    button(&mut svg, "zoom-from-inc", PLOT_LEFT + 18.0, 16.0, "›", "zoomStep('from', 1)", "Hide the smallest input shown");
-    debug_assert!(PLOT_LEFT + 34.0 < ZOOM_STRIP_LEFT - 3.0 && PLOT_RIGHT - 34.0 > ZOOM_STRIP_RIGHT + 3.0, "the arrows fit beside the strip");
-    writeln!(svg, r##"    <g><title>The inputs every plot shows, from smallest (left) to largest; drag an end of the band to change them</title><rect class="zoom-track-hit" x="{ZOOM_STRIP_LEFT:.1}" y="0" width="{:.1}" height="18"/><rect class="zoom-track" x="{ZOOM_STRIP_LEFT:.1}" y="7" width="{:.1}" height="4" rx="2"/></g>"##, ZOOM_STRIP_RIGHT - ZOOM_STRIP_LEFT, ZOOM_STRIP_RIGHT - ZOOM_STRIP_LEFT).unwrap();
-    for &bytes in &all_bytes {
-        writeln!(svg, r##"    <line class="zoom-tick" x1="{0:.1}" y1="4" x2="{0:.1}" y2="14"/>"##, strip_x(bytes)).unwrap();
+    writeln!(svg, r##"    <g><title>The inputs every plot shows, from smallest (left) to largest; drag an end of the band, or the band itself</title><rect class="zoom-track-hit" x="{ZOOM_STRIP_LEFT:.1}" y="0" width="{:.1}" height="18"/><rect class="zoom-track" x="{ZOOM_STRIP_LEFT:.1}" y="7" width="{:.1}" height="4" rx="2"/></g>"##, ZOOM_STRIP_RIGHT - ZOOM_STRIP_LEFT, ZOOM_STRIP_RIGHT - ZOOM_STRIP_LEFT).unwrap();
+    for (i, &bytes) in all_bytes.iter().enumerate() {
+        writeln!(svg, r##"    <line class="zoom-tick" id="zoom-tick-{i}" x1="{0:.1}" y1="4" x2="{0:.1}" y2="14"/>"##, strip_x(bytes)).unwrap();
     }
     let (band_left, band_right) = (ZOOM_STRIP_LEFT, ZOOM_STRIP_RIGHT);
-    writeln!(svg, r##"    <rect id="zoom-band" class="zoom-band" x="{:.1}" y="1" width="{:.1}" height="16" rx="3"/>"##, band_left - 3.0, band_right - band_left + 6.0).unwrap();
+    /* The band itself: drag it to move both ends at once. */
+    writeln!(svg, r##"    <rect id="zoom-band" class="zoom-band" x="{:.1}" y="1" width="{:.1}" height="16" rx="3" onpointerdown="gripDown(event, 'both')" onclick="event.stopPropagation()"/>"##, band_left - 3.0, band_right - band_left + 6.0).unwrap();
     // A grip at each end of the band: drag it to move that end.
     for (end, x) in [("from", band_left), ("to", band_right)] {
         writeln!(
@@ -4169,10 +4177,60 @@ fn generate_svg(
         )
         .unwrap();
     }
-    button(&mut svg, "zoom-to-dec", PLOT_RIGHT - 34.0, 16.0, "‹", "zoomStep('to', -1)", "Hide the largest input shown");
-    button(&mut svg, "zoom-to-inc", PLOT_RIGHT - 16.0, 16.0, "›", "zoomStep('to', 1)", "Show one larger input");
     button(&mut svg, "zoom-all", PLOT_RIGHT + 14.0, 30.0, "all", "zoomAll()", "Show every input");
     writeln!(svg, "  </g>").unwrap();
+
+    /*
+     * Chips that show and hide plots: one row for who is hashing (solo,
+     * shared), one for what (one input, batches, pieces), from the plots
+     * this run has. Pressed chips show their plots; the plots shown close
+     * ranks. A row keeps at least one chip pressed.
+     */
+    let chip_rows: [(&str, Vec<(String, &str, String)>); 2] = [
+        ("scenario", {
+            let mut v = Vec::new();
+            for scenario in [Scenario::Solo, Scenario::Shared] {
+                if plots.iter().any(|plot| plot.scenario == scenario) {
+                    let tip = match scenario {
+                        Scenario::Solo => "Show or hide the plots of one program hashing alone",
+                        Scenario::Shared => "Show or hide the plots of two programs hashing at once",
+                    };
+                    v.push((scenario.key().to_owned(), scenario.heading(), tip.to_owned()));
+                }
+            }
+            v
+        }),
+        ("use", {
+            let mut v = Vec::new();
+            for use_case in UseCase::ALL {
+                if plots.iter().any(|plot| plot.use_case == use_case) {
+                    let (label, tip) = match use_case {
+                        UseCase::OneMessage => ("One input", "Show or hide the plots of one input at a time"),
+                        UseCase::ManyMessages => ("Batches", "Show or hide the plots of batches of 64-byte messages"),
+                        UseCase::Streaming => ("Pieces", "Show or hide the plots of one input arriving in 64 KiB pieces"),
+                    };
+                    v.push((format!("{use_case:?}"), label, tip.to_owned()));
+                }
+            }
+            v
+        }),
+    ];
+    for (row, (kind, chips)) in chip_rows.iter().enumerate() {
+        let y = CHIP_ROW_TOP + row as f64 * 24.0;
+        let mut x = PLOT_RIGHT + 14.0;
+        for (value, label, tip) in chips {
+            let width = label.chars().count() as f64 * 6.6 + 16.0;
+            writeln!(
+                svg,
+                r##"  <g class="chip" data-kind="{kind}" data-value="{value}" data-on="true" transform="translate({x:.1} {y:.1})" onclick="event.stopPropagation(); toggleChip('{kind}', '{value}')"><title>{}</title><rect x="0" y="0" width="{width:.1}" height="18" rx="9"/><text x="{:.1}" y="13" text-anchor="middle">{}</text></g>"##,
+                xml_escape(tip),
+                width / 2.0,
+                xml_escape(label),
+            )
+            .unwrap();
+            x += width + 6.0;
+        }
+    }
     writeln!(svg, r##"  <line class="sticky-edge" x1="0" y1="{HEADER_BOTTOM:.0}" x2="{SVG_WIDTH:.0}" y2="{HEADER_BOTTOM:.0}"/>"##).unwrap();
     /*
      * Behind the door: how the plots are drawn, for a reader who wants it.
@@ -4185,6 +4243,9 @@ fn generate_svg(
         "Rate counts bytes or messages per second, time the nanoseconds per byte or message; the switch at right changes every plot.".to_owned(),
         "The strip at the top narrows every plot to part of its inputs: drag an end of its band, or use the arrows at its ends.".to_owned(),
     ];
+    if plots.iter().any(|plot| plot.use_case == UseCase::Streaming) {
+        howto.push("In the plots of an input arriving in pieces, each piece is first read into memory (timed; a memory copy, the cheapest read); a hash that reads into its own buffers hashes one while the next is read.".to_owned());
+    }
     if two_speeds {
         howto.push("Where a line splits in two, the timings ran at two different speeds; the note under the last plot says why.".to_owned());
     }
@@ -4207,10 +4268,15 @@ fn generate_svg(
     let mut provenance_slot = shared_count
         + provenance_cats.iter().map(|cat| cat.lines.len()).sum::<usize>();
 
+    /* Each plot is one group, which the script moves or hides as the header's chips choose. */
     for plot in &plots {
+        writeln!(svg, r##"  <g id="plot-{}" class="plot-group">"##, plot.index).unwrap();
         write_plot(&mut svg, plot, roster, results, &mut provenance_slot);
+        writeln!(svg, "  </g>").unwrap();
     }
 
+    /* What lies below the plots follows them up when plots are hidden. */
+    writeln!(svg, r##"  <g class="below">"##).unwrap();
     let footnote_top = plot_bottom(plots.len() - 1) + 92.0;
     for (line_index, line) in footnote.iter().enumerate() {
         writeln!(
@@ -4221,6 +4287,7 @@ fn generate_svg(
         )
         .unwrap();
     }
+    writeln!(svg, "  </g>").unwrap();
 
     /*
      * Hover panel, filled by the script when a dot is hovered. Last among
@@ -4277,6 +4344,7 @@ fn generate_svg(
      * Shared lines first; the per-contender lines emitted above follow and
      * close ranks when a contender is hidden.
      */
+    writeln!(svg, r##"  <g class="below">"##).unwrap();
     writeln!(
         svg,
         r##"  <line x1="{PLOT_LEFT:.1}" y1="{provenance_top:.1}" x2="{:.1}" y2="{provenance_top:.1}" class="divider"/>"##,
@@ -4327,6 +4395,7 @@ fn generate_svg(
         }
     }
 
+    writeln!(svg, "  </g>").unwrap();
     assert_eq!(
         provenance_slot, provenance_total,
         "the provenance lines emitted must match the count the canvas was sized for"
@@ -4983,6 +5052,9 @@ const ZOOM_STRIP_RIGHT: f64 = PLOT_RIGHT - X_INSET;
 const ZOOM_GUIDE_BOTTOM: f64 = 26.0;
 /// The header's bottom: the sticky group's background reaches here.
 const HEADER_BOTTOM: f64 = ZOOM_ROW_TOP + ZOOM_GUIDE_BOTTOM + 2.0;
+/// The chips' first row's top, in the header above "all".
+const CHIP_ROW_TOP: f64 = 44.0;
+
 /// The unit switch, in the header straight above the y titles it changes:
 /// its track centred on their column.
 const UNIT_SWITCH_LEFT: f64 = Y_TITLE_X - 7.0;
@@ -5255,7 +5327,9 @@ fn write_interaction_script(
         if plot_index > 0 { data.push(','); }
         write!(
             data,
-            "{{\"top\":{:.1},\"bottom\":{:.1},\"scale\":{},\"timeUnit\":{},\"rateUnit\":{},\"rateLong\":{},\"timeLong\":{},\"x\":[",
+            "{{\"scenario\":\"{}\",\"use\":\"{:?}\",\"top\":{:.1},\"bottom\":{:.1},\"scale\":{},\"timeUnit\":{},\"rateUnit\":{},\"rateLong\":{},\"timeLong\":{},\"x\":[",
+            plot.scenario.key(),
+            plot.use_case,
             plot.top,
             plot.bottom,
             plot.use_case.rate_scale(),
@@ -5424,20 +5498,57 @@ function setZoom(from, to, duration = 600) {
   zoomE = 0;
   zoomAnimation = requestAnimationFrame(step);
 }
-function zoomStep(end, delta) {
-  if (end === "from") setZoom(zFrom + delta, zTo); else setZoom(zFrom, zTo + delta);
-}
 function zoomAll() { setZoom(0, ALLB.length - 1); }
 /* The arrow beside a y title, under its "better" phrase, as the Rust side's better_arrow_path draws it. */
 function betterArrow(p, title, up) {
-  const width = t => [...t].length * 6.2;
   const phrase = title.split(" · ").pop();
-  const mid = (DATA.plots[p].top + DATA.plots[p].bottom) / 2, end = mid - width(title) / 2;
-  const y0 = end + width(phrase), y1 = end, x = DATA.betterX;
+  /* The title's and the phrase's drawn lengths where the browser measures them; else the estimate the Rust side uses. */
+  let total = [...title].length * 6.2, phraseWidth = [...phrase].length * 6.2;
+  const el = document.getElementById("y-title-" + p);
+  if (el && el.getComputedTextLength && el.getSubStringLength && el.textContent === title) {
+    try {
+      const measured = el.getComputedTextLength();
+      if (measured > 0) { total = measured; phraseWidth = el.getSubStringLength(title.length - phrase.length, phrase.length); }
+    } catch (e) { /* keep the estimate */ }
+  }
+  const mid = (DATA.plots[p].top + DATA.plots[p].bottom) / 2, end = mid - total / 2;
+  const y0 = end + phraseWidth, y1 = end, x = DATA.betterX;
   const [tail, head, dir] = up ? [y0, y1, 1] : [y1, y0, -1];
   const f = v => v.toFixed(1);
   document.getElementById("y-better-" + p).setAttribute("d",
     `M${f(x)} ${f(tail)} L${f(x)} ${f(head)} M${f(x - 3.5)} ${f(head + 5 * dir)} L${f(x)} ${f(head)} L${f(x + 3.5)} ${f(head + 5 * dir)}`);
+}
+/*
+ * The chips show and hide plots. The plots shown close ranks from the
+ * first plot's place, and what lies below them follows; a row of chips
+ * keeps at least one pressed.
+ */
+const chipOn = { scenario: {}, use: {} };
+document.querySelectorAll(".chip").forEach(c => { chipOn[c.getAttribute("data-kind")][c.getAttribute("data-value")] = true; });
+const plotShift = DATA.plots.map(() => 0);
+let belowShift = 0;
+function toggleChip(kind, value) {
+  const row = chipOn[kind], next = !row[value];
+  if (!next && Object.values(row).filter(v => v).length === 1) return;
+  row[value] = next;
+  document.querySelector(`.chip[data-kind="${kind}"][data-value="${value}"]`).setAttribute("data-on", next ? "true" : "false");
+  layoutPlots();
+}
+function layoutPlots() {
+  const pitch = DATA.plots.length > 1 ? DATA.plots[1].top - DATA.plots[0].top : 0;
+  let shown = 0;
+  DATA.plots.forEach((plot, p) => {
+    const visible = chipOn.scenario[plot.scenario] && chipOn.use[plot.use];
+    const group = document.getElementById("plot-" + p);
+    group.classList.toggle("plot-off", !visible);
+    plotShift[p] = visible ? (shown - p) * pitch : 0;
+    group.setAttribute("transform", `translate(0 ${plotShift[p]})`);
+    if (visible) shown++;
+  });
+  belowShift = (shown - DATA.plots.length) * pitch;
+  document.querySelectorAll(".below").forEach(g => g.setAttribute("transform", `translate(0 ${belowShift})`));
+  if (hovered && !chipOn.scenario[DATA.plots[hovered[0]].scenario]) hideHover();
+  layoutProv();
 }
 /* The door under the title opens and closes the panel on how to read the graph. */
 function toggleHowto() {
@@ -5446,14 +5557,23 @@ function toggleHowto() {
   document.getElementById("howto-door").textContent = open ? "How to read this graph ▾" : "How to read this graph ▸";
 }
 /*
- * Dragging a grip moves its end of the range to the input nearest the
- * pointer, never past the other end; the plots follow in a short glide.
+ * Dragging: a grip moves its end of the range, the band both ends at once,
+ * each to an input's tick, never past the other end. The strip follows the
+ * pointer's travel at full speed while the hand moves fast, and at a third
+ * of it while it moves slowly (under 0.3 px per ms), so a slow hand can
+ * settle on one of several close ticks; and an end leaves its tick only
+ * once the point aimed at is 3 px nearer another, so it stays where the
+ * hand stops. The ticks under the ends light up while dragging.
  */
 let dragging = null;
-function stripIndexAt(x) {
+function nearestIndex(x) {
   let best = 0;
   ALLB.forEach((v, i) => { if (Math.abs(stripX(v) - x) < Math.abs(stripX(ALLB[best]) - x)) best = i; });
   return best;
+}
+function aimIndex(x, current) {
+  const j = nearestIndex(x);
+  return j !== current && Math.abs(stripX(ALLB[j]) - x) + 3 < Math.abs(stripX(ALLB[current]) - x) ? j : current;
 }
 function svgXOf(ev) {
   const root = document.getElementById("zoom").ownerSVGElement;
@@ -5462,17 +5582,37 @@ function svgXOf(ev) {
   pt.x = ev.clientX; pt.y = ev.clientY;
   return pt.matrixTransform(root.getScreenCTM().inverse()).x;
 }
+function markTicks(active) {
+  ALLB.forEach((_, i) => document.getElementById("zoom-tick-" + i).setAttribute("data-at", active && (i === zFrom || i === zTo) ? "true" : "false"));
+}
 function gripDown(ev, end) {
   ev.stopPropagation(); ev.preventDefault();
-  dragging = end;
+  const at = end === "to" ? zTo : zFrom;
+  dragging = { end, lastX: svgXOf(ev), lastT: performance.now(), aim: stripX(ALLB[at]), span: zTo - zFrom };
+  markTicks(true);
 }
 function gripMove(ev) {
   if (!dragging) return;
-  const i = stripIndexAt(svgXOf(ev));
-  if (dragging === "from") setZoom(Math.min(i, zTo - 1), zTo, 150);
-  else setZoom(zFrom, Math.max(i, zFrom + 1), 150);
+  const x = svgXOf(ev), t = performance.now();
+  const dx = x - dragging.lastX, dt = Math.max(1, t - dragging.lastT);
+  dragging.aim += dx * (Math.abs(dx) / dt < 0.3 ? 0.35 : 1);
+  dragging.lastX = x; dragging.lastT = t;
+  const last = ALLB.length - 1;
+  if (dragging.end === "from") {
+    setZoom(Math.min(aimIndex(dragging.aim, zFrom), zTo - 1), zTo, 150);
+  } else if (dragging.end === "to") {
+    setZoom(zFrom, Math.max(aimIndex(dragging.aim, zTo), zFrom + 1), 150);
+  } else {
+    const from = Math.max(0, Math.min(last - dragging.span, aimIndex(dragging.aim, zFrom)));
+    setZoom(from, from + dragging.span, 150);
+  }
+  markTicks(true);
 }
-function gripUp() { dragging = null; }
+function gripUp() {
+  if (!dragging) return;
+  dragging = null;
+  markTicks(false);
+}
 window.addEventListener("pointermove", gripMove);
 window.addEventListener("pointerup", gripUp);
 window.addEventListener("pointercancel", gripUp);
@@ -5487,12 +5627,7 @@ function updateZoomControls() {
   band.setAttribute("width", (x1 - x0 + 6).toFixed(1));
   document.getElementById("zoom-grip-from").setAttribute("transform", `translate(${x0.toFixed(1)} 0)`);
   document.getElementById("zoom-grip-to").setAttribute("transform", `translate(${x1.toFixed(1)} 0)`);
-  const off = (id, disabled) => document.getElementById(id).setAttribute("data-off", disabled ? "true" : "false");
-  off("zoom-from-dec", zFrom === 0);
-  off("zoom-from-inc", zFrom + 1 >= zTo);
-  off("zoom-to-dec", zTo - 1 <= zFrom);
-  off("zoom-to-inc", zTo === last);
-  off("zoom-all", zFrom === 0 && zTo === last);
+  document.getElementById("zoom-all").setAttribute("data-off", zFrom === 0 && zTo === last ? "true" : "false");
 }
 
 /*
@@ -5896,10 +6031,11 @@ function layoutProv() {
     document.getElementById("series-0-" + i).querySelectorAll(".series-prov").forEach(t => {
       const shown = on[i] && provOpen.hashes;
       t.style.display = shown ? "" : "none";
-      if (shown) t.setAttribute("y", (DATA.provTop + 40 + slot++ * DATA.provLine).toFixed(1));
+      /* In the first plot's group, which stays in place: they follow the section below. */
+      if (shown) t.setAttribute("y", (DATA.provTop + 40 + slot++ * DATA.provLine + belowShift).toFixed(1));
     });
   });
-  const h = DATA.provTop + 40 + slot * DATA.provLine + 8;
+  const h = DATA.provTop + 40 + slot * DATA.provLine + 8 + belowShift;
   const svgEl = document.querySelector("svg");
   svgEl.setAttribute("height", h.toFixed(0));
   svgEl.setAttribute("viewBox", `0 0 ${DATA.svgWidth} ${h.toFixed(0)}`);
@@ -5963,6 +6099,7 @@ function textEl(x, y, cls, content, extra) {
  */
 function showHover(p, focus, k) {
   hovered = [p, focus, k];
+  document.getElementById("hover").setAttribute("transform", `translate(0 ${plotShift[p]})`);
   highlightSeries(focus, true);
   const plot = DATA.plots[p];
   const mapY = currentMapY[p];
@@ -6141,14 +6278,18 @@ window.tapAway = tapAway;
 window.hoverLabel = hoverLabel;
 window.setUnit = setUnit;
 window.flipUnit = flipUnit;
-window.zoomStep = zoomStep;
 window.zoomAll = zoomAll;
 window.toggleHowto = toggleHowto;
+window.toggleChip = toggleChip;
 window.gripDown = gripDown;
 window.gripMove = gripMove;
 window.gripUp = gripUp;
 updateZoomControls();
 relayout();
+/* The better arrows, measured against the titles as drawn, once now and again when the fonts arrive. */
+const measureArrows = () => DATA.plots.forEach((_, p) => { const t = document.getElementById("y-title-" + p); betterArrow(p, t.textContent, !t.textContent.endsWith("lower is better")); });
+measureArrows();
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(measureArrows);
 
 /*
  * The header stays at the top of the window: moved last, so it draws over
