@@ -3817,7 +3817,8 @@ impl Plot {
         let kernels: Vec<Option<Kernels>> = roster
             .algorithms
             .iter()
-            .map(|&algorithm| algorithm.takes_part(use_case).then(|| detect_kernels(algorithm, use_case)))
+            /* Only the methods that start within the plot's inputs (a run's --points may stop early). */
+            .map(|&algorithm| algorithm.takes_part(use_case).then(|| detect_kernels(algorithm, use_case).up_to(POINTS[points.end - 1].bytes)))
             .collect();
 
         let mut plot = Self {
