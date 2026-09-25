@@ -826,8 +826,8 @@ impl Roster {
      */
     fn new(algorithms: Vec<Algorithm>, quick: bool, points: Option<Vec<usize>>, rounds: Option<usize>) -> Self {
         assert!(
-            (2..=8).contains(&algorithms.len()),
-            "a run compares two to eight contenders; {} were selected",
+            (2..=Algorithm::ALL.len()).contains(&algorithms.len()),
+            "a run compares two contenders or more, up to every one there is; {} were selected",
             algorithms.len()
         );
         for (index, algorithm) in algorithms.iter().enumerate() {
