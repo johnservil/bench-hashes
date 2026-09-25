@@ -2013,7 +2013,7 @@ mod common_crypto {
     }
 
     pub fn sha256(input: &[u8]) -> [u8; DIGEST_LEN] {
-        sha256_pieces(&mut std::iter::once(input))
+        sha256_pieces(&mut |each: &mut dyn FnMut(&[u8])| each(input))
     }
 
     /// One Update per piece, in order.
