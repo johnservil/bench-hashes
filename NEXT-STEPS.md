@@ -27,6 +27,9 @@ perf_regress, or probe results from it, or from the VM on it, count until
 he says so.** Work that needs no quiet machine continues: correctness,
 tests, docs, numerical tooling (`tools/check-report.py`).
 
+Waiting on a quiet Mac: `candidate/agents-time` (the fork's AGENTS, docs
+only: time is discrete), its Mac gate.
+
 Next: the weak cells, when the machine is quiet again.
 
 - **Time kept as measured** (done, September 26): samples are `ns/units`
