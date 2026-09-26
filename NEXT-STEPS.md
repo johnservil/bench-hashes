@@ -22,15 +22,19 @@ README: a short warning in my voice, one speed chart (1 MiB, cores) drawn by
 predates the commonware and sha3-256 keys and the `test` job type: Zooko
 restarts it with `setup-mac.sh`.
 
-**The Mac is in use by Zooko (September 26, evening): no benchmark,
-perf_regress, or probe results from it, or from the VM on it, count until
-he says so.** Work that needs no quiet machine continues: correctness,
-tests, docs, numerical tooling (`tools/check-report.py`).
-
 Waiting on a quiet Mac: `candidate/agents-time` (the fork's AGENTS, docs
 only: time is discrete), its Mac gate.
 
-Next: the weak cells, when the machine is quiet again.
+- **Startup self-test** (Zooko, September 26; Niels Ferguson's idea):
+  39 chained cases before a process's first hash, every AArch64 assembly
+  entry (31, gdb-counted), 93-95 µs warm, 125-200 µs in a fresh process;
+  Zooko chose that budget (option 4) over leaving kernels out. Fork NOTES,
+  "The startup self-test". The long random differential run is deleted
+  (Zooko: superstitious fuzzing).
+- **x86-64**: tests wait for a real x86-64 machine Zooko is getting; no
+  emulation, not even for unit tests (Zooko).
+
+Next: the weak cells.
 
 - **Time kept as measured** (done, September 26): samples are `ns/units`
   (samples v3); statistics run on `Fixed` (Q64.64) and round once, for
@@ -61,8 +65,9 @@ BLAKE3, optimise, produce evidence of code quality):
 - **Code quality** (fork NOTES "Testing", "Checks beyond the suites"):
   coverage 93% of lines and the tests it prompted; ASan, TSan (31 runs),
   Miri (pure; 41 min) clean, each with a positive control; guard-page
-  tests for every kernel; a differential run against the reference (3.8
-  million steps, seed 2, 20 min, clean); four bugs fixed (d395f9e).
+  tests for every kernel; four bugs fixed (d395f9e). The long random
+  differential run was deleted (Zooko, September 26: superstitious
+  fuzzing; the fixed-answer tests cover every path it could reach).
   Raw logs in the fork's `tmp/quality/`. Nightly with miri, rust-src,
   llvm-tools and the x86-64 std are installed in the guest until restart.
 
@@ -342,7 +347,7 @@ From `/workspace` in the VM, each with the prefix above:
     pypy3 tools/perf_regress.py check | compare OLD NEW
     cargo run --release --example host_lab
 
-Expected: 75 / 71 / 61 library tests, 21 doc tests, 2 vectors, 7 benchmark
+Expected: 89 / 85 / 74 library tests, 21 doc tests, 2 vectors, 8 benchmark
 tests. Release: `python3 tools/gen-ver.py X.Y.Z` from a clean tree (two
 version commits and a lightweight tag; push the branch, `servil` in the
 fork or `main` here, then the tag by name).
