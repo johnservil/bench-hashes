@@ -40,37 +40,27 @@ BLAKE3, optimise, produce evidence of code quality):
   Raw logs in the fork's `tmp/quality/`. Nightly with miri, rust-src,
   llvm-tools and the x86-64 std are installed in the guest until restart.
 
-### Waiting on Zooko
+### Zooko's answers (September 26, morning) and tonight's tasks
 
-- **A note for Remco**: offered, unanswered. His method (the official
-  crate's hidden `Platform::hash_many`, 16 per call) against servil,
-  records 74adeea, ns per 256-byte message, solo: Mac 96-99 against
-  servil in one call per layer 37.7-39.2 (2.5x) and servil mt 8.6 at
-  16384, 7.6 at 262144; VM 102-104 against 39.0-40.3 and 11.1, 8.3.
-  His plug-in: a `HashEngine` calling `hash_many(input, 256, out)` for
-  leaves, 64 for nodes. Zooko: the whole layer in one call is the
-  efficient use, and Remco may switch to it.
-- **The `efficient` module** (fork NOTES, "Energy per byte"): SME2 is the
-  cheapest kernel per byte, so an efficient mode keeps it; single-threaded
-  calls equal today's, apart from the "minimax" NEON plans for 2-15 KiB
-  (E-core cycles -16-24%, P +17%). Multithreaded: the caller on SME2 with
-  the E-cores' NEON helpers at background QoS hashed 8 MiB 10-27% faster
-  than hash() for a third less energy, level at 1 MiB, slower below; it
-  needs a second, sleeping pool. The pool's idle workers poll through a
-  call, which doubles the energy of calls with a small thread budget.
-- **`perf_regress` and shared cells**: should a shared-cell regression be
-  reported without stopping the commit?
-
-- **One-block tails past SME2 groups (a trade to decide):** with the
-  padded group from 5 left over (probe/onepad-after5, jobs 279-281), Mac
-  64 B x 22-28 run 26 -> 12-15 ns/msg (x 24 is where servil trails the
-  official crate and commonware, both machines' CHECKS) and x 53 -34%,
-  but x 21 +15% and x 37-40 +9-17% on the Mac, and on the VM x 22, 24,
-  26 +12-16% in the NEON plans' fast state (their slow state 2x worse).
-  perf_regress held it (64 B x 24 +17% at the 5th percentile, -47% at the
-  90th). Landed with 13 (no trade). Recommend 5; the choice is Zooko's.
-  New finding: past one group, odd left-overs (5, 7, 9, 11) ran slow on
-  the VM in every run, even ones fast; unexplained.
+- **One-block tails: land the padded group from 5** (probe/onepad-after5),
+  with `--no-verify` and the held cells in the message. His reasons: it
+  fixes a cell where we trail competitors; the Mac weighs more than the
+  VM (users run less performance-sensitive work in VMs); the speedups are
+  much larger than the slowdowns.
+- **`perf_regress` and shared cells: report, don't hold**, on the
+  presumption that a commit which slows a shared cell has a reason worth
+  more (a larger gain elsewhere, simpler code); the commit message names
+  the cells, their numbers, and that reason.
+- **The note for Remco: post it on GitHub** where Zooko can link it;
+  say that Zooko showed us Remco's comments and asked for something
+  useful to him.
+- **The `efficient` module and the Merkle API: worth building, later.**
+  Both are in "Ideas" below.
+- **New: a quality-assurance document** linked from the fork README: every
+  step taken for correctness and safety, how a user verifies it, the four
+  bugs with enough detail to find each bug and fix, and the formal
+  verification tools considered (why not yet, or what happened).
+- Then keep improving code, docs, and speed until further notice.
 
 ### Next, in order
 
@@ -207,6 +197,17 @@ commitment format (see "Idea: a full-fledged Merkle tree API").
 - Branch naming `candidate/<topic>`; no promotion without the Mac verdict.
 - The Mac runner is launched manually by Zooko; code from GitHub only.
 
+## Idea: the `efficient` module (worth building, later; Zooko, September 26)
+
+SME2 is the cheapest kernel per byte (fork NOTES, "Energy per byte"), so
+an energy-efficient mode keeps it; single-threaded calls equal today's,
+apart from the "minimax" NEON plans for 2-15 KiB (E-core cycles -16-24%,
+P +17%). Multithreaded: the caller on SME2 with the E-cores' NEON helpers
+at background QoS hashed 8 MiB 10-27% faster than hash() for a third less
+energy, level at 1 MiB, slower below; it needs a second, sleeping pool.
+The pool's idle workers poll through a call, which doubles the energy of
+calls with a small thread budget.
+
 ## Idea: a truly streaming (pipelined) hasher (Zooko, September 25)
 
 `Hasher::update` is synchronous: the caller waits while we hash, and our
@@ -231,7 +232,7 @@ merge runs in order. Design points:
   from a source buffer, as a read would), timed end to end, so the overlap
   shows; synchronous contenders run the same producer.
 
-## Idea: a full-fledged Merkle tree API (Zooko, September 26)
+## Idea: a full-fledged Merkle tree API (worth building, later; Zooko, September 26)
 
 A `servil::merkle` module that builds, opens, and verifies Merkle trees,
 so a user like Remco calls one function per tree instead of looping
