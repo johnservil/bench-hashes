@@ -8,14 +8,24 @@ principles are in both repositories' `AGENTS.md`; the fork's hardware
 facts, design, and rejected ideas are in its `NOTES-servil.md` (read it
 before touching kernels or the pool); this repository's are in `NOTES.md`.
 
-## Resume here (checkpoint, September 26, 2026, 08:25 UTC)
+## Resume here (checkpoint, September 26, 2026, afternoon)
 
-State: fork `servil` 9eb2613, pinned here; no candidates open. Fork
-working tree: NOTES-servil.md edited (this session's findings), not yet
-committed: commit it on `candidate/docs-checkpoint` and gate it (docs
-only: `perf_regress compare` on both machines is quick). The Mac runner
-was running all night (jobs 254-285). Records (VM and Mac `--all`) are
-stale: make both on dddb5d3 next, with the new contender.
+State: fork `servil` 9eb2613, pinned here. Open: `candidate/quality`
+(NOTES checkpoint, perf_regress shared cells reported, the WHIR note
+`docs/whir-merkle-trees.md`, Kani proofs under `cfg(kani)`, `QUALITY.md`
+linked from the README's warning); gate it (VM compare, a Mac job),
+promote, then give Zooko the WHIR note's link on `servil`. Records (VM
+and Mac `--all`) are stale: make both on the new tip next. The Mac
+runner's installed copy predates the commonware key (job 287 was
+refused): Zooko restarts it with `setup-mac.sh` to pick up runner.py.
+The WHIR tree probe: probe/whir-merkle (jobs 296 Mac; VM run in the
+note).
+
+Found this session: the fork's test suites have never run under macOS
+(the runner runs benchmarks, perf_regress, and examples; tests ran only
+in the VM, on the M4's SME2 unit). Next: a runner job type `test` (the
+suites natively), which needs a runner restart; QUALITY.md says so until
+then.
 
 This session (Zooko asleep; his instructions: benchmark commonware's new
 BLAKE3, optimise, produce evidence of code quality):
