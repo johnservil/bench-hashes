@@ -8,12 +8,37 @@ principles are in both repositories' `AGENTS.md`; the fork's hardware
 facts, design, and rejected ideas are in its `NOTES-servil.md` (read it
 before touching kernels or the pool); this repository's are in `NOTES.md`.
 
-## Resume here (checkpoint, September 26, 2026, 05:15 UTC)
+## Resume here (checkpoint, September 26, 2026, 08:25 UTC)
 
-State: fork `servil` 37f1247, pinned here (a198a87); no candidates open;
-both working trees clean. Records (74adeea) measure 4cad0c6, whose code
-37f1247 keeps (later commits touch documents alone). The session ended
-with the documents refreshed; Zooko gives the next instructions.
+State: fork `servil` dddb5d3, pinned here; no candidates open. Fork
+working tree: NOTES-servil.md edited (this session's findings), not yet
+committed: commit it on `candidate/docs-checkpoint` and gate it (docs
+only: `perf_regress compare` on both machines is quick). The Mac runner
+was running all night (jobs 254-285). Records (VM and Mac `--all`) are
+stale: make both on dddb5d3 next, with the new contender.
+
+This session (Zooko asleep; his instructions: benchmark commonware's new
+BLAKE3, optimise, produce evidence of code quality):
+
+- **BLAKE3 commonware** (commonwarexyz/monorepo PR 4982, 25851f1) is a
+  contender here, batches only (2ff362e; NOTES.md "BLAKE3 commonware";
+  Zooko: a two-way door). probe/commonware (fork) measured it on the Mac
+  P/E (jobs 254-285). Every batch cell it led is now servil's.
+- **Batch speedups, all promoted with both gates** (fork NOTES "What runs
+  where", `hash_many`): padded SME2 groups for 2-16 blocks (9fd0ac9);
+  NEON parent plans for 2-16 blocks below ten (666e550; 256 B x 2-9
+  -40 to -58%); 2-15 chunks side by side on SME2 (0bed4e7; 16 x 4 KiB
+  1310 -> 661 ns/msg on the Mac, commonware 1757); one-block padded groups
+  (ffcef50); the padded batch contract, any length (7cd10ec; odd lengths
+  had trailed commonware 1.7x); two-chunk messages side by side on NEON
+  (0869c79).
+- **Code quality** (fork NOTES "Testing", "Checks beyond the suites"):
+  coverage 93% of lines and the tests it prompted; ASan, TSan (31 runs),
+  Miri (pure; 41 min) clean, each with a positive control; guard-page
+  tests for every kernel; a differential run against the reference (3.8
+  million steps, seed 2, 20 min, clean); four bugs fixed (d395f9e).
+  Raw logs in the fork's `tmp/quality/`. Nightly with miri, rust-src,
+  llvm-tools and the x86-64 std are installed in the guest until restart.
 
 ### Waiting on Zooko
 
@@ -36,9 +61,27 @@ with the documents refreshed; Zooko gives the next instructions.
 - **`perf_regress` and shared cells**: should a shared-cell regression be
   reported without stopping the commit?
 
+- **One-block tails past SME2 groups (a trade to decide):** with the
+  padded group from 5 left over (probe/onepad-after5, jobs 279-281), Mac
+  64 B x 22-28 run 26 -> 12-15 ns/msg (x 24 is where servil trails the
+  official crate and commonware, both machines' CHECKS) and x 53 -34%,
+  but x 21 +15% and x 37-40 +9-17% on the Mac, and on the VM x 22, 24,
+  26 +12-16% in the NEON plans' fast state (their slow state 2x worse).
+  perf_regress held it (64 B x 24 +17% at the 5th percentile, -47% at the
+  90th). Landed with 13 (no trade). Recommend 5; the choice is Zooko's.
+  New finding: past one group, odd left-overs (5, 7, 9, 11) ran slow on
+  the VM in every run, even ones fast; unexplained.
+
 ### Next, in order
 
-1. **The padded batch contract** (decided; see Decisions). Kernels take
+0. Records on dddb5d3 (VM and Mac, `--all`), graph checks, commit.
+   Then weak cells: 2-chunk messages at 4 on E-cores (p4 two pairs),
+   1000 B x 4 on E-cores; tails of 1-4 multi-block messages past SME2
+   groups (slow state); a benchmark cell of odd-length messages (2000 B)
+   would show the padded contract.
+
+1. ~~**The padded batch contract**~~ done (7cd10ec); left: a probe of
+   129-byte messages at stride 192 against 256 (the rounding rule). Kernels take
    the last block's length (SME2 `z14`, NEON packed word, hybrids); any
    message length batches: chunk k of 16 messages in 16 lanes at counter
    k, then each parent level across messages as one parent-kernel batch.
