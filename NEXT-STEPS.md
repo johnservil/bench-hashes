@@ -8,61 +8,57 @@ principles are in both repositories' `AGENTS.md`; the fork's hardware
 facts, design, and rejected ideas are in its `NOTES-servil.md` (read it
 before touching kernels or the pool); this repository's are in `NOTES.md`.
 
-## Resume here (checkpoint, September 26, 2026, 02:15 UTC)
+## Resume here (checkpoint, September 26, 2026, 04:30 UTC)
 
-State: fork `servil` f70c758 (pinned here); records on it (1fb6bcf).
-**The Mac runner is stopped** (last job 238); ask Zooko to restart it
-(`sh ~/piplayground/blake3-servil/tools/runner/setup-mac.sh`). Jobs
-240-246 wait in `runner/jobs/`; keep the VM idle while they run.
+State: fork `servil` 4cad0c6 (pinned here, ef3758f): the one-buffer batch
+API and `kernel_report_many(message_len)` (3d83912's gate note), then the
+multithreaded split's name. Records on it, both machines quiet, both
+graph checks pass. No candidates open.
 
-### Work in progress, in order
+### Next, in order
 
-1. **`candidate/mt-name`** (fork 4db6034, pushed): strings only; VM check
-   passed. Waits for Mac job 240, then promote (note, push, delete branch).
+1. **Tell Zooko the numbers for Remco** (records on 4cad0c6, ns per
+   256-byte message, solo): his method (the official crate's hidden
+   `Platform::hash_many`, 16 per call) 96-99 on the Mac, 102-104 on the
+   VM; servil in one call per layer 37.7-39.2 Mac, 39.0-40.3 VM (2.5x);
+   servil mt 8.6 at 16384 and 7.6 at 262144 Mac (11-13x), 11.1 and 8.3
+   VM. SHA-256 (ring) 90-94 Mac. The whole layer in one call is the
+   efficient use (Zooko); the plug-in is a `HashEngine` calling
+   `hash_many(input, 256, out)` (or 64 for nodes).
 
-2. **`candidate/batch-blocks`** (fork d7ab55e, pushed; four commits; every
-   suite passes, 75/71/61 lib, 21 doc; every VM pre-commit check passed).
-   One batch API, one buffer (Zooko): `hash_many(input, message_len, out:
-   &mut [[u8; 32]])`, `hash_many_multithreaded`, `_with_budget`; the
-   slice-of-slices API is gone; `kernel_report_many(message_len)` and its
-   `_multithreaded`. Done in one commit instead of the planned two:
-   `perf_regress` renames an older commit's slice API to `*_slices` and
-   forwards the new names to `hash_many_equal` where it exists (judged),
-   else a copying shim (batch cells unjudged).
-   - Direct A/B, VM, 64 B batches, against 8d3a325's slice API with a
-     prebuilt pointer table: no slower cell; 1-64 level; 256-16384 5-30%
-     faster st, 5-46% mt. (`many::hash_run` must stay `#[inline(never)]`:
-     inlined, 2 messages took 30% longer.)
-   - 256 B, VM, ns/msg: servil st 185 at 1-3 (level with a loop of hash()
-     since d7ab55e sends the rest after groups of four to c1), 97 at 4-12,
-     39 from 16; mt 16 at 1024, 9.9 at 8192; official through its hidden
-     `Platform::hash_many` 16 per call 93-96; SHA-256 87-90.
-   - **Waits for the Mac**: 241 (`perf_regress` servil vs d7ab55e; batch
-     cells shimmed, one-message cells judged), 242-245 (direct 64 B batch
-     A/B: 8d3a325 + bench 9030642 against d7ab55e + bench 8542199, old new
-     new old; judge like `/tmp/ab.py` did: every pair's ratio past 3%),
-     246 (Remco's numbers, both batch axes). Then promote, pin here, merge
-     bench-hashes `candidate/one-buffer-batch` into `main`.
+2. **Padded batch contract** (Zooko, September 26; decided): message i
+   starts at byte i x s, s = message_len rounded up to a multiple of 64
+   (64 for an empty message); the caller zeroes the bytes between one
+   message's end and the next one's start (the caller's obligation; the
+   kernels never mask); any message length (long messages batch too:
+   chunk k of 16 messages in 16 lanes at counter k, then each parent
+   level across messages as one parent-kernel batch); fail stop with
+   `assert` on lengths, `debug_assert` on the zero padding; no base
+   alignment unless a measurement shows it pays. Kernels take the last
+   block's length (SME2 `z14`, NEON packed word). Tests from the
+   reference implementation at 1-3000 B and the boundaries; a benchmark
+   cell of long messages (2000 B) against a loop of hash(). A probe of
+   129-byte messages at s = 192 against 256 settles the rounding rule.
 
-3. **bench-hashes `candidate/one-buffer-batch`** (8542199, pushed; builds
-   only against the fork's candidate, so it merges after the promotion):
-   servil batches through the one-buffer API; BLAKE3 official batches
-   (64 B too) through `blake3::platform::Platform::hash_many::<N>`, 16 per
-   call (Remco's method); a fourth use case, batches of 256-byte messages
-   (`ManyMessages256`, `--points "16 of 256 B"`, `MANY_256_VECTORS`, chips
-   wrap onto a third header line); docs updated. Graph check passes.
-   Then re-record both machines and tell Zooko the numbers for Remco:
-   his 16-per-call calls against one servil call per layer (> 16 messages,
-   Zooko: the whole layer in one call is the efficient use, and Remco may
-   switch to it).
+3. **Weak cells** (minimax; both records): 256 B at 4-12 messages servil
+   level with official or 1% behind (Mac 4: 99.2 against 98.0; both NEON
+   four-wide); 256 B at 17-31 messages about 400 ns per call beyond the
+   kernels (24: 74 ns/msg against 38 at 16; the SME2 remainder problem,
+   open problem 6); 64 B at 4 messages servil 24.0 against official 22.1
+   (Mac; hybrids against the C four-lane kernel); SHA-256 faster than
+   BLAKE3 below 16 messages of 256 B (open problem 1's sizes).
 
-4. **Weak cells the new plots show** (minimax, VM): 256 B at 4-12
-   messages servil only level with official (both NEON four-wide); 256 B
-   at 17-31 messages about 400 ns per call beyond the kernels (24: 75
-   ns/msg against 39 at 16; the SME2 remainder problem, open problem 6);
-   64 B at 4 messages servil 23.9 against official 23.4 ns/msg (NEON
-   hybrids against the C four-lane kernel); SHA-256 faster than BLAKE3
-   below 16 messages of 256 B (open problem 1's sizes).
+4. **Open: one cell's aftereffects slow the next.** On the VM, servil
+   f70c758's shimmed 256-byte batch cells (the slice API behind a copying
+   wrapper, the messages one at a time) made the next SHA-256 64 B cell
+   3-6% slower, reproducibly, in `perf_regress`'s full point list and in
+   no shorter one. 3d83912 stops running unjudged cells, which avoids it;
+   the mechanism (allocator, caches, clock or SME state after long
+   integer runs) is unexplained, and a user's program could meet it.
+
+5. The records procedure below names "the list script on both samples
+   files"; no such script exists in either repository now. Find what it
+   was or drop the step.
 
 ### Remco (a potential user; context for 2-4)
 
@@ -256,7 +252,7 @@ From `/workspace` in the VM, each with the prefix above:
     pypy3 tools/perf_regress.py check | compare OLD NEW
     cargo run --release --example host_lab
 
-Expected: 71 / 67 / 57 library tests, 20 doc tests, 2 vectors, 7 benchmark
+Expected: 75 / 71 / 61 library tests, 21 doc tests, 2 vectors, 7 benchmark
 tests. Release: `python3 tools/gen-ver.py X.Y.Z` from a clean tree (two
 version commits and a lightweight tag; push `main`, then the tag by name).
 Never print the credential token (`/workspace/ghtokenclassic.txt`). Only
