@@ -4147,7 +4147,7 @@ fn generate_svg(
     .unwrap();
     writeln!(
         svg,
-        r##"  <rect width="{SVG_WIDTH:.0}" height="{svg_height:.0}" fill="#fdfdfc"/>"##
+        r##"  <rect id="page" width="{SVG_WIDTH:.0}" height="{svg_height:.0}" fill="#fdfdfc"/>"##
     )
         .unwrap();
 
@@ -6250,10 +6250,17 @@ function layoutProv() {
       if (shown) t.setAttribute("y", (DATA.provTop + 40 + slot++ * DATA.provLine + belowShift - plotShift[p]).toFixed(1));
     });
   });
-  const h = DATA.provTop + 40 + slot * DATA.provLine + 8 + belowShift;
+  /* The page never gets shorter than it loaded: mobile WebKit zooms a
+     page whose content shrinks until it fills the screen's height, which
+     left a phone zoomed past the plots' left edge with no way back out
+     (Zooko, September 26, 2026). Hidden plots leave room below; opening
+     "About this run" may still lengthen the page. */
   const svgEl = document.querySelector("svg");
+  layoutProv.floor ??= +svgEl.getAttribute("height");
+  const h = Math.max(DATA.provTop + 40 + slot * DATA.provLine + 8 + belowShift, layoutProv.floor);
   svgEl.setAttribute("height", h.toFixed(0));
   svgEl.setAttribute("viewBox", `0 0 ${DATA.svgWidth} ${h.toFixed(0)}`);
+  document.getElementById("page").setAttribute("height", h.toFixed(0));
 }
 
 function highlightSeries(i, active) {

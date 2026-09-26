@@ -98,6 +98,18 @@ function checkLayout(tag) {
     check(Math.abs(stripX(T.ALLB[0]) - L) < 0.1 && Math.abs(stripX(T.ALLB[T.ALLB.length - 1]) - R) < 0.1, `${tag}: the strip spans the plots' inputs`);
   }
   checkControls("initial");
+  // Hiding plots never makes the page shorter than it loaded (mobile
+  // WebKit zooms a page whose content shrinks), and showing them again
+  // restores it.
+  {
+    const svgEl = w.document.querySelector("svg");
+    const loaded = +svgEl.getAttribute("height");
+    w.toggleChip("scenario", "shared");
+    check(+svgEl.getAttribute("height") >= loaded, "hiding the shared plots keeps the page's height");
+    check(+w.document.getElementById("page").getAttribute("height") === +svgEl.getAttribute("height"), "the page background spans the page");
+    w.toggleChip("scenario", "shared");
+    check(+svgEl.getAttribute("height") === loaded, "showing them again restores the height");
+  }
   {
     const staticDom = new JSDOM(`<!DOCTYPE html><html><body>${markup}</body></html>`);
     check(buttons.every(id => staticDom.window.document.getElementById(id).getAttribute("data-off") === w.document.getElementById(id).getAttribute("data-off")),
