@@ -10,13 +10,13 @@ before touching kernels or the pool); this repository's are in `NOTES.md`.
 
 ## Resume here (checkpoint, September 26, 2026, evening)
 
-State: fork `servil` 6ee5b7a, pinned here; no candidates open. Records
+State: fork `servil` f0c6e89, pinned here; no candidates open. Records
 (VM and Mac `--all`, with SHA3-256) are on 01bc76e (same src). Public
 links for Zooko: the WHIR note
 https://github.com/johnservil/BLAKE3/blob/servil/docs/whir-merkle-trees.md,
 the upstream report https://github.com/BLAKE3-team/BLAKE3/issues/590 (fix
 PR #591, with a catalog of every public caller of `blake3::platform`).
-README: a short warning in my voice, two speed charts drawn by
+README: a short warning in my voice, one speed chart (1 MiB, cores) drawn by
 `tools/speed_chart.py` from the Mac record (redraw after each Mac record),
 `media/speed-charts.md` behind a link. The Mac runner's installed copy
 predates the commonware and sha3-256 keys and the `test` job type: Zooko
