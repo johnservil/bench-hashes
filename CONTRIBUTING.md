@@ -66,7 +66,7 @@ benchmark.
 - **The fork's regression check depends on this interface**:
   `--contenders`, `--points`, `--rounds`, and the columns of
   `bench-hashes.samples.tsv` (`contender`, `scenario`, `use_case`,
-  `point`, `unit`, `ps_per_unit`).
+  `point`, `unit`, `ns/units`, each sample as measured).
 
 ## Results from other machines
 

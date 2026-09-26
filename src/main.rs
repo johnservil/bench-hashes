@@ -245,8 +245,8 @@ const POINTS: [Point; POINT_COUNT] = [
 /// results[contender_index][point_index], contenders in the roster's
 /// order; None where the contender takes no part in the point's use case.
 type Results = Vec<Vec<Option<Cell>>>;
-/// Samples in picoseconds per unit, by contender and point.
-type Samples = Vec<Vec<Vec<u64>>>;
+/// Samples as measured, by contender and point.
+type Samples = Vec<Vec<Vec<Measured>>>;
 /// Every sample of a run: one solo sample per sample interval, and two
 /// shared samples beside it, one per copy.
 struct RunSamples {
@@ -265,7 +265,7 @@ impl RunSamples {
      * a pair shares whatever state the machine was in: an efficiency core,
      * a lowered clock, a busy memory system.
      */
-    fn paired(&self, scenario: Scenario, a: (usize, usize), b: (usize, usize)) -> Vec<(u64, u64)> {
+    fn paired(&self, scenario: Scenario, a: (usize, usize), b: (usize, usize)) -> Vec<(PerUnit, PerUnit)> {
         let values = |(algorithm, point): (usize, usize)| match scenario {
             Scenario::Solo => &self.solo[algorithm][point],
             Scenario::Shared => &self.shared[algorithm][point],
@@ -280,7 +280,7 @@ impl RunSamples {
         for (index, round) in self.rounds[a.0][a.1].iter().enumerate() {
             if let Some(&other) = b_index.get(round) {
                 for copy in 0..per_round {
-                    pairs.push((values(a)[index * per_round + copy], values(b)[other * per_round + copy]));
+                    pairs.push((values(a)[index * per_round + copy].per_unit(), values(b)[other * per_round + copy].per_unit()));
                 }
             }
         }
@@ -728,14 +728,123 @@ impl Algorithm {
 }
 
 /*
- * Time per unit in integer picoseconds: per byte on the one-message axis,
- * per message on the many-messages axis. A sample of 1 ms over 64 bytes of
- * input repeated ~20 000 times resolves to better than 1 ps/B, and 1 MiB
- * at 0.17 ns/B is 170 000 ps/B, so u64 has room to spare. Integers keep
- * every median, ratio, and spread exact and reproducible.
+ * Time, kept as measured until a reader sees it. A sample is `Measured`:
+ * the nanoseconds the clock gave and the units (bytes, or messages) they
+ * covered, both exact; the samples file stores them as they are. Every
+ * statistic works on `PerUnit`, nanoseconds per unit in fixed point with
+ * 64 fractional bits (Q64.64 in a u128): the one division, rounded once,
+ * leaves an error of 2^-64 relative, about 20 digits below what a 1 ns
+ * clock resolves, and after it sums, differences, and ratios are exact
+ * integer arithmetic. Rounding to a unit a person reads happens only in
+ * Fixed's display methods. Bounds: a sample below 2^40 ns (18 minutes;
+ * the longest recorded, 1.6 s) keeps every value below 2^104, so a
+ * product with a permille factor stays within u128.
  */
-type PsPerByte = u64;
-const PS_PER_NS: u64 = 1_000;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Measured {
+    ns: u64,
+    units: u64,
+}
+
+impl Measured {
+    fn new(ns: u64, units: u64) -> Self {
+        assert!(ns > 0 && units > 0, "a sample covers some units in some time");
+        assert!(ns < 1 << 40, "a sample of {ns} ns exceeds 2^40 ns (18 minutes)");
+        Measured { ns, units }
+    }
+
+    fn per_unit(self) -> PerUnit {
+        Fixed(((u128::from(self.ns) << 64) + u128::from(self.units) / 2) / u128::from(self.units))
+    }
+}
+
+/// A non-negative number in fixed point, 64 integer and 64 fractional bits
+/// (Q64.64). Times are Fixed nanoseconds per unit (PerUnit), ratios of
+/// times are plain Fixed; arithmetic on them is exact, and each method that
+/// leaves Fixed for a person rounds once.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+struct Fixed(u128);
+
+/// Nanoseconds per unit (see Measured).
+type PerUnit = Fixed;
+
+impl std::ops::Sub for Fixed {
+    type Output = Fixed;
+    fn sub(self, other: Fixed) -> Fixed {
+        Fixed(self.0.checked_sub(other.0).expect("a difference is never negative here"))
+    }
+}
+
+impl std::ops::Mul<u64> for Fixed {
+    type Output = Fixed;
+    fn mul(self, factor: u64) -> Fixed {
+        Fixed(self.0.checked_mul(u128::from(factor)).expect("a scaled value fits in u128"))
+    }
+}
+
+impl Fixed {
+    const ONE: Fixed = Fixed(1 << 64);
+
+    /// The mean of two values, rounded half up.
+    fn midpoint(self, other: Fixed) -> Fixed {
+        Fixed((self.0 + other.0 + 1) / 2)
+    }
+
+    /// self / other, as a Fixed, rounded down at the last bit: a long
+    /// division, 24 bits at a time so that no step overflows. Both values
+    /// are below 2^40 (see Measured) and their ratio below 2^63.
+    fn ratio(self, other: Fixed) -> Fixed {
+        assert!(other.0 > 0 && self.0 < 1 << 104 && other.0 < 1 << 104, "a ratio of two values below 2^40");
+        let (mut quotient, mut remainder) = (self.0 / other.0, self.0 % other.0);
+        assert!(quotient < 1 << 63, "a ratio below 2^63");
+        for bits in [24, 24, 16] {
+            let step = remainder << bits;
+            quotient = (quotient << bits) | (step / other.0);
+            remainder = step % other.0;
+        }
+        Fixed(quotient)
+    }
+
+    /// How self compares with `permille` / 1000, exactly.
+    fn cmp_permille(self, permille: u64) -> std::cmp::Ordering {
+        (self.0 * 1000).cmp(&(u128::from(permille) << 64))
+    }
+
+    /// self in permille, rounded once.
+    fn permille(self) -> u64 {
+        u64::try_from((self.0 * 1000 + (1 << 63)) >> 64).expect("a permille figure fits in u64")
+    }
+
+    /// self / other in permille, rounded once.
+    fn ratio_permille(self, other: Fixed) -> u64 {
+        assert!(other.0 > 0);
+        u64::try_from((self.0 * 1000 + other.0 / 2) / other.0).expect("a ratio fits in u64")
+    }
+
+    /// Nanoseconds, for the SVG's log axis only.
+    fn ns_f64(self) -> f64 {
+        self.0 as f64 / (1u128 << 64) as f64
+    }
+
+    /// Nanoseconds with three decimals, and more below 0.1 ns so that
+    /// three significant digits show, rounded once: "0.437", "0.0311",
+    /// "121.362".
+    fn format_ns(self) -> String {
+        let mut decimals = 3u32;
+        while decimals < 6 && self.0 < (1u128 << 64) / 10u128.pow(decimals - 2) {
+            decimals += 1;
+        }
+        let whole = 10u128.pow(decimals);
+        let rounded = (self.0 * whole + (1u128 << 63)) >> 64;
+        format!("{}.{:0width$}", rounded / whole, rounded % whole, width = decimals as usize)
+    }
+
+    /// `numerator` / self, in tenths, rounded once: a rate from a time.
+    fn tenths_of(self, numerator: u64) -> u64 {
+        assert!(self.0 > 0);
+        u64::try_from((((u128::from(numerator) * 10) << 64) + self.0 / 2) / self.0).expect("a rate fits in u64")
+    }
+}
 
 
 /*
@@ -758,11 +867,11 @@ const PS_PER_NS: u64 = 1_000;
 struct Statistics {
     /// Samples behind these figures.
     count: usize,
-    minimum: u64,
-    low: u64,
-    median: u64,
-    high: u64,
-    maximum: u64,
+    minimum: PerUnit,
+    low: PerUnit,
+    median: PerUnit,
+    high: PerUnit,
+    maximum: PerUnit,
     two_speeds: Option<[Speed; 2]>,
 }
 
@@ -770,9 +879,9 @@ struct Statistics {
 /// interval of that median, and how many samples it holds.
 #[derive(Clone, Copy)]
 struct Speed {
-    median: u64,
-    low: u64,
-    high: u64,
+    median: PerUnit,
+    low: PerUnit,
+    high: PerUnit,
     count: usize,
 }
 
@@ -1438,12 +1547,7 @@ fn measure_all(roster: &Roster, mut trace: Option<&mut ClockTrace>) -> (Results,
                 let copies = duo.run(algorithm, input, &duo_inputs[size_index], point, iterations);
 
                 let total_units = point.use_case.units(point, iterations);
-                let per_unit = |ns: u64| -> u64 {
-                    let ps = ns.checked_mul(PS_PER_NS).expect("a sample of under a second fits in picoseconds");
-                    let per_unit = (ps + total_units / 2) / total_units;
-                    assert!(per_unit > 0, "every timing sample must be positive");
-                    per_unit
-                };
+                let per_unit = |ns: u64| Measured::new(ns, total_units);
                 samples.solo[algorithm_index][size_index].push(per_unit(elapsed_ns));
                 samples.rounds[algorithm_index][size_index].push(round);
                 for copy in &copies {
@@ -1492,7 +1596,7 @@ fn measure_all(roster: &Roster, mut trace: Option<&mut ClockTrace>) -> (Results,
             assert!(!solo.is_empty() && solo.len() <= roster.rounds, "one solo sample per round at most, and one at least");
             assert_eq!(shared.len(), 2 * solo.len(), "two shared samples, one per copy, beside every solo sample");
             results[algorithm_index][size_index] =
-                Some(Cell { solo: summarize(&mut solo.clone()), shared: summarize(&mut shared.clone()) });
+                Some(Cell { solo: summarize(&mut per_units(solo)), shared: summarize(&mut per_units(shared)) });
         }
     }
 
@@ -1609,9 +1713,9 @@ fn running_medians(roster: &Roster, samples: &Samples, size_index: usize) -> Str
     let parts: Vec<String> = (0..roster.len())
         .filter(|&algorithm_index| !samples[algorithm_index][size_index].is_empty())
         .map(|algorithm_index| {
-            let mut sorted = samples[algorithm_index][size_index].clone();
+            let mut sorted = per_units(&samples[algorithm_index][size_index]);
             sorted.sort_unstable();
-            format!("{} {}", roster.algorithms[algorithm_index].name(), format_ps(median_of_sorted(&sorted)))
+            format!("{} {}", roster.algorithms[algorithm_index].name(), median_of_sorted(&sorted).format_ns())
         })
         .collect();
 
@@ -2686,7 +2790,7 @@ impl LoadMonitor {
 /// where `every` spreads STEADY_SAMPLES (or, for a `long` cell,
 /// LONG_SAMPLES) over the run, and in every other one of those rounds
 /// between while its solo or shared median is unsure.
-fn cell_wants_sample(solo: &[u64], shared: &[u64], slot: usize, rounds: usize, long: bool) -> bool {
+fn cell_wants_sample(solo: &[Measured], shared: &[Measured], slot: usize, rounds: usize, long: bool) -> bool {
     let target = if long { LONG_SAMPLES } else { STEADY_SAMPLES };
     let every = (rounds / target).max(1);
     if slot % every == 0 {
@@ -2701,18 +2805,18 @@ fn cell_wants_sample(solo: &[u64], shared: &[u64], slot: usize, rounds: usize, l
 /// median. The interval is the order-statistic one (ranks n/2 ± 0.98 √n),
 /// a sort and two look-ups, cheap enough to ask of every cell each round;
 /// the report's intervals come from the bootstrap.
-fn median_unsure(taken: &[u64]) -> bool {
+fn median_unsure(taken: &[Measured]) -> bool {
     let n = taken.len();
     if n < UNSURE_BELOW {
         return true;
     }
-    let mut sorted = taken.to_vec();
+    let mut sorted: Vec<PerUnit> = taken.iter().map(|m| m.per_unit()).collect();
     sorted.sort_unstable();
     let half_width = 0.98 * (n as f64).sqrt();
     let low = ((n as f64 / 2.0 - half_width).floor().max(0.0)) as usize;
     let high = ((n as f64 / 2.0 + half_width).ceil() as usize).min(n - 1);
     let median = median_of_sorted(&sorted);
-    (sorted[high] - sorted[low]) * 1000 > PRECISION_PERMILLE * median
+    (sorted[high] - sorted[low]) * 1000 > median * PRECISION_PERMILLE
 }
 
 /// (iterations per sample, nanoseconds per iteration measured).
@@ -2777,20 +2881,25 @@ fn calibrate_batch(
  * Requires a non-empty, ascending slice. For an even count the median is
  * the mean of the two middle values, rounded half up.
  */
-fn median_of_sorted(sorted: &[u64]) -> u64 {
+/// Each sample's time per unit, in the samples' order.
+fn per_units(samples: &[Measured]) -> Vec<PerUnit> {
+    samples.iter().map(|m| m.per_unit()).collect()
+}
+
+fn median_of_sorted(sorted: &[PerUnit]) -> PerUnit {
     assert!(!sorted.is_empty(), "median requires at least one sample");
     debug_assert!(sorted.windows(2).all(|pair| pair[0] <= pair[1]));
 
     let middle = sorted.len() / 2;
     if sorted.len() % 2 == 0 {
-        (sorted[middle - 1] + sorted[middle] + 1) / 2
+        sorted[middle - 1].midpoint(sorted[middle])
     } else {
         sorted[middle]
     }
 }
 
 /// Requires a non-empty slice; sorts it. Zeros summarise to zeros.
-fn summarize(samples: &mut [u64]) -> Statistics {
+fn summarize(samples: &mut [PerUnit]) -> Statistics {
     assert!(!samples.is_empty(), "a cell has at least one sample");
     samples.sort_unstable();
 
@@ -2815,7 +2924,7 @@ fn summarize(samples: &mut [u64]) -> Statistics {
  * SplitMix64 makes the result reproducible run to run for the same samples.
  * Requires a sorted, non-empty slice.
  */
-fn bootstrap_median_interval(sorted: &[u64]) -> (u64, u64) {
+fn bootstrap_median_interval(sorted: &[PerUnit]) -> (PerUnit, PerUnit) {
     let n = sorted.len();
     /* SplitMix64 (Steele, Lea & Flood 2014), seeded by the sample count. */
     let mut state: u64 = n as u64;
@@ -2827,7 +2936,7 @@ fn bootstrap_median_interval(sorted: &[u64]) -> (u64, u64) {
         z ^ (z >> 31)
     };
     let mut medians = Vec::with_capacity(BOOTSTRAP_RESAMPLES);
-    let mut resample = vec![0u64; n];
+    let mut resample = vec![PerUnit::default(); n];
     for _ in 0..BOOTSTRAP_RESAMPLES {
         for slot in resample.iter_mut() {
             /* The high half of a 64 × 64-bit product: an index in 0..n with
@@ -2849,24 +2958,23 @@ fn bootstrap_median_interval(sorted: &[u64]) -> (u64, u64) {
  * the median between consecutive values with at least MODE_MIN_SHARE on
  * each side. The widest such gap splits them. Requires a sorted slice.
  */
-fn two_speeds(sorted: &[u64], median: u64) -> Option<[Speed; 2]> {
+fn two_speeds(sorted: &[PerUnit], median: PerUnit) -> Option<[Speed; 2]> {
     let n = sorted.len();
     let min_side = (n * MODE_MIN_SHARE_PERMILLE).div_ceil(1000).max(1);
-    let threshold = median * MODE_GAP_PERMILLE / 1000;
-    let mut best: Option<(usize, u64)> = None;
+    let mut best: Option<(usize, PerUnit)> = None;
     for split in min_side..=n - min_side {
         let gap = sorted[split] - sorted[split - 1];
-        if gap >= threshold && best.is_none_or(|(_, g)| gap > g) {
+        if gap * 1000 >= median * MODE_GAP_PERMILLE && best.is_none_or(|(_, g)| gap > g) {
             best = Some((split, gap));
         }
     }
-    let speed = |part: &[u64]| {
+    let speed = |part: &[PerUnit]| {
         let (low, high) = bootstrap_median_interval(part);
         Speed { median: median_of_sorted(part), low, high, count: part.len() }
     };
     let (split, _) = best?;
     let pair = [speed(&sorted[..split]), speed(&sorted[split..])];
-    (pair[1].median * 1000 >= pair[0].median * TWO_SPEED_RATIO_PERMILLE).then_some(pair)
+    (pair[1].median.ratio_permille(pair[0].median) >= TWO_SPEED_RATIO_PERMILLE).then_some(pair)
 }
 
 /*
@@ -3355,12 +3463,13 @@ fn append_kernel_report(output: &mut String, algorithm: Algorithm, use_case: Use
  * carry the provenance and machine identity as `key: value`; then one row
  * per measured cell and scenario: contender key, scenario (`solo` or
  * `shared`), use case, point label, the unit a sample is per (`B` or
- * `msg`), and the samples in picoseconds per unit, comma-separated, in
- * the order taken (shared: the two copies of each interval in turn).
+ * `msg`), and the samples as measured, comma-separated, each `ns/units`
+ * (the nanoseconds the clock gave over the units they covered), in the
+ * order taken (shared: the two copies of each interval in turn).
  */
 fn generate_samples_tsv(roster: &Roster, samples: &RunSamples, machine: &MachineMetadata, selection_note: &str) -> String {
     let mut out = String::new();
-    writeln!(out, "# bench-hashes samples v2").unwrap();
+    writeln!(out, "# bench-hashes samples v3").unwrap();
     for (key, value) in [
         ("timestamp", machine.timestamp.as_str()),
         ("bench-hashes version", BENCH_VERSION),
@@ -3394,7 +3503,7 @@ fn generate_samples_tsv(roster: &Roster, samples: &RunSamples, machine: &Machine
             writeln!(out, "# kernel platform {} {:?}: {}", algorithm.key(), use_case, detect_kernels(algorithm, *use_case).platform).unwrap();
         }
     }
-    writeln!(out, "contender\tscenario\tuse_case\tpoint\tunit\tps_per_unit").unwrap();
+    writeln!(out, "contender\tscenario\tuse_case\tpoint\tunit\tns/units").unwrap();
     for (algorithm_index, &algorithm) in roster.algorithms.iter().enumerate() {
         for scenario in Scenario::ALL {
             let rows = match scenario {
@@ -3406,7 +3515,7 @@ fn generate_samples_tsv(roster: &Roster, samples: &RunSamples, machine: &Machine
                 if cell_samples.is_empty() {
                     continue;
                 }
-                let values: Vec<String> = cell_samples.iter().map(u64::to_string).collect();
+                let values: Vec<String> = cell_samples.iter().map(|m| format!("{}/{}", m.ns, m.units)).collect();
                 writeln!(
                     out,
                     "{}\t{}\t{:?}\t{}\t{}\t{}",
@@ -3524,7 +3633,7 @@ fn append_table(output: &mut String, roster: &Roster, results: &Results, scenari
         for &algorithm_index in &contenders {
             let statistics = cell(results, algorithm_index, point_index).get(scenario);
             let mark = if statistics.widest_spread_permille() >= SPREAD_WIDE_PERMILLE { "~" } else { " " };
-            let figures: Vec<String> = statistics.speeds().iter().map(|speed| format_ps(speed.median)).collect();
+            let figures: Vec<String> = statistics.speeds().iter().map(|speed| speed.median.format_ns()).collect();
             write!(output, "  {:>13}{mark}", figures.join("|")).unwrap();
         }
         writeln!(output).unwrap();
@@ -3557,28 +3666,28 @@ const CHECK_GAP_PERMILLE: u64 = 50;
  * efficiency core, a lowered clock) leaves the ratio alone; a slowdown of
  * one side (two copies sharing an SME unit) raises it.
  */
-fn paired_slower(pairs: &[(u64, u64)]) -> Option<(u64, u64, u64)> {
+fn paired_slower(pairs: &[(PerUnit, PerUnit)]) -> Option<(u64, PerUnit, PerUnit)> {
     if pairs.is_empty() {
         return None;
     }
-    let mut ratios: Vec<u64> = pairs.iter().map(|&(mine, theirs)| (mine * 1000 + theirs / 2) / theirs).collect();
+    let mut ratios: Vec<Fixed> = pairs.iter().map(|&(mine, theirs)| mine.ratio(theirs)).collect();
     let statistics = summarize(&mut ratios);
     let worst = statistics.slowest();
-    if worst.low <= 1000 || worst.median < 1000 + CHECK_GAP_PERMILLE {
+    if worst.low <= Fixed::ONE || worst.median.cmp_permille(1000 + CHECK_GAP_PERMILLE).is_lt() {
         return None;
     }
     /* The rounds at that ratio: all of them, or those past the split. */
     let floor = match statistics.two_speeds {
-        Some([fast, slow]) => (fast.median + slow.median) / 2,
-        None => 0,
+        Some([fast, slow]) => fast.median.midpoint(slow.median),
+        None => Fixed::default(),
     };
-    let at: Vec<&(u64, u64)> = pairs.iter().filter(|&&(mine, theirs)| (mine * 1000 + theirs / 2) / theirs >= floor).collect();
-    let median_of = |side: fn(&(u64, u64)) -> u64| {
-        let mut values: Vec<u64> = at.iter().map(|pair| side(pair)).collect();
+    let at: Vec<&(PerUnit, PerUnit)> = pairs.iter().filter(|&&(mine, theirs)| mine.ratio(theirs) >= floor).collect();
+    let median_of = |side: fn(&(PerUnit, PerUnit)) -> PerUnit| {
+        let mut values: Vec<PerUnit> = at.iter().map(|pair| side(pair)).collect();
         values.sort_unstable();
         median_of_sorted(&values)
     };
-    Some((worst.median, median_of(|pair| pair.0), median_of(|pair| pair.1)))
+    Some((worst.median.permille(), median_of(|pair| pair.0), median_of(|pair| pair.1)))
 }
 
 /// (checks, two-speed cells), each a list of report lines.
@@ -3630,7 +3739,7 @@ fn checks(roster: &Roster, results: &Results, samples: &RunSamples) -> (Vec<Stri
                 let claim = |into: &mut Vec<Claim>, text: String, worst_permille: u64, worst: String| {
                     into.push(Claim { contender: algorithm, scenario, text, worst_permille, worst });
                 };
-                let against = |at_point: String, slow: u64, fast: u64| format!("{at_point}, {} against {} {unit}", format_ps(slow), format_ps(fast));
+                let against = |at_point: String, slow: PerUnit, fast: PerUnit| format!("{at_point}, {} against {} {unit}", slow.format_ns(), fast.format_ns());
 
                 /* Slower than another contender. */
                 for (b, &other) in roster.algorithms.iter().enumerate() {
@@ -3638,7 +3747,7 @@ fn checks(roster: &Roster, results: &Results, samples: &RunSamples) -> (Vec<Stri
                     if b == a || !other.takes_part(use_case) || (!algorithm.multithreaded() && other.multithreaded()) {
                         continue;
                     }
-                    let verdict: Vec<Option<(u64, u64, u64)>> = POINTS.iter().enumerate()
+                    let verdict: Vec<Option<(u64, PerUnit, PerUnit)>> = POINTS.iter().enumerate()
                         .map(|(index, _)| if points.contains(&index) { judged((a, index), (b, index)) } else { None })
                         .collect();
                     for run in runs(&|index| verdict[index].is_some()) {
@@ -3654,7 +3763,7 @@ fn checks(roster: &Roster, results: &Results, samples: &RunSamples) -> (Vec<Stri
                     UseCase::ManyMessages | UseCase::ManyMessages256 => POINTS[index].messages,
                 };
                 /* For each point: the divisor it is most slower than, with the verdict. */
-                let divisor: Vec<Option<(usize, (u64, u64, u64))>> = POINTS.iter().enumerate()
+                let divisor: Vec<Option<(usize, (u64, PerUnit, PerUnit))>> = POINTS.iter().enumerate()
                     .map(|(large, _)| {
                         if !points.contains(&large) {
                             return None;
@@ -3692,15 +3801,15 @@ fn checks(roster: &Roster, results: &Results, samples: &RunSamples) -> (Vec<Stri
                 /* Two-speed cells. */
                 for run in runs(&|index| stats(a, index).two_speeds.is_some()) {
                     let pair = |index: usize| stats(a, index).two_speeds.unwrap();
-                    let worst = *run.iter().max_by_key(|&&index| pair(index)[1].median * 1000 / pair(index)[0].median).unwrap();
+                    let worst = *run.iter().max_by_key(|&&index| pair(index)[1].median.ratio(pair(index)[0].median)).unwrap();
                     let [fast, slow] = pair(worst);
                     claim(
                         &mut pairs,
                         format!("two speeds: {}", span(&run)),
-                        slow.median * 1000 / fast.median,
+                        slow.median.ratio_permille(fast.median),
                         format!(
                             "{}, {}|{} {unit}, {}% of samples at the faster",
-                            POINTS[worst].name(), format_ps(fast.median), format_ps(slow.median),
+                            POINTS[worst].name(), fast.median.format_ns(), slow.median.format_ns(),
                             fast.count * 100 / (fast.count + slow.count),
                         ),
                     );
@@ -3911,25 +4020,13 @@ fn civil_date_from_unix_days(unix_days: i64) -> (i64, i64, i64) {
     (year, month, day)
 }
 
-/// Picoseconds per byte as an f64 of nanoseconds, for the SVG's log axis only.
-fn ps_to_ns(ps: PsPerByte) -> f64 {
-    ps as f64 / PS_PER_NS as f64
-}
-
-/// Picoseconds per byte as nanoseconds with three decimals: 437 → "0.437".
-fn format_ps(ps: PsPerByte) -> String {
-    format!("{}.{:03}", ps / PS_PER_NS, ps % PS_PER_NS)
-}
-
 /*
- * Rate from picoseconds per unit, with the use case's unit: 1 B/ps =
- * 1000 GB/s, so GB/s = 1000 / ps; 1 msg/ps = 10⁶ Mmsg/s, so Mmsg/s =
- * 10⁶ / ps. Shown to one decimal below 10, whole numbers above.
+ * Rate from a time per unit, with the use case's unit: GB/s = 1 / (ns/B),
+ * Mmsg/s = 1000 / (ns/msg). Shown to one decimal below 10, whole numbers
+ * above.
  */
-fn format_rate(ps: PsPerByte, use_case: UseCase) -> String {
-    assert!(ps > 0);
-    /* tenths of the rate unit, rounded */
-    let tenths = (10_000 * use_case.rate_scale() + ps / 2) / ps;
+fn format_rate(time: PerUnit, use_case: UseCase) -> String {
+    let tenths = time.tenths_of(use_case.rate_scale());
     if tenths >= 100 {
         format!("{} {}", (tenths + 5) / 10, use_case.rate_unit())
     } else {
@@ -4104,8 +4201,8 @@ impl Plot {
          * top. The script rebuilds all of this when the unit flips.
          */
         let scale = use_case.rate_scale() as f64;
-        let observed_lo_rate = scale / ps_to_ns(observed_max);
-        let observed_hi_rate = scale / ps_to_ns(observed_min);
+        let observed_lo_rate = scale / observed_max.ns_f64();
+        let observed_hi_rate = scale / observed_min.ns_f64();
         let (axis_min, axis_max) = log_axis_bounds(observed_lo_rate, observed_hi_rate);
 
         let x_positions: Vec<f64> = points
@@ -4182,9 +4279,8 @@ impl Plot {
     }
 
     /// Pixel y for a measured value.
-    fn map_y(&self, ps: PsPerByte) -> f64 {
-        assert!(ps > 0);
-        self.map_rate(self.scale / ps_to_ns(ps))
+    fn map_y(&self, time: PerUnit) -> f64 {
+        self.map_rate(self.scale / time.ns_f64())
     }
 
     /// A contender's statistics at a point, in this plot's scenario.
@@ -4919,7 +5015,7 @@ fn write_plot(svg: &mut String, plot: &Plot, roster: &Roster, results: &Results,
             speeds[(1 - common_speed(&speeds)).min(speeds.len() - 1)]
         };
         let rare_strength = |k: usize| rare_opacity_hundredths(&speeds_at(k)).unwrap_or(0);
-        let point = |k: usize, value: u64| (plot.x_positions[k], plot.map_y(value));
+        let point = |k: usize, value: PerUnit| (plot.x_positions[k], plot.map_y(value));
 
         let mut band = String::new();
         for k in 0..plot.len() {
@@ -5118,7 +5214,7 @@ fn write_plot(svg: &mut String, plot: &Plot, roster: &Roster, results: &Results,
             r##"      <text class="series-detail" x="{:.1}" y="18">{} · {} {} at {}</text>"##,
             name_x,
             format_rate(statistics.median, plot.use_case),
-            format_ps(statistics.median),
+            statistics.median.format_ns(),
             plot.use_case.time_unit(),
             xml_escape(POINTS[plot.points.end - 1].label),
         )
@@ -5292,7 +5388,7 @@ fn rare_opacity_hundredths(speeds: &[Speed]) -> Option<u64> {
  */
 fn spread_permille(speed: Speed) -> u64 {
     let range = speed.high - speed.low;
-    (range * 1000 + speed.median / 2) / speed.median
+    range.ratio_permille(speed.median)
 }
 
 /*
@@ -5733,28 +5829,30 @@ fn write_interaction_script(
             }
             let cell_at = |k: usize| cell(results, algorithm_index, plot.points.start + k);
             /* Whole-cell figures, then each speed's (speed 1 repeats speed 0 at a one-speed point). */
-            for (key, pick) in [("min", (|t: Statistics| t.minimum) as fn(Statistics) -> u64), ("max", |t| t.maximum), ("n", |t| t.count as u64)] {
+            for (key, pick) in [
+                ("min", (|t: Statistics| t.minimum.format_ns()) as fn(Statistics) -> String),
+                ("max", |t| t.maximum.format_ns()),
+                ("n", |t| t.count.to_string()),
+            ] {
                 write!(data, "],\"{key}\":[").unwrap();
                 for k in 0..plot.len() {
                     if k > 0 { data.push(','); }
-                    let value = pick(cell_at(k).get(plot.scenario));
-                    if key == "n" { write!(data, "{value}").unwrap() } else { write!(data, "{}", format_ps(value)).unwrap() }
+                    data.push_str(&pick(cell_at(k).get(plot.scenario)));
                 }
             }
             for speed in 0..2 {
                 let suffix = if speed == 0 { "" } else { "2" };
                 for (key, pick) in [
-                    ("med", (|v: Speed| v.median) as fn(Speed) -> u64),
-                    ("low", |v| v.low),
-                    ("high", |v| v.high),
-                    ("cnt", |v| v.count as u64),
+                    ("med", (|v: Speed| v.median.format_ns()) as fn(Speed) -> String),
+                    ("low", |v| v.low.format_ns()),
+                    ("high", |v| v.high.format_ns()),
+                    ("cnt", |v| v.count.to_string()),
                 ] {
                     write!(data, "],\"{key}{suffix}\":[").unwrap();
                     for k in 0..plot.len() {
                         if k > 0 { data.push(','); }
                         let speeds = cell_at(k).get(plot.scenario).speeds();
-                        let value = pick(speeds[speed.min(speeds.len() - 1)]);
-                        if key == "cnt" { write!(data, "{value}").unwrap() } else { write!(data, "{}", format_ps(value)).unwrap() }
+                        data.push_str(&pick(speeds[speed.min(speeds.len() - 1)]));
                     }
                 }
             }
@@ -6770,9 +6868,8 @@ fn format_gbps_tick(value: f64) -> String {
 /// A measured value as a bare rate number, as the graph's value labels
 /// show it in the default unit: whole numbers at 10 and above, one
 /// decimal below.
-fn format_rate_value(ps: PsPerByte, use_case: UseCase) -> String {
-    assert!(ps > 0);
-    let rate = (1000 * use_case.rate_scale()) as f64 / ps as f64;
+fn format_rate_value(time: PerUnit, use_case: UseCase) -> String {
+    let rate = use_case.rate_scale() as f64 / time.ns_f64();
     if rate >= 10.0 {
         format!("{rate:.0}")
     } else {
@@ -6801,12 +6898,65 @@ fn xml_escape(input: &str) -> String {
 mod correctness_tests {
     use super::*;
 
+    /// Fixed and Measured: the one division rounds half up at 2^-64, the
+    /// ratio is exact to its last bit, and the display rounds once, with
+    /// three significant digits at every size. Expected answers worked by
+    /// hand (and the ratio against exact integer division).
+    #[test]
+    fn fixed_point_rounds_once_and_late() {
+        let t = |ns, units| Measured::new(ns, units).per_unit();
+        assert_eq!(t(3, 1), Fixed(3 << 64));
+        assert_eq!(t(1, 3), Fixed(((1u128 << 64) + 1) / 3)); // 2^64 / 3 rounds up
+        assert_eq!(t(2, 3), Fixed(((2u128 << 64) + 1) / 3));
+        for (ns, units, shown) in [
+            (437, 1000, "0.437"),
+            (3114, 100_000, "0.0311"),
+            (311, 100_000, "0.00311"),
+            (121_362, 1000, "121.362"),
+            (1, 3, "0.333"),
+            (2, 3, "0.667"),
+            (1, 30, "0.0333"),
+            (99_995, 1_000_000, "0.1000"), // 0.099995 keeps four decimals, rounds up
+            (1_000_000, 1_000_000_000, "0.00100"),
+            (1, 1_000_000, "0.000001"),
+        ] {
+            assert_eq!(t(ns, units).format_ns(), shown, "{ns}/{units}");
+        }
+        let (a, b) = (t(31, 1000), t(7, 3));
+        let exact = (a.0 << 20) / b.0; // the first 20 fractional bits, exactly
+        assert_eq!(a.ratio(b).0 >> 44, exact);
+        for x in [1u128, 3, 7, 1 << 40, (1 << 103) + 12345] {
+            for y in [1u128, 2, 5, 1 << 50, (1 << 103) - 1] {
+                if x / y >= 1 << 63 {
+                    continue; // outside ratio's contract
+                }
+                let q = Fixed(x).ratio(Fixed(y)).0;
+                // q = floor(x * 2^64 / y): q * y <= x * 2^64 < (q + 1) * y, checked in 256 bits as two halves.
+                let wide = |a: u128, b: u128| -> (u128, u128) {
+                    let (a1, a0, b1, b0) = (a >> 64, a & u64::MAX as u128, b >> 64, b & u64::MAX as u128);
+                    let (lo, mid1, mid2, hi) = (a0 * b0, a1 * b0, a0 * b1, a1 * b1);
+                    let (mid, c1) = mid1.overflowing_add(mid2);
+                    let (low, c2) = lo.overflowing_add(mid << 64);
+                    (hi + (mid >> 64) + ((c1 as u128) << 64) + c2 as u128, low)
+                };
+                let target = (x >> 64, x << 64);
+                assert!(wide(q, y) <= target && wide(q + 1, y) > target, "{x} / {y}");
+            }
+        }
+        assert_eq!(Fixed::ONE.cmp_permille(1000), std::cmp::Ordering::Equal);
+        assert!(t(1049, 1000).cmp_permille(1050).is_lt() && t(1051, 1000).cmp_permille(1050).is_gt());
+        assert_eq!(t(1, 3).permille(), 333);
+        assert_eq!(t(5, 4).ratio_permille(t(1, 1)), 1250);
+        assert_eq!(t(6, 1).tenths_of(1), 2); // 1 / 6 GB/s: 0.1667, two tenths
+    }
+
     fn point(label: &str, use_case: UseCase) -> usize {
         POINTS.iter().position(|point| point.label == label && point.use_case == use_case).unwrap()
     }
 
     /// Results and samples for two contenders over `rounds` rounds: each
-    /// cell's sample in round r is `value(contender, point, r)`, solo and
+    /// cell's sample in round r is `value(contender, point, r)` ns over one
+    /// unit, solo and
     /// both shared copies alike, summarised as measure_all does.
     fn run(roster: &Roster, rounds: usize, value: impl Fn(usize, usize, usize) -> u64) -> (Results, RunSamples) {
         let empty = || -> Samples { vec![vec![Vec::new(); POINT_COUNT]; roster.len()] };
@@ -6815,14 +6965,14 @@ mod correctness_tests {
         for a in 0..roster.len() {
             for &p in &roster.points {
                 for r in 0..rounds {
-                    let v = value(a, p, r);
+                    let v = Measured::new(value(a, p, r), 1);
                     samples.solo[a][p].push(v);
                     samples.shared[a][p].extend([v, v]);
                     samples.rounds[a][p].push(r);
                 }
                 results[a][p] = Some(Cell {
-                    solo: summarize(&mut samples.solo[a][p].clone()),
-                    shared: summarize(&mut samples.shared[a][p].clone()),
+                    solo: summarize(&mut per_units(&samples.solo[a][p])),
+                    shared: summarize(&mut per_units(&samples.shared[a][p])),
                 });
             }
         }

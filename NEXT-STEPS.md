@@ -22,11 +22,12 @@ README: a short warning in my voice, one speed chart (1 MiB, cores) drawn by
 predates the commonware and sha3-256 keys and the `test` job type: Zooko
 restarts it with `setup-mac.sh`.
 
-Next: femtosecond samples (below); then the weak cells.
+Next: the weak cells.
 
-- **Precision: samples in femtoseconds** (proposed to Zooko). Samples
-  and the report hold integer ps per unit; at 1 MiB servil mt runs 31
-  ps/B on the Mac, so one unit is 3%, the solo margin of perf_regress.
+- **Time kept as measured** (done, September 26): samples are `ns/units`
+  (samples v3); statistics run on `Fixed` (Q64.64) and round once, for
+  the page; the report shows three significant digits (0.0311). The fork's
+  perf_regress, losses.py, and speed_chart.py read it exactly (Fraction).
 
 Found this session: the fork's test suites have never run under macOS
 (the runner runs benchmarks, perf_regress, and examples; tests ran only

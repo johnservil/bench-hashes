@@ -61,8 +61,11 @@ ramp: a tree that is no power of two (a 2 MiB left subtree beside a
 1 MiB right one), so a splitter that cuts at subtree boundaries hands
 its threads unequal work there.
 
-The report gives each cell's median time per unit (integer picoseconds
-inside, nanoseconds on the page); lower is better. Every time is wall
+The report gives each cell's median time per unit in nanoseconds, to
+three decimals or three significant digits, whichever shows more; lower
+is better. Each sample is kept as measured, the clock's nanoseconds over
+the units they covered, and the statistics work on it in fixed point with
+64 fractional bits, rounding only for the page. Every time is wall
 time on the platform's hardware counter (`CLOCK_UPTIME_RAW` on Darwin,
 `CLOCK_MONOTONIC` on Linux, via `std::time::Instant`), so a throttled
 clock, a busy SME unit, or a GPU's latency counts as the user would
@@ -492,8 +495,9 @@ contender at the largest input size), and writes three files to
 `benchmark-results/{CPU}.{OS}/`: `bench-hashes.result.txt` (the
 report), `bench-hashes.graph.svg` (the graph), and
 `bench-hashes.samples.tsv` (every sample of every cell, both scenarios,
-in the order taken, with the provenance and the CPU's identity as
-`# key: value` lines).
+in the order taken, each as `ns/units`, with the provenance and the CPU's
+identity as `# key: value` lines; files from before September 26, 2026,
+marked `samples v2`, hold integer picoseconds per unit instead).
 
 ## Load from other programs
 
