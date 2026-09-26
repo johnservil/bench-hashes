@@ -4185,6 +4185,7 @@ fn generate_svg(
     .series-name { font-size: 13px; font-weight: 700; }
     .series-detail { font-size: 10px; fill: #777777; }
     .series-hint { font-size: 9px; fill: #b0b0b0; }
+    .series-note { font-size: 10px; font-weight: 400; fill: #777777; }
     .annotation { font-size: 10px; font-style: italic; fill: #8a8a8a; }
     .prov-head { font-size: 10px; font-weight: 700; fill: #aaaaaa; letter-spacing: 0.1em; }
     .prov-head-row { cursor: pointer; }
@@ -4914,11 +4915,18 @@ fn write_plot(svg: &mut String, plot: &Plot, roster: &Roster, results: &Results,
             r##"    <g class="series-label" transform="translate(0 {label_y:.2})" onclick="event.stopPropagation(); toggleSeries({algorithm_index})" onpointerenter="hoverLabel(event,{algorithm_index},true)" onpointerleave="hoverLabel(event,{algorithm_index},false)">"##
         )
             .unwrap();
+        /* The batch plots' note beside the crates.io crate's name, in full. */
+        let batch_note = if plot.use_case.batch() && algorithm == Algorithm::Blake3 {
+            "; in this plot, from two messages, through the crate's hidden batch function blake3::platform::Platform::hash_many, sixteen messages per call"
+        } else {
+            ""
+        };
         writeln!(
             svg,
-            r##"      <title>{}: {}. Click to hide or show it.</title>"##,
+            r##"      <title>{}: {}{}. Click to hide or show it.</title>"##,
             xml_escape(algorithm.name()),
             algorithm.blurb(),
+            xml_escape(batch_note),
         )
             .unwrap();
         writeln!(
@@ -4952,9 +4960,15 @@ fn write_plot(svg: &mut String, plot: &Plot, roster: &Roster, results: &Results,
             .unwrap();
         }
         writeln!(svg, r##"      </g>"##).unwrap();
+        /* In the batch plots the crates.io crate runs a function its docs hide; the name says so beside it. */
+        let note = if plot.use_case.batch() && algorithm == Algorithm::Blake3 {
+            r##"<tspan class="series-note" dx="5">hidden batch API</tspan>"##
+        } else {
+            ""
+        };
         writeln!(
             svg,
-            r##"      <text class="series-name" x="{:.1}" y="4" fill="{color}">{}</text>"##,
+            r##"      <text class="series-name" x="{:.1}" y="4" fill="{color}">{}{note}</text>"##,
             name_x,
             xml_escape(algorithm.name()),
         )
@@ -5362,22 +5376,30 @@ fn shared_provenance_cats(machine: &MachineMetadata, selection_note: &str) -> Ve
 fn code_path_cat(roster: &Roster, plots: &[Plot]) -> ProvCat {
     let mut lines = Vec::new();
     for (algorithm_index, algorithm) in roster.algorithms.iter().enumerate() {
-        /* Each method once per hash, with the plots it runs in when that is not all of them. */
-        let mut methods: Vec<(&Kernel, Vec<UseCase>)> = Vec::new();
+        /*
+         * Each method once per hash, with the plots it runs in when that is
+         * not all of them. Where it starts is told in the plot's own x:
+         * bytes for an input, messages for a batch.
+         */
+        let mut methods: Vec<(&Kernel, String, Vec<UseCase>)> = Vec::new();
         let mut takes_part: Vec<UseCase> = Vec::new();
         for use_case in UseCase::ALL {
             let Some(plot) = plots.iter().find(|plot| plot.use_case == use_case) else { continue };
             let Some(kernels) = &plot.kernels[algorithm_index] else { continue };
             takes_part.push(use_case);
             for kernel in &kernels.kernels {
-                match methods.iter_mut().find(|(k, _)| k.name == kernel.name && k.why == kernel.why && k.first == kernel.first) {
-                    Some((_, use_cases)) => use_cases.push(use_case),
-                    None => methods.push((kernel, vec![use_case])),
+                let from = match kernel.first {
+                    0 => "from the start".to_owned(),
+                    first if use_case.batch() => format!("from {} messages", first.div_ceil(use_case.message_len())),
+                    first => format!("from {}", format_bytes(first)),
+                };
+                match methods.iter_mut().find(|(k, f, _)| k.name == kernel.name && k.why == kernel.why && *f == from) {
+                    Some((_, _, use_cases)) => use_cases.push(use_case),
+                    None => methods.push((kernel, from, vec![use_case])),
                 }
             }
         }
-        for (kernel, use_cases) in methods {
-            let from = if kernel.first == 0 { "from the start".to_owned() } else { format!("from {}", format_bytes(kernel.first)) };
+        for (kernel, from, use_cases) in methods {
             let plots_named = if use_cases.len() == takes_part.len() {
                 String::new()
             } else {
