@@ -42,11 +42,23 @@ BLAKE3, optimise, produce evidence of code quality):
 
 ### Zooko's answers (September 26, morning) and tonight's tasks
 
-- **One-block tails: land the padded group from 5** (probe/onepad-after5),
-  with `--no-verify` and the held cells in the message. His reasons: it
-  fixes a cell where we trail competitors; the Mac weighs more than the
-  VM (users run less performance-sensitive work in VMs); the speedups are
-  much larger than the slowdowns.
+- **One-block tails from 5: held for Zooko again, with a correction.**
+  He said yes, partly because "it addresses a case where we lose against
+  a competitor". That was my error: the checks where we trail at 24 are
+  for 24 messages *of 256 B*; at 64 B x 24 the Mac record has servil
+  10.67 ns/msg against official 22.5. What the change really does, Mac
+  P-cores: the old path (a group, then the NEON plans for the 8 left)
+  runs 10.6 in the SME unit's fast state and 25.5-31.5 when the unit sits
+  in its slow state (probe job 280: counts 20 and 22-28 slow, 21 and 29-31
+  fast, in one tight-loop sweep); the padded group runs 13.3 every time,
+  never slow. A/B in the benchmark (jobs 291-294, old new new old): x 24
+  10.6 / 13.3 / 13.4 / 10.5, every sample fast; x 16, 32, 48 level;
+  official 21.0-21.7. perf_regress on the Mac (job 286): x 24 +27% solo,
+  +16% shared. So: worst case 26 -> 13.3 (minimax), the benchmark's own
+  cell +25% (still ahead of every competitor by 1.6x). Candidate
+  `candidate/onepad-after5` (605f300) waits; the question for Zooko: take
+  it for the worst case, or keep the old path until we control the slow
+  state (open problem 6)?
 - **`perf_regress` and shared cells: report, don't hold**, on the
   presumption that a commit which slows a shared cell has a reason worth
   more (a larger gain elsewhere, simpler code); the commit message names
