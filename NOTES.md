@@ -31,13 +31,14 @@ non-power-of-two trees, one at the SIMD ramp and one at the plateau; a
 contender whose work splitting assumes powers of two shows it there (and
 one did).
 
-**Batch sizes.** Twenty-four on a second axis: 1 to 262144 messages of
-64 B, with 3, 6, 12, 24, 48 beside the powers of two to leave SIMD
+**Batch sizes.** Twenty-four on each of two axes: 1 to 262144 messages
+of 64 B (a Merkle tree's inner nodes) and of 256 B (its leaves, as in
+WHIR), with 3, 6, 12, 24, 48 beside the powers of two to leave SIMD
 groups partly filled. Samples on that axis divide by messages, so the
 statistics pipeline is unchanged and only the unit names and the rate
 scale (1 GB/s per ns/B; 1000 Mmsg/s per ns/msg) differ per plot. Its
 golden anchors are the SHA-256 of a batch's digests concatenated, one
-line per (batch size, seed).
+line per (batch size, seed) in `MANY_VECTORS` and `MANY_256_VECTORS`.
 
 **Round counts** are a plain 96 (24 with `--quick`). They used to
 be the least multiple of the point count and the order count at or above

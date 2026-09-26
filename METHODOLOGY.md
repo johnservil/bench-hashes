@@ -219,10 +219,9 @@ On other CPUs it runs the kernels of the crates.io crate it forks
 (SSE4.1, AVX2, AVX-512 on x86). The report's kernel table names the
 platform the run measured. Its provenance line gives the repository,
 branch, and commit instead of a registry checksum. For a batch the fork's `hash_many`
-compresses one-block messages many lanes at a time on the same
-kernels its tree uses for parent nodes (sixteen per group on SME2, the
-NEON hybrids below a group), and `kernel_report_many()` describes that
-by batch size.
+hashes messages of one to sixteen blocks many lanes at a time (sixteen
+per group on SME2, NEON below a group), and
+`kernel_report_many(message_len)` describes that by batch size.
 
 BLAKE3 official mt is the crates.io crate's own multithreading, called as a
 program calls it by default: `Hasher::new().update_rayon(input)` on

@@ -1,5 +1,7 @@
 # Style Guides
 
+These style guides read the same in the fork's `AGENTS.md` and in bench-hashes' `AGENTS.md`; a change goes into both.
+
 ## Communication
 
 - Phrase positively or neutrally; avoid negations and "not this, but that" contrasts.
@@ -69,9 +71,13 @@ place through a concrete need and a demonstrated benefit. When approaches
 perform similarly, choose the simpler one. Apply this standard to code,
 interfaces, documentation, and performance optimizations.
 
+## Strategy: the recommended usage first (Zooko, September 25, 2026)
+
+Make the recommended usage as fast as possible, and tell users how to use it that way. The recommended usage: one thread makes all of a program's calls (the single-threaded ones, or the multithreaded ones, which spread the work under the hood), handing over whole inputs, batches, or large stream pieces. Within it, the minimax rule below still holds over input sizes, batch sizes, and machines (the VM included): no weak size, and effort first where we trail. Misuse and misfortune (several of a program's threads calling at once, other load on the machine, the shared scenario) stay measured and reported in every benchmark, record, and check, and stay cared for: keep cheap protections such as the SME2 lock, report what they cost, and improve them where it costs the recommended usage nothing. They no longer veto a change that helps the recommended usage; such a change records the shared cells it slows, with their numbers, in its commit message. `perf_regress` holds a change for review when any solo cell is slower by more than 3% or any shared cell by more than 10% (the user's rule, September 25, 2026); a held change lands only with `--no-verify` and the held cells and their numbers in the message. The rule detects; whether a change is worth its cost stays judgment, and cells the check does not measure (other sizes, E-cores, two-speed shifts) stay the probes' and the review's business.
+
 ## Strategy: minimax
 
-Judge a design by its worst plausible case first. Performing well in every situation (or as many as possible) beats excelling in some while falling behind in others: a user meets whatever situation their own program creates. Plausible situations include several threads of one program hashing at once, other programs busy on the machine, a quiet machine, a VM, and every input size and batch size. For each candidate, find the situation where it does worst and compare those worst cases; a best case decides only between designs whose worst cases are level. Consequences here:
+Within the recommended usage (above), judge a design by its worst plausible case first. Performing well in every situation (or as many as possible) beats excelling in some while falling behind in others: a user meets whatever situation their own program creates. Plausible situations include several threads of one program hashing at once, other programs busy on the machine, a quiet machine, a VM, and every input size and batch size. For each candidate, find the situation where it does worst and compare those worst cases; a best case decides only between designs whose worst cases are level. Consequences here:
 
 - A resource that can be shared (an SME unit, a cluster, memory bandwidth) is judged at its shared speed, since some program will share it.
 - A multithreaded call that runs slower than the single-threaded call on the same task is a defect: it could have run single-threaded.
@@ -113,6 +119,10 @@ We document and `assert` every precondition our code relies on (`debug_assert` o
 
 We never write "defensive code" — code that complicates a contract to ease the caller's life. When running code detects that a caller misunderstood the contract, it **fails stop**: panic with a clear message. Stopping is safer than proceeding, and it lets people fix the caller or loosen the contract. Defensive codebases grow buggier over time; DBC codebases stay predictable.
 
+## Interfaces: fewest new concepts
+
+A highly desirable property of an interface and its contract: the user learns the fewest new concepts. Zero new concepts earns a perfect score. Each new term (a resource unit, a sharing rule, a tuning knob) taxes working memory and needs a place in prediction and control. Prefer familiar concepts the caller already holds (threads, inputs, budgets), keep implementation units unnamed in public docs, and express observable behavior (speed, thread count, fairness beside concurrent calls) in those familiar terms.
+
 # This repository
 
 Read `NEXT-STEPS.md` first: it says what the work is now and where the last session left things. `NOTES.md` holds the measurement design, the known threats to validity and how each was closed. This file is style and environment.
@@ -141,18 +151,18 @@ The fork's `tools/perf_regress.py` builds this benchmark twice through the `--co
 
 - This repository (github.com/johnservil/bench-hashes, branch `main`) is checked out at `/workspace/bench-hashes`, nested inside the fork it measures.
 - `/workspace` is the fork checkout (github.com/johnservil/BLAKE3, branch `servil`), which a patched build uses as `blake3-servil` (`..`). `build.rs` then embeds that checkout's branch, commit, and clean or dirty fingerprint in the provenance, leaving this directory out of the fork's status; unpatched, it embeds the pinned commit from `Cargo.lock`. `cargo update -p blake3-servil` moves the pin to the fork's `servil` tip, which follows every promotion there.
-- `/workspace` is the host checkout mounted through sandboxfs and is the only path that survives a VM restart. `/workspace/vm/` holds the guest-side environment: `vm/home` (the `HOME` for `git` and `cargo`, with `safe.directory = *`, John Servil's identity, and the credential helper), `vm/home/bin/gh-cred.sh` (reads the johnservil classic token from `/workspace/ghtokenclassic.txt`; never print that file), and `vm/setup.sh`, which installs `clang-19` and re-points both repos' credential helpers. Run `sh /workspace/vm/setup.sh` first after a restart. The fork's `AGENTS.md` describes the same layout from its side.
+- `/workspace` is the host checkout mounted through sandboxfs and is the only path that survives a VM restart. `/workspace/vm/` holds the guest-side environment: `vm/home` (the `HOME` for `git` and `cargo`, with `safe.directory = *`, John Servil's identity, and the credential helper), `vm/home/bin/gh-cred.sh` (reads the johnservil classic token from `/workspace/ghtokenclassic.txt`; never print that file), and `vm/setup.sh`, which installs `clang-19`, `pypy3`, and `rsvg-convert`, re-points both repos' credential helpers, and installs the fork's pre-commit hook. Run `sh /workspace/vm/setup.sh` first after a restart. The fork's `AGENTS.md` describes the same layout from its side.
 
 ## Building and running
 
 - The VM is Debian 12 on AArch64 with 16 vCPUs (inspect `nproc` after a restart). Its CPU exposes SME2 with 512-bit streaming vectors (`/proc/cpuinfo` lists `sme2`), so the fork's kernels run here. Absolute timings differ from Apple hardware; relative comparisons hold.
 - The fork's SME2 kernel is `c/blake3_sme2_aarch64.S`, compiled by the `cc` crate with `-march=armv9-a+sme2`. The system `cc` (GCC 12) and `as` (binutils 2.40) predate SME2, so under them the fork builds without the SME2 kernel and warns (the user's decision, September 25, 2026, for Debian 12 and Raspberry Pi OS users); every VM build takes `CC=clang-19`, which assembles SME2, and `perf_regress` fails stop when a build on an SME2 machine lacks the kernel; `TMPDIR` gives clang a temporary directory that exists in the guest.
-- Run from this directory, since results land in `benchmark-results/` relative to the current directory: `cd /workspace/bench-hashes && HOME=/workspace/vm/home CARGO_TARGET_DIR=/tmp/target CC=clang-19 TMPDIR=/tmp cargo run --release -- --quick --contenders blake3-official,blake3-servil-st`. Records: pin the fork commit in `Cargo.lock`, then `cargo run --release -- --all` (unpatched), and commit the lock with the records.
+- Results land in `benchmark-results/` relative to the current directory, so a run from this directory replaces the records there. Records: pin the fork commit in `Cargo.lock`, then `cd /workspace/bench-hashes && HOME=/workspace/vm/home CARGO_TARGET_DIR=/tmp/target CC=clang-19 TMPDIR=/tmp cargo run --release -- --all` (unpatched), and commit the lock with the records. Exploratory runs go in a scratch directory with the built executable: `cargo build --release`, then `cd /tmp/qr && /tmp/target/release/bench-hashes --quick --contenders blake3-official,blake3-servil-st`.
 - Release: `python3 tools/gen-ver.py X.Y.Z` from a clean tree makes two version commits and a lightweight tag `vX.Y.Z+<commit>`; push `main`, then the tag by name (`--follow-tags` carries annotated tags only).
 - Every `git` and `cargo` command takes `HOME=/workspace/vm/home`; files on the mount show as uid 501 while the guest runs as uid 0, which `safe.directory` covers. `CARGO_TARGET_DIR=/tmp/target` is a tmpfs build cache; `CARGO_HOME=/usr/local/cargo`. The toolchain is rustc 1.98.1 without the `rustfmt` component, so there is no formatting check in the guest.
 - The contender set is a runtime `Roster` (see `--list`, `--all`, `--contenders`). CommonCrypto SHA-256 reports itself unavailable off Apple; its FFI module compiles only under `target_vendor = "apple"`. `rustup target add aarch64-apple-darwin` lets `cargo check --target aarch64-apple-darwin` type-check that path; the full crate fails to *build* for that target in this VM because the fork's C files need Apple headers.
 - Sample timing uses `std::time::Instant` (a hardware counter: `CLOCK_UPTIME_RAW` on Darwin, `CLOCK_MONOTONIC` on Linux). A run under thread CPU time once showed a 12% floor shared by three contenders; two experiments cleared the clock and pointed at a ~12 ms core-frequency boost. `--trace-clocks PATH` records wall, thread-CPU, mach ticks, and (Apple) per-core-kind cycles per sample; `tools/analyze-clock-trace.py` reads it. github.com/johnservil/measure-clocks3 (needs `cargo +nightly`; clone it under `/workspace/tmp` if needed again) has `--pitfall` and `CPU-TIME-CLOCKS-AND-FREQUENCY.md`.
-- `rsvg-convert` (librsvg2-bin, reinstall after a restart) renders an SVG to PNG to eyeball it: `rsvg-convert -w 1200 file.svg -o out.png`.
+- `rsvg-convert` renders an SVG to PNG to eyeball it: `rsvg-convert -w 1300 file.svg -o out.png`; `tools/graph-check/README.md` drives the graph's script.
 - Commands for the user go on one line, with no `\` continuations.
 - Never `sleep` in commands.
 - Run long commands (builds, benchmark runs, package installs) without a timeout and let their output stream, so the user can watch progress and interrupt when they choose.

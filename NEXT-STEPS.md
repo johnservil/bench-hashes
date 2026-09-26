@@ -8,138 +8,127 @@ principles are in both repositories' `AGENTS.md`; the fork's hardware
 facts, design, and rejected ideas are in its `NOTES-servil.md` (read it
 before touching kernels or the pool); this repository's are in `NOTES.md`.
 
-## Resume here (checkpoint, September 26, 2026, 04:30 UTC)
+## Resume here (checkpoint, September 26, 2026, 04:50 UTC)
 
-State: fork `servil` 4cad0c6 (pinned here, ef3758f): the one-buffer batch
-API and `kernel_report_many(message_len)` (3d83912's gate note), then the
-multithreaded split's name. Records on it, both machines quiet, both
-graph checks pass. No candidates open.
+State: fork `servil` 76e3f4a, pinned here (59d168e); no candidates open.
+Records (74adeea) measure 4cad0c6, whose code 76e3f4a keeps (it adds the
+README's warning). Zooko is asleep until about 13:00 UTC and asked for
+autonomous work overnight; this section says what was done and what is
+next as it goes.
+
+### Waiting on Zooko
+
+- **A note for Remco**: offered, unanswered. His method (the official
+  crate's hidden `Platform::hash_many`, 16 per call) against servil,
+  records 74adeea, ns per 256-byte message, solo: Mac 96-99 against
+  servil in one call per layer 37.7-39.2 (2.5x) and servil mt 8.6 at
+  16384, 7.6 at 262144; VM 102-104 against 39.0-40.3 and 11.1, 8.3.
+  His plug-in: a `HashEngine` calling `hash_many(input, 256, out)` for
+  leaves, 64 for nodes. Zooko: the whole layer in one call is the
+  efficient use, and Remco may switch to it.
+- **The `efficient` module** (fork NOTES, "Energy per byte"): SME2 is the
+  cheapest kernel per byte, so an efficient mode keeps it; single-threaded
+  calls equal today's, apart from the "minimax" NEON plans for 2-15 KiB
+  (E-core cycles -16-24%, P +17%). Multithreaded: the caller on SME2 with
+  the E-cores' NEON helpers at background QoS hashed 8 MiB 10-27% faster
+  than hash() for a third less energy, level at 1 MiB, slower below; it
+  needs a second, sleeping pool. The pool's idle workers poll through a
+  call, which doubles the energy of calls with a small thread budget.
+- **`perf_regress` and shared cells**: should a shared-cell regression be
+  reported without stopping the commit?
 
 ### Next, in order
 
-1. **Tell Zooko the numbers for Remco** (records on 4cad0c6, ns per
-   256-byte message, solo): his method (the official crate's hidden
-   `Platform::hash_many`, 16 per call) 96-99 on the Mac, 102-104 on the
-   VM; servil in one call per layer 37.7-39.2 Mac, 39.0-40.3 VM (2.5x);
-   servil mt 8.6 at 16384 and 7.6 at 262144 Mac (11-13x), 11.1 and 8.3
-   VM. SHA-256 (ring) 90-94 Mac. The whole layer in one call is the
-   efficient use (Zooko); the plug-in is a `HashEngine` calling
-   `hash_many(input, 256, out)` (or 64 for nodes).
-
-2. **Padded batch contract** (Zooko, September 26; decided): message i
-   starts at byte i x s, s = message_len rounded up to a multiple of 64
-   (64 for an empty message); the caller zeroes the bytes between one
-   message's end and the next one's start (the caller's obligation; the
-   kernels never mask); any message length (long messages batch too:
-   chunk k of 16 messages in 16 lanes at counter k, then each parent
-   level across messages as one parent-kernel batch); fail stop with
-   `assert` on lengths, `debug_assert` on the zero padding; no base
-   alignment unless a measurement shows it pays. Kernels take the last
-   block's length (SME2 `z14`, NEON packed word). Tests from the
-   reference implementation at 1-3000 B and the boundaries; a benchmark
-   cell of long messages (2000 B) against a loop of hash(). A probe of
-   129-byte messages at s = 192 against 256 settles the rounding rule.
-
-3. **Weak cells** (minimax; both records): 256 B at 4-12 messages servil
+1. **The padded batch contract** (decided; see Decisions). Kernels take
+   the last block's length (SME2 `z14`, NEON packed word, hybrids); any
+   message length batches: chunk k of 16 messages in 16 lanes at counter
+   k, then each parent level across messages as one parent-kernel batch.
+   Tests from the reference implementation at 1-3000 B and around every
+   block and chunk boundary; a benchmark cell of long messages (2000 B)
+   against a loop of hash(); a probe of 129-byte messages at stride 192
+   against 256 settles the rounding rule.
+2. **Weak cells** (minimax; both records): 256 B at 4-12 messages servil
    level with official or 1% behind (Mac 4: 99.2 against 98.0; both NEON
    four-wide); 256 B at 17-31 messages about 400 ns per call beyond the
-   kernels (24: 74 ns/msg against 38 at 16; the SME2 remainder problem,
-   open problem 6); 64 B at 4 messages servil 24.0 against official 22.1
-   (Mac; hybrids against the C four-lane kernel); SHA-256 faster than
-   BLAKE3 below 16 messages of 256 B (open problem 1's sizes).
+   kernels (24: 74 ns/msg against 38 at 16; open problem 6); 64 B at 4
+   messages servil 24.0 against official 22.1 (Mac; the hybrids against
+   the C four-lane kernel); SHA-256 faster than BLAKE3 below 16 messages
+   of 256 B (open problem 1's sizes).
+3. **One cell's aftereffects slow the next** (open, ours to explain): on
+   the VM, servil f70c758's shimmed 256-byte batch cells (the slice API
+   behind a copying wrapper, one message at a time) made the next SHA-256
+   64 B cell 3-6% slower, reproducibly, in `perf_regress`'s full point
+   list and in no shorter one. 3d83912 stops running unjudged cells,
+   which avoids it; the mechanism (allocator, caches, clock or SME state
+   after long integer runs) is unexplained, and a user's program could
+   meet it.
+4. The text report's three-reader pass (CHECKS, TWO SPEEDS).
+5. A second SME2 thread in the pool (two SME units reachable, job 187).
+6. Open, smaller: hash(256 KiB)'s partial slow state; the VM's
+   per-process two speeds; shared streamed 64 B two-speed on the VM.
 
-4. **Open: one cell's aftereffects slow the next.** On the VM, servil
-   f70c758's shimmed 256-byte batch cells (the slice API behind a copying
-   wrapper, the messages one at a time) made the next SHA-256 64 B cell
-   3-6% slower, reproducibly, in `perf_regress`'s full point list and in
-   no shorter one. 3d83912 stops running unjudged cells, which avoids it;
-   the mechanism (allocator, caches, clock or SME state after long
-   integer runs) is unexplained, and a user's program could meet it.
-
-5. The records procedure below names "the list script on both samples
-   files"; no such script exists in either repository now. Find what it
-   was or drop the step.
-
-### Remco (a potential user; context for 2-4)
+### Remco (a potential user)
 
 Merkle trees for a binary-field SNARK (WHIR), 2^16-2^24 leaves of 256 B,
 inner nodes the standalone BLAKE3 hash of two 32-byte children (64 B).
-His tree (`src/protocols/merkle_tree.rs`) keeps every node, pads to a power
-of two, chooses a hash engine per layer (recorded in its config; nodes may
-use truncated permutations), and hashes each layer with its `HashEngine`
-trait's `hash_many(size, input, out)`. The plug-in for him is a servil
-engine calling the one-buffer `hash_many` (about 20 lines); a servil Merkle
-tree would change his commitment format. A generic, opinionated
-`servil::merkle` is a later design project (see "Idea: a full-fledged
-Merkle tree API").
-
-### Then, from before
-
-1. The text report's three-reader pass (CHECKS, TWO SPEEDS).
-2. A second SME2 thread in the pool (two SME units reachable, job 187).
-3. Open: hash(256 KiB)'s partial slow state; the VM's per-process two
-   speeds; shared streamed 64 B two-speed on the VM.
-
-**The `efficient` module, as measured, for Zooko to decide** (fork NOTES,
-"Energy per byte"): SME2 is the cheapest kernel per byte, so an efficient
-mode keeps it; its single-threaded calls would equal today's, apart from
-the "minimax" NEON plans for 2-15 KiB (E-core cycles -16-24%, P +17%). What
-differs is multithreading: the caller on SME2 with the E-cores' NEON
-helpers at background QoS hashed 8 MiB 10-27% faster than hash() for a
-third less energy, level at 1 MiB, slower below; it needs a second,
-sleeping pool. Also to weigh: the pool's idle workers poll through a call,
-which doubles the energy of calls with a small thread budget.
-
-## Where things stand (September 25, 2026)
-
-- **Decisions of the day** (fork AGENTS.md): the recommended usage first
-  (one thread makes all calls; shared and misuse measured and reported in
-  every benchmark, no longer a veto); `perf_regress` holds a change past 3%
-  in any solo cell or 10% in any shared cell; accepted trades need every
-  slowed cell ahead of every competitor and Zooko's decision; measure wall
-  time and cycles, both, always (`examples/support/clocks.rs`).
-- **Findings** (fork NOTES-servil.md): integer work runs beside the SME
-  unit for free (job 142); streaming mode lowers the P clock to 3.93 GHz
-  from 4.51; the SME unit has a slow state (3.2 cycles per ns) after idle
-  time; the 18-chunk kernel is faster on P (-10%) and E (cycles -2%).
-- Fork `servil`: release **blake3-servil 0.1.0** (tag `v0.1.0+7fe31c3...`,
-  `tools/gen-ver.py`, Zooko's technique), then `Hasher::update_multithreaded`
-  (c6d61a6) and docs. bench-hashes: 0.7.0 released, then the **streamed use
-  case** (64 KiB pieces, solo and shared; six plots); records on fork
-  c6d61a6, both quiet.
-- Kept probes: `probe/sme-scalar`, `probe/sme2-hybrid`, `probe/neon-cold`,
-  `probe/mixed-parents`, `probe/overlap-old`/`-new`.
+His tree (`src/protocols/merkle_tree.rs` in worldfnd/whir) keeps every
+node, pads to a power of two, chooses a hash engine per layer (recorded
+in its config; nodes may use truncated permutations), and hashes each
+layer through its `HashEngine` trait's `hash_many(size, input, out)`; his
+BLAKE3 engine calls the official crate's hidden `Platform::hash_many`
+sixteen messages at a time. A servil Merkle tree would change his
+commitment format (see "Idea: a full-fledged Merkle tree API").
 
 ## How to work
 
 - **VM setup** after a restart: `sh /workspace/vm/setup.sh` (clang-19,
-  pypy3, rsvg, the guest's pre-commit hook). Node and npm for the graph
-  check: `apt-get install -y nodejs npm`.
+  pypy3, rsvg, the guest's pre-commit hook). The graph check needs Node
+  and jsdom: `apt-get install -y nodejs npm`, then `npm install jsdom@22`
+  in `/tmp/gc` and `NODE_PATH=/tmp/gc/node_modules node
+  tools/graph-check/check.js GRAPH.svg`.
 - **Every `git` and `cargo` command** in the VM takes
   `HOME=/workspace/vm/home CARGO_TARGET_DIR=/tmp/target CC=clang-19 TMPDIR=/tmp`,
   `git commit` included (the hook builds; without `CC` it aborts the
   commit and leaves the branch where it was).
-- **The gate to `servil`** (fork AGENTS.md "Branches"): work on
-  `candidate/<topic>`; every suite; `perf_regress` on the VM (the hook, or
-  `compare servil candidate/<topic>`) and on the Mac (a runner job); a
-  fast-forward; the verdicts as a git note. Changes that trade one cell for
-  another go to the user with their numbers.
-- **The Mac** (fork `tools/runner/README.md`): the user starts the runner
+- **The gate to `servil`** (fork AGENTS.md "Branches"), for every change,
+  a README's included: work on `candidate/<topic>`; every suite;
+  `perf_regress compare servil candidate/<topic>` on the VM and as a Mac
+  runner job; a fast-forward; the verdicts as a note in `refs/notes/perf`
+  (`git notes --ref=perf add`, pushed with `servil`); delete the branch;
+  pin here. Changes that trade one cell for another go to Zooko with
+  their numbers.
+- **`perf_regress` and older commits**: the benchmark calls the current
+  fork API; `tools/perf_regress.py` shims older commits (renaming their
+  old functions, forwarding or wrapping the new names). A comparison with
+  a wrapped side measures and judges the one-message cells alone. A
+  benchmark change that calls a new fork API needs a shim there.
+- **The Mac** (fork `tools/runner/README.md`): Zooko starts the runner
   with `sh ~/piplayground/blake3-servil/tools/runner/setup-mac.sh`. Write
   `runner/jobs/NNN-name.json` naming pushed commits; wait with
   `pypy3 tools/runner/wait_for.py NNN-name`; results in
-  `runner/results/`. Keep the VM idle while a Mac job runs. Mac-only
+  `runner/results/`. A job runs once per file name: a rewritten job keeps
+  its old result, so a changed job takes a new number. Keep the VM idle
+  while a Mac job runs. A direct A/B is four `benchmark` jobs, old new
+  new old, run back to back (spread apart, the control moves). Mac-only
   measurements (cycles by core kind, QoS) go in a `probe/<topic>` branch
-  that replaces `examples/host_lab.rs` (fork NOTES, "Probes on the Mac").
+  that replaces `examples/host_lab.rs` (fork NOTES, "Probes on the Mac");
+  the `probe/*` branches on origin are those probes, each cited in the
+  fork's NOTES where its finding is.
 - **Records** measure the pinned fork commit: after a promotion,
   `cargo update -p blake3-servil` here and commit the lock; the VM's with
   `cargo run --release -- --all` from this directory (unpatched; writes
   `benchmark-results/` here); the Mac's as a runner job naming that fork
   commit, flags `["--all"]`, its files copied into
-  `benchmark-results/AppleM4Max.darwin25/`. Before committing, run the
-  graph check on both graphs and the list script on both samples files.
-- **The graph's script**: `tools/graph-check/README.md` (jsdom harness,
-  snapshots to render with `rsvg-convert` and look at).
+  `benchmark-results/AppleM4Max.darwin25/`. Run the graph check on both
+  graphs before committing.
+- **Exploratory runs** go in a scratch directory with the built
+  executable (`cd /tmp/qr && /tmp/target/release/bench-hashes --quick
+  ...`): a run from this directory overwrites the records.
+- **Looking at a graph**: `rsvg-convert -w 1300 GRAPH.svg -o
+  /tmp/g.png`, crop with `convert`, copy into `/workspace/tmp/`, and read
+  it by its host path
+  (`/Users/donaldturnworth/piplayground/blake3-servil/tmp/...`); the
+  host sees a new file after a moment.
 - **Golden vectors** come from `tools/gen-test-vectors.py` (reference
   implementation and hashlib); a new benchmark size needs its vector
   there, and a regeneration that changes existing lines is a review item.
@@ -149,26 +138,32 @@ which doubles the energy of calls with a small thread budget.
 - Contenders: at most two settings each (single-threaded, multithreaded
   uncapped); two scenarios (solo; shared = two copies of itself); wall
   time for everyone; tables per scenario; the text report keeps KERNELS;
-  user views omit maintainer detail.
+  user views omit maintainer detail. BLAKE3 official's batches go through
+  its hidden `Platform::hash_many`, sixteen per call, as programs that
+  want its batch speed call it; the graph says so beside its name.
+- The recommended usage first (fork AGENTS.md): one thread makes all
+  calls; misuse and shared machines measured, reported, and cared for,
+  no longer a veto.
 - One SME2 call at a time per process (fork 30c599b): taken, costs in
-  shared cells accepted.
+  shared cells accepted. The overlap group for 13-15 one-block leftovers
+  (fork 4d0751f): taken, its slowed cells accepted (Zooko, September 25).
 - k8 as two scalars beside a quad and a pair (P -16%, E +7% at 8 KiB):
   taken. k4 as two pairs and the "minimax" plans: rejected.
-- Branch naming `candidate/<topic>`; no promotion without the Mac verdict.
-- The Mac runner is launched manually by the user; code from GitHub only.
-
-## Decided September 25 (Zooko)
-
-- **The recommended usage first** (fork AGENTS.md): optimize for one
-  thread making all calls; misuse and shared machines measured and cared
-  for, no longer a veto. To ask: should `perf_regress` report shared-cell
-  regressions without stopping? Also to write: a "for best performance"
-  section in the API docs and the fork's README.
-
+- One batch API, one buffer (Zooko, September 26): `hash_many(input,
+  message_len, out)` and its multithreaded forms.
+- **The padded batch contract** (Zooko, September 26): message i starts
+  at byte i x s, s = message_len rounded up to a multiple of 64 (64 for
+  an empty message); the caller zeroes the bytes between one message's
+  end and the next one's start (the caller's obligation, so the kernels
+  never mask); any message length; `assert` on the lengths, `debug_assert`
+  on the zero padding (hot path); no base alignment unless a measurement
+  shows it pays. Public docs state it without a new term ("slot").
 - The fork builds without SME2 (a warning) when the compiler cannot
-  assemble it: `candidate/sme2-optional-build`, gated like any code change.
-- README invites results as pull requests (a folder per machine).
-- Every run reports other programs' load in its provenance (NOTES.md).
+  assemble it (Debian 12, Raspberry Pi OS).
+- The README's warning (new, AI-written, unscrutinized, unused) stands in
+  one place, the fork README's top; no copies elsewhere (Zooko).
+- Branch naming `candidate/<topic>`; no promotion without the Mac verdict.
+- The Mac runner is launched manually by Zooko; code from GitHub only.
 
 ## Idea: a truly streaming (pipelined) hasher (Zooko, September 25)
 
@@ -217,14 +212,14 @@ building. Design points, as we know them now:
 - What the caller gets back: the root alone, or every layer (openings
   need them); openings (authentication paths) and their verification.
 - Leaf counts that are no power of two: pad to one, or carry an odd node
-  up; the padded batch contract (above) sets the leaf layout.
+  up; the padded batch contract (Decisions) sets the leaf layout.
 
 ## Open problems
 
 Each stays open until controlled, explained to users with how to control
 it, or at least predicted (AGENTS.md, "we own every slowdown").
 
-1. **2-4 KiB and 2304-4470 B against SHA-256** (the list's winnable part):
+1. **2-4 KiB and 2304-4470 B against SHA-256** (the report's CHECKS we can win):
    2 KiB is one NEON pair's chain, 3 KiB a pair beside a free scalar
    chunk, 4 KiB two scalars beside a pair (integer-bound); ideas estimated,
    not built: parents and root inside k4 (about 3.6%), a direct small-tree
@@ -253,18 +248,17 @@ it, or at least predicted (AGENTS.md, "we own every slowdown").
    not the cause. The SME unit has a slow state (cycles per ns 3.2
    against 3.93) entered after idle time of about a quarter microsecond;
    what else enters it is open (fork NOTES, "SME2 remainders"). The
-   overlap group (candidate/overlap-group) trades and waits unpromoted.
-   Next: measure the state machine directly (SME2 work, then X ns of
-   other work, then SME2 work: speed against X and against the first
-   stretch's length, and against the number of streaming sessions), then
-   an overlap group inside one streaming session (a kernel entry).
+   overlap group for 13-15 one-block leftovers is in (4d0751f, a trade
+   Zooko accepted). Next: measure the state machine directly (SME2 work,
+   then X ns of other work, then SME2 work: speed against X, against the
+   first stretch's length, and against the number of streaming sessions),
+   then an overlap group inside one streaming session (a kernel entry).
 7. **SME2 batch rates with work between calls** (about 12 ns/msg, not the
    benchmark's 10): whether batches should use SME2 from 16 messages.
 8. **The E-core trigger's mechanism** (controlled by the turn; unexplained).
 9. Later: `tools/promote.py` (check the gate, write the note, fast-forward;
    a pre-push hook refusing a `servil` tip without both verdicts); the
-   Mac's serial 128 MiB rise; `many::TABLE` natively; release 0.7.0 of
-   bench-hashes and a first fork tag; a GPU kernel.
+   Mac's serial 128 MiB rise; `many::TABLE` natively; a GPU kernel.
 
 ## Commands
 
@@ -279,6 +273,7 @@ From `/workspace` in the VM, each with the prefix above:
 
 Expected: 75 / 71 / 61 library tests, 21 doc tests, 2 vectors, 7 benchmark
 tests. Release: `python3 tools/gen-ver.py X.Y.Z` from a clean tree (two
-version commits and a lightweight tag; push `main`, then the tag by name).
+version commits and a lightweight tag; push the branch, `servil` in the
+fork or `main` here, then the tag by name).
 Never print the credential token (`/workspace/ghtokenclassic.txt`). Only
 `/workspace` survives VM restarts. Commands for the user go on one line.
