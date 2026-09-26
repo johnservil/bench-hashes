@@ -27,7 +27,8 @@ run: the crates.io BLAKE3 crate, single-threaded and on its Rayon pool
 (BLAKE3 official mt), ab-blake3 (a crate with a `const fn` BLAKE3 and a
 batch entry point for many 64-byte messages), and BLAKE3 commonware (the
 batch entry point of Commonware's cryptography crate, in the batch use
-cases alone). `--contenders` names any
+cases alone), and SHA3-256 (the `sha3` crate, with the CPU's SHA-3
+instructions where it has them). `--contenders` names any
 set, including two that run only when named: SHA-1DC (`sha1dc`, SHA-1
 with the collision detection git uses), far slower than every other
 contender at every size, whose large inputs took a quarter of an `--all`
@@ -288,6 +289,10 @@ collision-detection pass that git applies to every object hash. The
 detection is pure Rust and has no hardware path, so this contender shows
 what git pays today rather than what raw SHA-1 costs.
 
+SHA3-256 is provided by RustCrypto's sha3 crate, whose keccak backend
+uses the ARMv8 SHA-3 instructions (EOR3, RAX1, XAR, BCAX) when the CPU
+reports them at run time, and portable code elsewhere.
+
 The resolved crate versions, sources, and registry checksums are included
 in stdout, the text report, and the SVG metadata.
 
@@ -304,7 +309,7 @@ registers throughout), two to fifteen chunks on integer + NEON hybrid
 kernels, and groups of sixteen on the SME2 kernel (16 KiB and above).
 BLAKE3 official mt leaves the caller's thread above one SIMD width of chunks;
 BLAKE3 servil mt can split over threads from 64 KiB, its fourth path, drawn
-as a triangle. SHA-256 and SHA-1DC run one path at every size.
+as a triangle. SHA-256, SHA3-256, and SHA-1DC run one path at every size.
 
 In the many-messages use cases a contender looping one message per call
 runs the kernel for its message length at every batch size; ab-blake3's

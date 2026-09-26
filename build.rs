@@ -51,6 +51,11 @@ fn main() {
         "sha1-checked",
     );
     emit_required_package(
+        "SHA3_SOURCE_INFO",
+        &lock,
+        "sha3",
+    );
+    emit_required_package(
         "RING_SOURCE_INFO",
         &lock,
         "ring",

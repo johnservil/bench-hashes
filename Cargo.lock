@@ -102,6 +102,7 @@ dependencies = [
  "ring",
  "sha1-checked",
  "sha2",
+ "sha3",
  "sysinfo",
 ]
 

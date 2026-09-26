@@ -94,6 +94,7 @@ const BLAKE3_SOURCE_INFO: &str = env!("BLAKE3_SOURCE_INFO");
 const SHA2_SOURCE_INFO: &str = env!("SHA2_SOURCE_INFO");
 const RING_SOURCE_INFO: &str = env!("RING_SOURCE_INFO");
 const SHA1_CHECKED_SOURCE_INFO: &str = env!("SHA1_CHECKED_SOURCE_INFO");
+const SHA3_SOURCE_INFO: &str = env!("SHA3_SOURCE_INFO");
 const BLAKE3_SERVIL_SOURCE_INFO: &str = env!("BLAKE3_SERVIL_SOURCE_INFO");
 const AB_BLAKE3_SOURCE_INFO: &str = env!("AB_BLAKE3_SOURCE_INFO");
 const COMMONWARE_SOURCE_INFO: &str = env!("COMMONWARE_SOURCE_INFO");
@@ -509,6 +510,9 @@ enum Algorithm {
     /// streaming paths are the official crate's, so it takes part in the
     /// batch use cases alone.
     Commonware,
+    /// RustCrypto's SHA3-256 (the sha3 crate), with the ARMv8 SHA-3
+    /// instructions where the CPU has them (keccak's run-time detection).
+    Sha3_256,
 }
 
 /// The hash function a contender implements, which names its golden digests.
@@ -517,6 +521,7 @@ enum Family {
     Blake3,
     Sha256,
     Sha1Dc,
+    Sha3_256,
 }
 
 impl Family {
@@ -525,12 +530,13 @@ impl Family {
             Self::Blake3 => "BLAKE3",
             Self::Sha256 => "SHA-256",
             Self::Sha1Dc => "SHA-1DC",
+            Self::Sha3_256 => "SHA3-256",
         }
     }
 }
 
 impl Algorithm {
-    const ALL: [Algorithm; 10] = [
+    const ALL: [Algorithm; 11] = [
         Algorithm::Blake3,
         Algorithm::Sha256,
         Algorithm::Sha1Dc,
@@ -541,6 +547,7 @@ impl Algorithm {
         Algorithm::Blake3ServilMt,
         Algorithm::AbBlake3,
         Algorithm::Commonware,
+        Algorithm::Sha3_256,
     ];
 
     /// Command-line key, as in `--contenders blake3,sha256-cc`.
@@ -556,6 +563,7 @@ impl Algorithm {
             Self::Blake3ServilMt => "blake3-servil-mt",
             Self::AbBlake3 => "ab-blake3",
             Self::Commonware => "blake3-commonware",
+            Self::Sha3_256 => "sha3-256",
         }
     }
 
@@ -564,6 +572,7 @@ impl Algorithm {
             Self::Blake3 | Self::Blake3ServilSt | Self::Blake3Rayon | Self::Blake3ServilMt | Self::AbBlake3 | Self::Commonware => Family::Blake3,
             Self::Sha256 | Self::Sha256CommonCrypto | Self::Sha256Ring => Family::Sha256,
             Self::Sha1Dc => Family::Sha1Dc,
+            Self::Sha3_256 => Family::Sha3_256,
         }
     }
 
@@ -603,7 +612,8 @@ impl Algorithm {
             | Self::Blake3Rayon
             | Self::Blake3ServilMt
             | Self::AbBlake3
-            | Self::Commonware => Ok(()),
+            | Self::Commonware
+            | Self::Sha3_256 => Ok(()),
             Self::Sha256CommonCrypto => {
                 if cfg!(target_vendor = "apple") {
                     Ok(())
@@ -626,6 +636,7 @@ impl Algorithm {
             Self::Blake3ServilMt => "BLAKE3 servil mt",
             Self::AbBlake3 => "ab-blake3",
             Self::Commonware => "BLAKE3 commonware",
+            Self::Sha3_256 => "SHA3-256",
         }
     }
 
@@ -643,6 +654,7 @@ impl Algorithm {
             Self::Sha256Ring => "SHA-256 from the ring Rust crate, with the CPU's SHA-256 instructions where it has them",
             Self::Sha256CommonCrypto => "SHA-256 from Apple's CommonCrypto library",
             Self::Sha1Dc => "SHA-1 with collision detection, from the sha1-checked Rust crate",
+            Self::Sha3_256 => "SHA3-256 from the sha3 Rust crate, with the CPU's SHA-3 instructions where it has them",
         }
     }
 
@@ -663,6 +675,7 @@ impl Algorithm {
             Self::Blake3ServilMt => "#4c1d95",
             Self::AbBlake3 => "#c026d3",
             Self::Commonware => "#0f766e",
+            Self::Sha3_256 => "#db2777",
         }
     }
 
@@ -679,6 +692,7 @@ impl Algorithm {
             Self::Blake3ServilMt => BLAKE3_SERVIL_SOURCE_INFO,
             Self::AbBlake3 => AB_BLAKE3_SOURCE_INFO,
             Self::Commonware => COMMONWARE_SOURCE_INFO,
+            Self::Sha3_256 => SHA3_SOURCE_INFO,
         }
     }
 
@@ -691,7 +705,8 @@ impl Algorithm {
             Self::Sha256
             | Self::Sha1Dc
             | Self::Sha256CommonCrypto
-            | Self::Sha256Ring => "single-threaded",
+            | Self::Sha256Ring
+            | Self::Sha3_256 => "single-threaded",
             Self::Blake3ServilSt => "single-threaded; blake3_servil::hash for one message, blake3_servil::hash_many for a batch, Stream for a stream",
             Self::AbBlake3 => "single-threaded; ab_blake3::const_hash for one message and for each 256-byte message of a batch, ab_blake3::single_block_hash_many_exact::<N> for a batch of N 64-byte messages",
             Self::Commonware => "single-threaded; commonware_cryptography::Blake3::hash_many (the Hasher trait) over the batch's messages as fixed-size arrays, one call per batch returning a Vec of digests",
@@ -1022,7 +1037,7 @@ shared with a second copy of the same contender
 
 Keys: blake3-servil-st, blake3-servil-mt, sha256, sha256-ring,
       blake3-official, blake3-official-mt, ab-blake3, blake3-commonware,
-      sha1dc, sha256-cc
+      sha1dc, sha256-cc, sha3-256
 
 A run takes a few minutes: every point, to 128 MiB inputs and batches of
 262144 messages, 96 rounds, the longest cells sampled until their medians
@@ -1673,7 +1688,7 @@ fn expected_digest(family: Family, len: usize, messages: usize, seed: u64) -> Ve
             .find(|&&(n, s, _)| n == messages && s == seed)
             .unwrap_or_else(|| panic!("missing golden vector for {messages} messages of {} bytes, seed {seed}", len / messages))
     };
-    let index = match family { Family::Blake3 => 0, Family::Sha256 => 1, Family::Sha1Dc => 2 };
+    let index = match family { Family::Blake3 => 0, Family::Sha256 => 1, Family::Sha1Dc => 2, Family::Sha3_256 => 3 };
     let hex = digests[index];
     assert_eq!(hex.len(), if family == Family::Sha1Dc && messages == 1 { 40 } else { 64 });
     (0..hex.len()).step_by(2).map(|i|
@@ -1736,6 +1751,10 @@ fn hash_batch(
             }
         }
         Algorithm::Sha256 => each_message(input, message_len, iterations, |m| Sha256::digest(m), consume),
+        Algorithm::Sha3_256 => each_message(input, message_len, iterations, |m| {
+            let digest: [u8; 32] = sha3::Sha3_256::digest(m).into();
+            digest
+        }, consume),
         Algorithm::Sha1Dc => each_message(input, message_len, iterations, |m| {
             let result = sha1_checked::Sha1::try_digest(m);
             let mut digest = [0u8; 20];
@@ -1823,6 +1842,12 @@ fn hash_stream(algorithm: Algorithm, input: &[u8], iterations: usize, consume: i
             pieces(&mut |piece| hasher.update(piece));
             let mut digest = [0u8; 20];
             digest.copy_from_slice(hasher.try_finalize().hash());
+            digest
+        }, consume),
+        Algorithm::Sha3_256 => each_stream(input, iterations, |pieces| {
+            let mut hasher = sha3::Sha3_256::new();
+            pieces(&mut |piece| sha3::Digest::update(&mut hasher, piece));
+            let digest: [u8; 32] = hasher.finalize().into();
             digest
         }, consume),
         Algorithm::AbBlake3 | Algorithm::Commonware => unreachable!("{} takes no part in the streaming use case", algorithm.key()),
@@ -3032,6 +3057,22 @@ fn detect_sha256_kernels() -> Kernels {
     )
 }
 
+fn detect_sha3_kernels() -> Kernels {
+    #[cfg(target_arch = "aarch64")]
+    let instructions = std::arch::is_aarch64_feature_detected!("sha3");
+    #[cfg(not(target_arch = "aarch64"))]
+    let instructions = false;
+    Kernels::new(
+        "sha3",
+        vec![Kernel {
+            first: 0,
+            name: if instructions { "ARMv8 SHA-3 instructions".to_owned() } else { "portable code".to_owned() },
+            why: "One method at every size.".to_owned(),
+            mark: Mark::Circle,
+        }],
+    )
+}
+
 fn detect_sha1dc_kernels() -> Kernels {
     Kernels::new(
         "sha1-checked",
@@ -3106,6 +3147,7 @@ fn detect_kernels(algorithm: Algorithm, use_case: UseCase) -> Kernels {
         Algorithm::Blake3 => detect_blake3_kernels(),
         Algorithm::Sha256 => detect_sha256_kernels(),
         Algorithm::Sha1Dc => detect_sha1dc_kernels(),
+        Algorithm::Sha3_256 => detect_sha3_kernels(),
         Algorithm::Blake3ServilSt => servil_kernels(blake3_servil::kernel_report()),
         Algorithm::Sha256CommonCrypto => detect_common_crypto_kernels(),
         Algorithm::Sha256Ring => detect_ring_kernels(),
@@ -4593,6 +4635,7 @@ fn generate_svg(
         ("BLAKE3 source", BLAKE3_SOURCE_INFO),
         ("SHA-256 source", SHA2_SOURCE_INFO),
         ("SHA-1DC source", SHA1_CHECKED_SOURCE_INFO),
+        ("SHA3-256 source", SHA3_SOURCE_INFO),
         ("SHA-256 ring source", RING_SOURCE_INFO),
         ("BLAKE3 servil source", BLAKE3_SERVIL_SOURCE_INFO),
         ("ab-blake3 source", AB_BLAKE3_SOURCE_INFO),
@@ -5546,6 +5589,12 @@ fn contender_provenance_lines(
             package_name_and_version(SHA1_CHECKED_SOURCE_INFO),
             algorithm.mode(),
         )],
+        Algorithm::Sha3_256 => vec![format!(
+            "{name}: {} · {} · {}",
+            package_name_and_version(SHA3_SOURCE_INFO),
+            algorithm.mode(),
+            kernels.kernels[0].name,
+        )],
         Algorithm::Blake3ServilSt => vec![
             format!("{name}: {} · hash, hash_many for a batch, Stream for a stream", short_git_source(BLAKE3_SERVIL_SOURCE_INFO)),
             format!("{name}: single-threaded · platform {platform}"),
@@ -6325,13 +6374,15 @@ function layoutProv() {
       el.style.display = "none";
     }
   });
-  /* Contender lines live in the first plot's series groups. */
+  /* A contender's lines live in the series group of the first plot it
+     takes part in (commonware's is a batch plot); they follow the section
+     below, so the group's own shift comes off. */
   DATA.names.forEach((_, i) => {
-    document.getElementById("series-0-" + i).querySelectorAll(".series-prov").forEach(t => {
+    const p = DATA.plots.findIndex((_, q) => document.querySelector(`#series-${q}-${i} .series-prov`));
+    document.querySelectorAll(`#series-${p}-${i} .series-prov`).forEach(t => {
       const shown = on[i] && provOpen.hashes;
       t.style.display = shown ? "" : "none";
-      /* In the first plot's group, which stays in place: they follow the section below. */
-      if (shown) t.setAttribute("y", (DATA.provTop + 40 + slot++ * DATA.provLine + belowShift).toFixed(1));
+      if (shown) t.setAttribute("y", (DATA.provTop + 40 + slot++ * DATA.provLine + belowShift - plotShift[p]).toFixed(1));
     });
   });
   const h = DATA.provTop + 40 + slot * DATA.provLine + 8 + belowShift;
@@ -6875,6 +6926,7 @@ mod correctness_tests {
             (Algorithm::Blake3, "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"),
             (Algorithm::Sha256, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
             (Algorithm::Sha1Dc, "da39a3ee5e6b4b0d3255bfef95601890afd80709"),
+            (Algorithm::Sha3_256, "a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a"),
         ] {
             let mut calls = 0;
             hash_batch(algorithm, &[], Point::one("", 0), 3, |digest| {

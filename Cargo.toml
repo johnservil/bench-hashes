@@ -24,6 +24,11 @@ default-features = false
 version = "0.11"
 default-features = false
 
+# SHA3-256: keccak 0.2 detects the ARMv8 SHA-3 instructions at run time.
+[dependencies.sha3]
+version = "0.11"
+default-features = false
+
 # SHA-256 through BoringSSL's assembly (OpenSSL lineage), which pipelines
 # the next block's message schedule under the current block's rounds.
 [dependencies.ring]
