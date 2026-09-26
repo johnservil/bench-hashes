@@ -6,10 +6,11 @@ compiled directly with rustc. SHA-256 and SHA-1 use Python hashlib. Neither
 source calls the optimized servil kernels. Requires Python 3 and rustc.
 Run from bench-hashes: python3 tools/gen-test-vectors.py > src/test_vectors.rs
 
-Two tables. VECTORS: one message of each length, its digests. MANY_VECTORS:
-a batch of N 64-byte messages (the buffer make_input_seeded(64 * N, seed)
-cut into 64-byte slices), and for each family the SHA-256 of the N digests
-concatenated in message order.
+Three tables. VECTORS: one message of each length, its digests.
+MANY_VECTORS: a batch of N 64-byte messages (the buffer
+make_input_seeded(64 * N, seed) cut into 64-byte slices), and for each
+family the SHA-256 of the N digests concatenated in message order.
+MANY_256_VECTORS: the same for batches of N 256-byte messages.
 """
 import array
 import hashlib
@@ -27,9 +28,10 @@ SIZES = sorted(set([1 << n for n in range(6, 28)] + [3 << 10, 3 << 20,
     # an 802.11 frame body (MSDU) at most, an 802.11n A-MSDU of the smaller
     # and the larger maximum, a Packet over SONET/SDH MTU.
     2304, 3839, 7935, 4470]))
-MESSAGE_LEN = 64
-# The many-messages axis in src/main.rs (POINTS); the batch entry point's
-# const generic accepts exactly these counts.
+# The many-messages axes in src/main.rs (POINTS): their message lengths,
+# and the counts per batch both share (ab-blake3's batch entry point's
+# const generic accepts exactly these counts).
+BATCH_TABLES = [("MANY_VECTORS", 64), ("MANY_256_VECTORS", 256)]
 BATCHES = [1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 128, 256, 512, 1024,
     2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144]
 
@@ -82,19 +84,20 @@ fn main() {
             digests = [b3, hashlib.sha256(data).hexdigest(), hashlib.sha1(data).hexdigest()]
             print(f'    ({size}, {seed}, ["' + '", "'.join(digests) + '"]),')
     print("];")
-    print()
-    print("// Batches of N 64-byte messages: SHA-256 over the N concatenated digests. Digests: BLAKE3, SHA-256, SHA-1.")
-    print("pub(super) const MANY_VECTORS: &[(usize, u64, [&str; 3])] = &[")
-    for count in BATCHES:
-        for seed in [0, 1]:
-            data = make_input(MESSAGE_LEN * count, seed)
-            messages = [data[i:i + MESSAGE_LEN] for i in range(0, len(data), MESSAGE_LEN)]
-            b3_lines = subprocess.run([str(binary), str(MESSAGE_LEN)], input=data,
-                stdout=subprocess.PIPE, check=True).stdout.decode().split()
-            assert len(b3_lines) == count
-            b3 = b"".join(bytes.fromhex(line) for line in b3_lines)
-            sha256 = b"".join(hashlib.sha256(m).digest() for m in messages)
-            sha1 = b"".join(hashlib.sha1(m).digest() for m in messages)
-            folded = [hashlib.sha256(d).hexdigest() for d in (b3, sha256, sha1)]
-            print(f'    ({count}, {seed}, ["' + '", "'.join(folded) + '"]),')
-    print("];")
+    for table, message_len in BATCH_TABLES:
+        print()
+        print(f"// Batches of N {message_len}-byte messages: SHA-256 over the N concatenated digests. Digests: BLAKE3, SHA-256, SHA-1.")
+        print(f"pub(super) const {table}: &[(usize, u64, [&str; 3])] = &[")
+        for count in BATCHES:
+            for seed in [0, 1]:
+                data = make_input(message_len * count, seed)
+                messages = [data[i:i + message_len] for i in range(0, len(data), message_len)]
+                b3_lines = subprocess.run([str(binary), str(message_len)], input=data,
+                    stdout=subprocess.PIPE, check=True).stdout.decode().split()
+                assert len(b3_lines) == count
+                b3 = b"".join(bytes.fromhex(line) for line in b3_lines)
+                sha256 = b"".join(hashlib.sha256(m).digest() for m in messages)
+                sha1 = b"".join(hashlib.sha1(m).digest() for m in messages)
+                folded = [hashlib.sha256(d).hexdigest() for d in (b3, sha256, sha1)]
+                print(f'    ({count}, {seed}, ["' + '", "'.join(folded) + '"]),')
+        print("];")

@@ -62,19 +62,23 @@ const LONG_SAMPLES: usize = 8;
 const PRECISION_PERMILLE: u64 = 20;
 const UNSURE_BELOW: usize = 6;
 
-/// Points on the one-message axis, and on the many-messages axis.
+/// Points on the one-message axis, and on each many-messages axis.
 const INPUT_COUNT: usize = 27;
 const BATCH_COUNT: usize = 24;
-/// Every measured (contender, x) cell lies on one of the two axes.
+/// Every measured (contender, x) cell lies on one of the four axes.
 const STREAM_COUNT: usize = INPUT_COUNT;
-const POINT_COUNT: usize = INPUT_COUNT + BATCH_COUNT + STREAM_COUNT;
+const POINT_COUNT: usize = INPUT_COUNT + 2 * BATCH_COUNT + STREAM_COUNT;
 /// The streaming use case feeds its input to each contender's incremental
 /// API in pieces of this many bytes (a typical read buffer), the last one
 /// shorter.
 const PIECE_LEN: usize = 64 * 1024;
-/// Every message in the many-messages use case is one BLAKE3 block, the
-/// one size ab-blake3's batch entry point accepts.
+/// Every message in the batches of 64-byte messages is one BLAKE3 block,
+/// the one size ab-blake3's batch entry point accepts, and the size of a
+/// Merkle tree's inner node (two 32-byte children).
 const MESSAGE_LEN: usize = 64;
+/// Every message in the batches of 256-byte messages: four BLAKE3 blocks,
+/// a Merkle tree's leaf in WHIR's proof system, for one.
+const LEAF_LEN: usize = 256;
 
 const BENCH_VERSION: &str = env!("CARGO_PKG_VERSION");
 const GIT_SOURCE: &str = env!("BENCH_GIT_SOURCE");
@@ -129,6 +133,7 @@ const AB_BLAKE3_SOURCE_INFO: &str = env!("AB_BLAKE3_SOURCE_INFO");
  * partly filled or leave a remainder past the sixteen-message groups
  * ab-blake3 forms; from 64 up the per-batch overhead amortises, and the
  * batches past 16384 show the multithreaded batch calls levelling out.
+ * The batches of 256-byte messages take the same counts.
  */
 const POINTS: [Point; POINT_COUNT] = [
     Point::one("64 B", 64),
@@ -182,6 +187,30 @@ const POINTS: [Point; POINT_COUNT] = [
     Point::many("65536", 65536),
     Point::many("131072", 131072),
     Point::many("262144", 262144),
+    Point::leaves("1", 1),
+    Point::leaves("2", 2),
+    Point::leaves("3", 3),
+    Point::leaves("4", 4),
+    Point::leaves("6", 6),
+    Point::leaves("8", 8),
+    Point::leaves("12", 12),
+    Point::leaves("16", 16),
+    Point::leaves("24", 24),
+    Point::leaves("32", 32),
+    Point::leaves("48", 48),
+    Point::leaves("64", 64),
+    Point::leaves("128", 128),
+    Point::leaves("256", 256),
+    Point::leaves("512", 512),
+    Point::leaves("1024", 1024),
+    Point::leaves("2048", 2048),
+    Point::leaves("4096", 4096),
+    Point::leaves("8192", 8192),
+    Point::leaves("16384", 16384),
+    Point::leaves("32768", 32768),
+    Point::leaves("65536", 65536),
+    Point::leaves("131072", 131072),
+    Point::leaves("262144", 262144),
     Point::streamed("64 B", 64),
     Point::streamed("128 B", 128),
     Point::streamed("256 B", 256),
@@ -258,24 +287,41 @@ impl RunSamples {
 }
 
 /*
- * The two use cases. One message: a call hashes one input of the size,
- * as every contender's plain entry point does. Many messages: a call
- * hashes a batch of 64-byte messages; every contender loops its plain
- * entry point over the batch, and ab-blake3 hands the whole batch to
- * single_block_hash_many_exact. The multithreaded contenders sit this one
- * out: a pool is no answer to a 64-byte message.
+ * The use cases. One message: a call hashes one input of the size, as
+ * every contender's plain entry point does. Many messages: a call hashes
+ * a batch of 64-byte messages (a Merkle tree's inner nodes), or of
+ * 256-byte messages (its leaves); a contender with a batch entry point
+ * hands it the batch (see hash_batch), every other one loops its plain
+ * entry point over the batch. Streaming: one input arriving in pieces.
  */
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum UseCase {
     OneMessage,
+    /// Batches of 64-byte messages.
     ManyMessages,
+    /// Batches of 256-byte messages.
+    ManyMessages256,
     /// One message produced in PIECE_LEN pieces, each copied as a read
     /// would, through the incremental API (the fork's Stream).
     Streaming,
 }
 
 impl UseCase {
-    const ALL: [UseCase; 3] = [UseCase::OneMessage, UseCase::ManyMessages, UseCase::Streaming];
+    const ALL: [UseCase; 4] = [UseCase::OneMessage, UseCase::ManyMessages, UseCase::ManyMessages256, UseCase::Streaming];
+
+    /// Whether a call hashes a batch of messages.
+    fn batch(self) -> bool {
+        matches!(self, Self::ManyMessages | Self::ManyMessages256)
+    }
+
+    /// Each message's length in a batch use case.
+    fn message_len(self) -> usize {
+        match self {
+            Self::ManyMessages => MESSAGE_LEN,
+            Self::ManyMessages256 => LEAF_LEN,
+            Self::OneMessage | Self::Streaming => panic!("{self:?} hashes one message of the point's size"),
+        }
+    }
 
     /// The contiguous run of POINTS on this use case's axis.
     fn points(self) -> std::ops::Range<usize> {
@@ -290,6 +336,7 @@ impl UseCase {
         match self {
             Self::OneMessage => "Input size (logarithmic spacing)",
             Self::ManyMessages => "Messages per batch, 64 B each (logarithmic spacing)",
+            Self::ManyMessages256 => "Messages per batch, 256 B each (logarithmic spacing)",
             Self::Streaming => "Input size (logarithmic spacing)",
         }
     }
@@ -298,6 +345,7 @@ impl UseCase {
         match self {
             Self::OneMessage => "One input at a time",
             Self::ManyMessages => "Batches of 64-byte messages",
+            Self::ManyMessages256 => "Batches of 256-byte messages",
             Self::Streaming => "One input arriving in 64 KiB pieces",
         }
     }
@@ -306,7 +354,8 @@ impl UseCase {
     fn short(self) -> &'static str {
         match self {
             Self::OneMessage => "one input",
-            Self::ManyMessages => "batches",
+            Self::ManyMessages => "64 B batches",
+            Self::ManyMessages256 => "256 B batches",
             Self::Streaming => "pieces",
         }
     }
@@ -315,7 +364,7 @@ impl UseCase {
     fn column(self) -> &'static str {
         match self {
             Self::OneMessage | Self::Streaming => "size",
-            Self::ManyMessages => "messages",
+            Self::ManyMessages | Self::ManyMessages256 => "messages",
         }
     }
 
@@ -328,7 +377,7 @@ impl UseCase {
     fn units(self, point: Point, iterations: usize) -> u64 {
         match self {
             Self::OneMessage | Self::Streaming => point.bytes as u64 * iterations as u64,
-            Self::ManyMessages => point.messages as u64 * iterations as u64,
+            Self::ManyMessages | Self::ManyMessages256 => point.messages as u64 * iterations as u64,
         }
     }
 
@@ -336,28 +385,28 @@ impl UseCase {
     fn unit_key(self) -> &'static str {
         match self {
             Self::OneMessage | Self::Streaming => "B",
-            Self::ManyMessages => "msg",
+            Self::ManyMessages | Self::ManyMessages256 => "msg",
         }
     }
 
     fn time_unit(self) -> &'static str {
         match self {
             Self::OneMessage | Self::Streaming => "ns/B",
-            Self::ManyMessages => "ns/msg",
+            Self::ManyMessages | Self::ManyMessages256 => "ns/msg",
         }
     }
 
     fn rate_unit(self) -> &'static str {
         match self {
             Self::OneMessage | Self::Streaming => "GB/s",
-            Self::ManyMessages => "Mmsg/s",
+            Self::ManyMessages | Self::ManyMessages256 => "Mmsg/s",
         }
     }
 
     fn rate_unit_long(self) -> &'static str {
         match self {
             Self::OneMessage | Self::Streaming => "Gigabytes per second",
-            Self::ManyMessages => "Million messages per second",
+            Self::ManyMessages | Self::ManyMessages256 => "Million messages per second",
         }
     }
 
@@ -365,13 +414,14 @@ impl UseCase {
     fn rate_scale(self) -> u64 {
         match self {
             Self::OneMessage | Self::Streaming => 1,
-            Self::ManyMessages => 1000,
+            Self::ManyMessages | Self::ManyMessages256 => 1000,
         }
     }
 }
 
-/// One x-axis point: an input size on the one-message axis, or a batch of
-/// `messages` 64-byte messages (`bytes` in all) on the many-messages axis.
+/// One x-axis point: an input size on the one-message and streamed axes,
+/// or a batch of `messages` messages (`bytes` in all) on a many-messages
+/// axis.
 #[derive(Clone, Copy)]
 struct Point {
     label: &'static str,
@@ -388,6 +438,8 @@ impl Point {
             UseCase::Streaming => format!("{} streamed", self.label),
             UseCase::ManyMessages if self.messages == 1 => "1 message".to_owned(),
             UseCase::ManyMessages => format!("{} messages", self.label),
+            UseCase::ManyMessages256 if self.messages == 1 => "1 message of 256 B".to_owned(),
+            UseCase::ManyMessages256 => format!("{} messages of 256 B", self.label),
         }
     }
 
@@ -403,12 +455,16 @@ impl Point {
         Self { label, bytes: messages * MESSAGE_LEN, messages, use_case: UseCase::ManyMessages }
     }
 
+    const fn leaves(label: &'static str, messages: usize) -> Self {
+        Self { label, bytes: messages * LEAF_LEN, messages, use_case: UseCase::ManyMessages256 }
+    }
+
     /// Whether a quick run measures this point: inputs below QUICK_BYTES,
     /// batches below QUICK_MESSAGES.
     fn quick(&self) -> bool {
         match self.use_case {
             UseCase::OneMessage | UseCase::Streaming => self.bytes < QUICK_BYTES,
-            UseCase::ManyMessages => self.messages < QUICK_MESSAGES,
+            UseCase::ManyMessages | UseCase::ManyMessages256 => self.messages < QUICK_MESSAGES,
         }
     }
 }
@@ -508,14 +564,14 @@ impl Algorithm {
     }
 
     /// Whether this contender is measured in a use case. BLAKE3 mt stays
-    /// out of the many-messages use case: `update_rayon` exists for large
-    /// inputs, and a 64-byte message is a call to it that no program would
-    /// make. The fork's multithreaded contenders take part through its
-    /// batch entry point, `hash_many_multithreaded`.
+    /// out of the many-messages use cases: `update_rayon` exists for large
+    /// inputs, and a 64- or 256-byte message is a call to it that no
+    /// program would make. The fork's multithreaded contenders take part
+    /// through its batch entry point, `hash_many_multithreaded`.
     fn takes_part(self, use_case: UseCase) -> bool {
         match use_case {
             UseCase::OneMessage => true,
-            UseCase::ManyMessages => !matches!(self, Self::Blake3Rayon),
+            UseCase::ManyMessages | UseCase::ManyMessages256 => !matches!(self, Self::Blake3Rayon),
             /* ab-blake3 has no incremental API. */
             UseCase::Streaming => !matches!(self, Self::AbBlake3),
         }
@@ -615,13 +671,13 @@ impl Algorithm {
     /// detect_kernels), chosen at run time.
     fn mode(self) -> &'static str {
         match self {
-            Self::Blake3
-            | Self::Sha256
+            Self::Blake3 => "single-threaded; blake3::hash for one message, the crate's hidden batch function blake3::platform::Platform::hash_many::<N> for a batch, sixteen messages per call",
+            Self::Sha256
             | Self::Sha1Dc
             | Self::Sha256CommonCrypto
             | Self::Sha256Ring => "single-threaded",
             Self::Blake3ServilSt => "single-threaded; blake3_servil::hash for one message, blake3_servil::hash_many for a batch, Stream for a stream",
-            Self::AbBlake3 => "single-threaded; ab_blake3::const_hash for one message, ab_blake3::single_block_hash_many_exact::<N> for a batch of N 64-byte messages",
+            Self::AbBlake3 => "single-threaded; ab_blake3::const_hash for one message and for each 256-byte message of a batch, ab_blake3::single_block_hash_many_exact::<N> for a batch of N 64-byte messages",
             Self::Blake3Rayon => "multithreaded; Hasher::update_rayon (per piece, for a stream) on Rayon's global pool, the crate's own multithreading as a program gets it by default: the tree splits recursively over the pool, and inputs under a few chunks stay on the caller's thread",
             Self::Blake3ServilMt => "multithreaded; blake3_servil::hash_multithreaded for one message, hash_many_multithreaded for a batch, and Stream::new_multithreaded for a stream: the fork chooses whether to use its shared resident workers; the kernel tables below show the thresholds",
         }
@@ -959,8 +1015,10 @@ are known to 2%.
                                    cell now and then; leaves SHA-1DC out of
                                    --all
   --points LABEL,...               measure only these points (labels as in the
-                                   report: \"64 B\", \"8 MiB\", \"1024\" messages);
-                                   with --contenders only
+                                   report: \"64 B\", \"8 MiB\", \"1024\" messages,
+                                   \"16 of 256 B\" for sixteen 256-byte
+                                   messages, \"streamed 64 KiB\"); with
+                                   --contenders only
   --rounds N                       exactly N sample rounds
   --trace-clocks PATH              also write one CSV line per sample interval
                                    with wall, thread-CPU, mach_absolute_time,
@@ -1017,12 +1075,20 @@ fn parse_arguments() -> Options {
         let mut indices: Vec<usize> = list
             .split(',')
             .map(|label| {
-                /* "streamed 64 KiB" names a streamed point; a plain label the others. */
-                let (use_streamed, label) = match label.trim().strip_prefix("streamed ") {
-                    Some(rest) => (true, rest),
-                    None => (false, label.trim()),
+                /* "streamed 64 KiB" names a streamed point, "16 of 256 B" a batch of 256-byte messages; a plain label the others. */
+                let label = label.trim();
+                let (use_case, label) = if let Some(rest) = label.strip_prefix("streamed ") {
+                    (Some(UseCase::Streaming), rest)
+                } else if let Some(rest) = label.strip_suffix(" of 256 B") {
+                    (Some(UseCase::ManyMessages256), rest)
+                } else {
+                    (None, label)
                 };
-                POINTS.iter().position(|point| point.label == label && (point.use_case == UseCase::Streaming) == use_streamed).unwrap_or_else(|| {
+                let wanted = |point: &Point| match use_case {
+                    Some(use_case) => point.use_case == use_case,
+                    None => matches!(point.use_case, UseCase::OneMessage | UseCase::ManyMessages),
+                };
+                POINTS.iter().position(|point| point.label == label && wanted(point)).unwrap_or_else(|| {
                     let labels: Vec<&str> = POINTS.iter().map(|point| point.label).collect();
                     panic!("--points: no point labelled {label:?}; the labels are {}", labels.join(", "))
                 })
@@ -1577,10 +1643,15 @@ fn expected_digest(family: Family, len: usize, messages: usize, seed: u64) -> Ve
             .find(|&&(n, s, _)| n == len && s == seed)
             .unwrap_or_else(|| panic!("missing golden vector for length {len}, seed {seed}"))
     } else {
-        assert_eq!(len, messages * MESSAGE_LEN, "a batch is {messages} messages of {MESSAGE_LEN} bytes");
-        test_vectors::MANY_VECTORS.iter()
+        let table = match len / messages {
+            MESSAGE_LEN => test_vectors::MANY_VECTORS,
+            LEAF_LEN => test_vectors::MANY_256_VECTORS,
+            other => panic!("no golden batches of {other}-byte messages"),
+        };
+        assert_eq!(len % messages, 0, "a batch is {messages} messages of one length");
+        table.iter()
             .find(|&&(n, s, _)| n == messages && s == seed)
-            .unwrap_or_else(|| panic!("missing golden vector for {messages} messages, seed {seed}"))
+            .unwrap_or_else(|| panic!("missing golden vector for {messages} messages of {} bytes, seed {seed}", len / messages))
     };
     let index = match family { Family::Blake3 => 0, Family::Sha256 => 1, Family::Sha1Dc => 2 };
     let hex = digests[index];
@@ -1596,7 +1667,7 @@ fn assert_digest_matches(algorithm: Algorithm, len: usize, messages: usize, seed
             algorithm.key(), algorithm.family().name(), len, seed);
     } else {
         assert_eq!(actual, expected, "{} ({}) disagrees with golden vector on a batch of {} messages of {} bytes, seed {}",
-            algorithm.key(), algorithm.family().name(), messages, MESSAGE_LEN, seed);
+            algorithm.key(), algorithm.family().name(), messages, len / messages, seed);
     }
 }
 
@@ -1609,12 +1680,15 @@ fn run_batch(algorithm: Algorithm, input: &[u8], point: Point, iterations: usize
  * monomorphized: timed batches black-box each digest, and checking batches
  * collect it. Selection and allocation stay outside the per-hash loop.
  *
- * `input` holds `messages` messages: the whole slice when `messages` is
- * one, else `messages` × MESSAGE_LEN bytes. Every contender hashes the
- * messages one call each through its plain entry point, except ab-blake3,
- * whose single_block_hash_many_exact takes the batch as one array; its
+ * `input` holds `messages` messages of the use case's length (for one
+ * message, the whole slice). A contender with a batch entry point hands
+ * it every batch of two messages or more: the fork's hash_many, the
+ * blake3 crate's hidden Platform::hash_many sixteen messages per call, and
+ * ab-blake3's single_block_hash_many_exact for 64-byte messages (its
  * message count is a const generic, so each batch size on the axis is its
- * own call. The contender must take part in the point's use case.
+ * own call). Every other contender, and every contender for one message,
+ * hashes the messages one call each through its plain entry point. The
+ * contender must take part in the point's use case.
  */
 fn hash_batch(
     algorithm: Algorithm,
@@ -1625,7 +1699,8 @@ fn hash_batch(
 ) {
     assert!(iterations > 0, "batch size must be positive");
     let messages = point.messages;
-    assert!(messages == 1 || input.len() == messages * MESSAGE_LEN, "a batch is {messages} messages of {MESSAGE_LEN} bytes");
+    let message_len = if point.use_case.batch() { point.use_case.message_len() } else { input.len() };
+    assert!(messages == 1 || input.len() == messages * message_len, "a batch is {messages} messages of {message_len} bytes");
     assert!(algorithm.takes_part(point.use_case), "{} takes no part in {:?}", algorithm.key(), point.use_case);
 
     if point.use_case == UseCase::Streaming {
@@ -1633,9 +1708,15 @@ fn hash_batch(
     }
 
     match algorithm {
-        Algorithm::Blake3 => each_message(input, messages, iterations, |m| *blake3::hash(m).as_bytes(), consume),
-        Algorithm::Sha256 => each_message(input, messages, iterations, |m| Sha256::digest(m), consume),
-        Algorithm::Sha1Dc => each_message(input, messages, iterations, |m| {
+        Algorithm::Blake3 => {
+            if messages == 1 {
+                each_message(input, message_len, iterations, |m| *blake3::hash(m).as_bytes(), consume)
+            } else {
+                blake3_batch(input, message_len, iterations, consume)
+            }
+        }
+        Algorithm::Sha256 => each_message(input, message_len, iterations, |m| Sha256::digest(m), consume),
+        Algorithm::Sha1Dc => each_message(input, message_len, iterations, |m| {
             let result = sha1_checked::Sha1::try_digest(m);
             let mut digest = [0u8; 20];
             digest.copy_from_slice(result.hash());
@@ -1643,27 +1724,27 @@ fn hash_batch(
         }, consume),
         Algorithm::Blake3ServilSt => {
             if messages == 1 {
-                each_message(input, messages, iterations, |m| *blake3_servil::hash(m).as_bytes(), consume)
+                each_message(input, message_len, iterations, |m| *blake3_servil::hash(m).as_bytes(), consume)
             } else {
-                servil_batch(input, messages, iterations, blake3_servil::hash_many, consume)
+                servil_batch(input, messages, message_len, iterations, blake3_servil::hash_many, consume)
             }
         }
-        Algorithm::Sha256CommonCrypto => each_message(input, messages, iterations, |m| common_crypto::sha256(m), consume),
-        Algorithm::Sha256Ring => each_message(input, messages, iterations, |m| ring::digest::digest(&ring::digest::SHA256, m), consume),
+        Algorithm::Sha256CommonCrypto => each_message(input, message_len, iterations, |m| common_crypto::sha256(m), consume),
+        Algorithm::Sha256Ring => each_message(input, message_len, iterations, |m| ring::digest::digest(&ring::digest::SHA256, m), consume),
         Algorithm::Blake3Rayon => {
             assert_eq!(messages, 1, "BLAKE3 mt takes no part in the many-messages use case");
-            each_message(input, messages, iterations, |m| *blake3::Hasher::new().update_rayon(m).finalize().as_bytes(), consume)
+            each_message(input, message_len, iterations, |m| *blake3::Hasher::new().update_rayon(m).finalize().as_bytes(), consume)
         }
         Algorithm::Blake3ServilMt => {
             if messages == 1 {
-                each_message(input, messages, iterations, |m| *blake3_servil::hash_multithreaded(m).as_bytes(), consume)
+                each_message(input, message_len, iterations, |m| *blake3_servil::hash_multithreaded(m).as_bytes(), consume)
             } else {
-                servil_batch(input, messages, iterations, blake3_servil::hash_many_multithreaded, consume)
+                servil_batch(input, messages, message_len, iterations, blake3_servil::hash_many_multithreaded, consume)
             }
         }
         Algorithm::AbBlake3 => {
-            if messages == 1 {
-                each_message(input, messages, iterations, |m| ab_blake3::const_hash(m), consume)
+            if messages == 1 || point.use_case != UseCase::ManyMessages {
+                each_message(input, message_len, iterations, |m| ab_blake3::const_hash(m), consume)
             } else {
                 let blocks: &[[u8; MESSAGE_LEN]] = input.as_chunks::<MESSAGE_LEN>().0;
                 let mut outputs = vec![[0u8; 32]; messages];
@@ -1780,14 +1861,53 @@ fn each_stream_into(input: &[u8], iterations: usize, new: fn() -> blake3_servil:
 fn servil_batch(
     input: &[u8],
     messages: usize,
+    message_len: usize,
     iterations: usize,
     hash_many: impl Fn(&[u8], usize, &mut [[u8; 32]]),
     mut consume: impl FnMut(&[u8]),
 ) {
-    assert_eq!(input.len(), messages * MESSAGE_LEN);
+    assert_eq!(input.len(), messages * message_len);
     let mut digests = vec![[0u8; 32]; messages];
     for _ in 0..iterations {
-        hash_many(black_box(input), MESSAGE_LEN, &mut digests);
+        hash_many(black_box(input), message_len, &mut digests);
+        consume(digests.as_flattened());
+    }
+}
+
+/// `iterations` passes over the batch through the blake3 crate's hidden
+/// batch function, `blake3::platform::Platform::hash_many::<N>`, sixteen
+/// messages per call, with the flags and counter that make each digest the
+/// message's hash: how a program reaches the official crate's batch speed
+/// (WHIR's Merkle trees call it this way). The whole batch's digests go to
+/// `consume` per pass.
+#[inline(always)]
+fn blake3_batch(input: &[u8], message_len: usize, iterations: usize, consume: impl FnMut(&[u8])) {
+    match message_len {
+        MESSAGE_LEN => blake3_batch_of::<MESSAGE_LEN>(input, iterations, consume),
+        LEAF_LEN => blake3_batch_of::<LEAF_LEN>(input, iterations, consume),
+        other => panic!("no blake3 batch of {other}-byte messages"),
+    }
+}
+
+#[inline(always)]
+fn blake3_batch_of<const N: usize>(input: &[u8], iterations: usize, mut consume: impl FnMut(&[u8])) {
+    /* BLAKE3's IV and flags, private in the crate. */
+    const IV: [u32; 8] = [0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A, 0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19];
+    const CHUNK_START: u8 = 1 << 0;
+    const CHUNK_END: u8 = 1 << 1;
+    const ROOT: u8 = 1 << 3;
+    let (messages, rest) = input.as_chunks::<N>();
+    assert!(rest.is_empty(), "a batch is whole {N}-byte messages");
+    let platform = blake3::platform::Platform::detect();
+    let mut digests = vec![[0u8; 32]; messages.len()];
+    for _ in 0..iterations {
+        for (group, out) in black_box(messages).chunks(16).zip(digests.chunks_mut(16)) {
+            let mut table = [&group[0]; 16];
+            for (slot, message) in table.iter_mut().zip(group) {
+                *slot = message;
+            }
+            platform.hash_many::<N>(&table[..group.len()], &IV, 0, blake3::IncrementCounter::No, 0, CHUNK_START, CHUNK_END | ROOT, out.as_flattened_mut());
+        }
         consume(digests.as_flattened());
     }
 }
@@ -1797,16 +1917,16 @@ fn servil_batch(
 #[inline(always)]
 fn each_message<D: AsRef<[u8]>>(
     input: &[u8],
-    messages: usize,
+    message_len: usize,
     iterations: usize,
     hash: impl Fn(&[u8]) -> D,
     mut consume: impl FnMut(&[u8]),
 ) {
     for _ in 0..iterations {
-        if messages == 1 {
+        if message_len == input.len() {
             consume(hash(black_box(input)).as_ref());
         } else {
-            for message in black_box(input).chunks_exact(MESSAGE_LEN) {
+            for message in black_box(input).chunks_exact(message_len) {
                 consume(hash(message).as_ref());
             }
         }
@@ -2951,15 +3071,18 @@ fn detect_kernels(algorithm: Algorithm, use_case: UseCase) -> Kernels {
         /* A stream runs the one-message kernels piece by piece, so those that start past PIECE_LEN never run. */
         UseCase::Streaming => one_message.up_to(PIECE_LEN),
         UseCase::ManyMessages if algorithm == Algorithm::AbBlake3 => detect_ab_blake3_many_kernels(),
-        UseCase::ManyMessages if algorithm == Algorithm::Blake3ServilSt => {
-            servil_kernels(blake3_servil::kernel_report_many())
+        UseCase::ManyMessages | UseCase::ManyMessages256 if algorithm == Algorithm::Blake3 => {
+            detect_blake3_many_kernels(use_case.message_len())
         }
-        UseCase::ManyMessages if algorithm == Algorithm::Blake3ServilMt => {
-            servil_kernels(blake3_servil::kernel_report_many_multithreaded())
+        UseCase::ManyMessages | UseCase::ManyMessages256 if algorithm == Algorithm::Blake3ServilSt => {
+            servil_kernels(blake3_servil::kernel_report_many(use_case.message_len()))
         }
-        UseCase::ManyMessages => {
-            /* One call per 64-byte message: the 64 B kernel, whatever the batch size. */
-            let kernel = &one_message.kernels[one_message.kernel_index_for(MESSAGE_LEN)];
+        UseCase::ManyMessages | UseCase::ManyMessages256 if algorithm == Algorithm::Blake3ServilMt => {
+            servil_kernels(blake3_servil::kernel_report_many_multithreaded(use_case.message_len()))
+        }
+        UseCase::ManyMessages | UseCase::ManyMessages256 => {
+            /* One call per message: the kernel for the message's length, whatever the batch size. */
+            let kernel = &one_message.kernels[one_message.kernel_index_for(use_case.message_len())];
             Kernels::new(
                 one_message.platform,
                 vec![Kernel {
@@ -2988,6 +3111,38 @@ fn detect_ab_blake3_kernels() -> Kernels {
             mark: Mark::Circle,
         }],
     )
+}
+
+/*
+ * The blake3 crate's hidden batch function as blake3_batch calls it,
+ * sixteen messages per call: each call hashes its messages in groups as
+ * wide as the platform's widest vectors (the SIMD degree the one-message
+ * table's last kernel names) and the rest one at a time.
+ */
+fn detect_blake3_many_kernels(message_len: usize) -> Kernels {
+    let blake3 = detect_blake3_kernels();
+    let degree = (blake3.kernels[blake3.kernels.len() - 1].first / 1024).max(1);
+    let words = match degree {
+        4 => "four",
+        8 => "eight",
+        16 => "sixteen",
+        _ => "several",
+    };
+    let mut kernels = vec![Kernel {
+        first: 0,
+        name: "one message at a time".to_owned(),
+        why: format!("Below {words} messages, the batch function hashes each message on its own, one after another."),
+        mark: Mark::Circle,
+    }];
+    if degree > 1 {
+        kernels.push(Kernel {
+            first: degree * message_len,
+            name: format!("{} vectors, {words} messages at a time", blake3.platform),
+            why: format!("From {words} messages, each group of {words} fills this CPU's widest vectors, one message per lane; messages past the last full group are hashed one at a time."),
+            mark: Mark::Diamond,
+        });
+    }
+    Kernels::new(blake3.platform, kernels)
 }
 
 /*
@@ -3319,6 +3474,7 @@ fn checks(roster: &Roster, results: &Results, samples: &RunSamples) -> (Vec<Stri
                 let span = |run: &[usize]| match (run, use_case) {
                     ([one], _) => POINTS[*one].name(),
                     ([first, .., last], UseCase::ManyMessages) => format!("{} to {} messages", POINTS[*first].label, POINTS[*last].label),
+                    ([first, .., last], UseCase::ManyMessages256) => format!("{} to {} messages of 256 B", POINTS[*first].label, POINTS[*last].label),
                     ([first, .., last], UseCase::OneMessage) => format!("{} to {}", POINTS[*first].label, POINTS[*last].label),
                     ([first, .., last], UseCase::Streaming) => format!("{} to {} streamed", POINTS[*first].label, POINTS[*last].label),
                     ([], _) => unreachable!("a run holds a point"),
@@ -3363,7 +3519,7 @@ fn checks(roster: &Roster, results: &Results, samples: &RunSamples) -> (Vec<Stri
                 /* Larger work slower per unit than a size that divides it, runs sharing that size. */
                 let size = |index: usize| match use_case {
                     UseCase::OneMessage | UseCase::Streaming => POINTS[index].bytes,
-                    UseCase::ManyMessages => POINTS[index].messages,
+                    UseCase::ManyMessages | UseCase::ManyMessages256 => POINTS[index].messages,
                 };
                 /* For each point: the divisor it is most slower than, with the verdict. */
                 let divisor: Vec<Option<(usize, (u64, u64, u64))>> = POINTS.iter().enumerate()
@@ -4213,7 +4369,8 @@ fn generate_svg(
                 if plots.iter().any(|plot| plot.use_case == use_case) {
                     let (label, tip) = match use_case {
                         UseCase::OneMessage => ("One input", "Show or hide the plots of one input at a time"),
-                        UseCase::ManyMessages => ("Batches", "Show or hide the plots of batches of 64-byte messages"),
+                        UseCase::ManyMessages => ("64 B batches", "Show or hide the plots of batches of 64-byte messages"),
+                        UseCase::ManyMessages256 => ("256 B batches", "Show or hide the plots of batches of 256-byte messages"),
                         UseCase::Streaming => ("Pieces", "Show or hide the plots of one input arriving in 64 KiB pieces"),
                     };
                     v.push((format!("{use_case:?}"), label, tip.to_owned()));
@@ -4222,11 +4379,18 @@ fn generate_svg(
             v
         }),
     ];
-    for (row, (kind, chips)) in chip_rows.iter().enumerate() {
-        let y = CHIP_ROW_TOP + row as f64 * 24.0;
+    /* One line per kind of chip, continued on the next line where it would pass the right edge. */
+    let mut line = 0;
+    for (kind, chips) in chip_rows.iter() {
         let mut x = PLOT_RIGHT + 14.0;
-        for (value, label, tip) in chips {
+        for (index, (value, label, tip)) in chips.iter().enumerate() {
             let width = label.chars().count() as f64 * 6.6 + 16.0;
+            if index > 0 && x + width > SVG_WIDTH - 4.0 {
+                line += 1;
+                x = PLOT_RIGHT + 14.0;
+            }
+            let y = CHIP_ROW_TOP + line as f64 * 24.0;
+            assert!(y + 18.0 <= HEADER_BOTTOM, "the chips fit in the header");
             writeln!(
                 svg,
                 r##"  <g class="chip" data-kind="{kind}" data-value="{value}" data-on="true" transform="translate({x:.1} {y:.1})" onclick="event.stopPropagation(); toggleChip('{kind}', '{value}')"><title>{}</title><rect x="0" y="0" width="{width:.1}" height="18" rx="9"/><text x="{:.1}" y="13" text-anchor="middle">{}</text></g>"##,
@@ -4237,6 +4401,7 @@ fn generate_svg(
             .unwrap();
             x += width + 6.0;
         }
+        line += 1;
     }
     writeln!(svg, r##"  <line class="sticky-edge" x1="0" y1="{HEADER_BOTTOM:.0}" x2="{SVG_WIDTH:.0}" y2="{HEADER_BOTTOM:.0}"/>"##).unwrap();
     /*
@@ -4428,7 +4593,7 @@ fn write_plot(svg: &mut String, plot: &Plot, roster: &Roster, results: &Results,
 
     let heading_note = match plot.use_case {
         UseCase::OneMessage => plot.scenario.subtitle().to_owned(),
-        UseCase::ManyMessages => format!("{} · each hash takes the whole batch where it can, else one message at a time", plot.scenario.subtitle()),
+        UseCase::ManyMessages | UseCase::ManyMessages256 => format!("{} · each hash takes the whole batch where it can, else one message at a time", plot.scenario.subtitle()),
         UseCase::Streaming => format!("{} · as a program reading a file receives it", plot.scenario.subtitle()),
     };
     writeln!(
@@ -4880,7 +5045,7 @@ const BETTER_ARROW_X: f64 = Y_TITLE_X + 7.0;
 fn absent_reason(algorithm: Algorithm, use_case: UseCase) -> String {
     let how = match use_case {
         UseCase::OneMessage => "it has no way to hash one input",
-        UseCase::ManyMessages => "it has no way to hash a batch of messages over threads",
+        UseCase::ManyMessages | UseCase::ManyMessages256 => "it has no way to hash a batch of messages over threads",
         UseCase::Streaming => "it has no way to take an input in pieces",
     };
     format!("{} is measured in the other plots; {how}.", algorithm.name())
@@ -5345,7 +5510,7 @@ fn write_interaction_script(
             json_string(plot.use_case.rate_unit_long()),
             json_string(match plot.use_case {
                 UseCase::OneMessage | UseCase::Streaming => "Nanoseconds per byte",
-                UseCase::ManyMessages => "Nanoseconds per message",
+                UseCase::ManyMessages | UseCase::ManyMessages256 => "Nanoseconds per message",
             }),
         )
         .unwrap();
@@ -6553,23 +6718,32 @@ mod correctness_tests {
     fn every_batch_size_has_a_golden_vector_and_a_dispatch_arm() {
         let algorithms: Vec<_> = Algorithm::ALL.into_iter()
             .filter(|a| a.availability().is_ok()).collect();
-        for point in &POINTS[UseCase::ManyMessages.points()] {
-            for seed in [0, 1] {
-                check_input(&algorithms, &make_input_seeded(point.bytes, seed), *point, seed);
+        for use_case in [UseCase::ManyMessages, UseCase::ManyMessages256] {
+            for point in &POINTS[use_case.points()] {
+                for seed in [0, 1] {
+                    check_input(&algorithms, &make_input_seeded(point.bytes, seed), *point, seed);
+                }
             }
         }
         assert_eq!(test_vectors::MANY_VECTORS.len(), 2 * BATCH_COUNT, "two seeds per batch size");
+        assert_eq!(test_vectors::MANY_256_VECTORS.len(), 2 * BATCH_COUNT, "two seeds per batch size");
     }
 
     #[test]
     fn use_case_axes_are_contiguous_and_cover_every_point() {
         assert_eq!(UseCase::OneMessage.points(), 0..INPUT_COUNT);
         assert_eq!(UseCase::ManyMessages.points(), INPUT_COUNT..INPUT_COUNT + BATCH_COUNT);
-        assert_eq!(UseCase::Streaming.points(), INPUT_COUNT + BATCH_COUNT..POINT_COUNT);
+        assert_eq!(UseCase::ManyMessages256.points(), INPUT_COUNT + BATCH_COUNT..INPUT_COUNT + 2 * BATCH_COUNT);
+        assert_eq!(UseCase::Streaming.points(), INPUT_COUNT + 2 * BATCH_COUNT..POINT_COUNT);
         for (one, streamed) in POINTS[UseCase::OneMessage.points()].iter().zip(&POINTS[UseCase::Streaming.points()]) {
             assert_eq!((one.label, one.bytes), (streamed.label, streamed.bytes), "the streamed axis repeats the one-message sizes");
         }
-        assert!(POINTS[UseCase::ManyMessages.points()].iter().all(|p| p.bytes == p.messages * MESSAGE_LEN));
+        for use_case in [UseCase::ManyMessages, UseCase::ManyMessages256] {
+            assert!(POINTS[use_case.points()].iter().all(|p| p.bytes == p.messages * use_case.message_len()));
+        }
+        for (small, large) in POINTS[UseCase::ManyMessages.points()].iter().zip(&POINTS[UseCase::ManyMessages256.points()]) {
+            assert_eq!((small.label, small.messages), (large.label, large.messages), "both batch axes take the same counts");
+        }
     }
 
     #[test]

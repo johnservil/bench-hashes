@@ -38,20 +38,21 @@ your CPU and operating system:
 - `bench-hashes.samples.tsv`: every single measurement, for your own
   analysis.
 
-The graph has six plots. The upper three show one hash on a single
-thread of an idle machine. The lower three show two copies of a hash
-running at once, as when two programs hash side by side. In each three,
+The graph has eight plots. The upper four show one hash on a single
+thread of an idle machine. The lower four show two copies of a hash
+running at once, as when two programs hash side by side. In each four,
 the first plot hashes one input per call, from 64 B to 128 MiB. The
-second hashes a batch of 64-byte messages per call. The third hashes the
-same inputs as the first, handed over in 64 KiB pieces as a program
-reading a file would, so the hash never learns the total size in
-advance. Higher is faster.
+second hashes a batch of 64-byte messages per call, and the third a
+batch of 256-byte messages, as a Merkle tree hashes its nodes and its
+leaves. The fourth hashes the same inputs as the first, handed over in
+64 KiB pieces as a program reading a file would, so the hash never
+learns the total size in advance. Higher is faster.
 Hover over a dot, or tap it, to compare every contender at that point.
 Click a name at the right to show or hide that contender. The band on
 the strip at the top marks the part of the inputs every plot shows: drag
 either end of it, or the band itself, and "all" shows everything again.
 The chips at the top right show or hide plots: solo or shared, one input,
-batches, or pieces. The strip, the chips, and the rate/time switch stay
+64 B batches, 256 B batches, or pieces. The strip, the chips, and the rate/time switch stay
 at the top of the window as you scroll.
 
 Under the title, the graph names the computer and the day, and says so

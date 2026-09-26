@@ -3,11 +3,12 @@
 This file explains what a run measures, how it keeps the numbers honest,
 and what each contender runs. [README.md](README.md) says how to run it.
 
-Every run measures each contender in three use cases and two scenarios.
+Every run measures each contender in four use cases and two scenarios.
 **One message per call**: a call hashes one input, at twenty-seven sizes
-from 64 B to 128 MiB, reported per byte. **Many messages per call**: a
-call hashes a batch of 64-byte messages, at twenty-four batch sizes from
-1 to 262144 messages, reported per message. **Streamed**: the same
+from 64 B to 128 MiB, reported per byte. **Many messages per call**, in
+two use cases: a call hashes a batch of 64-byte messages, or of 256-byte
+messages, at twenty-four batch sizes from 1 to 262144 messages, reported
+per message. **Streamed**: the same
 inputs as one message, produced in 64 KiB pieces (the last one
 shorter), each copied as a read would copy it and fed to the contender's
 incremental API, then finalized, so the implementation never learns the
@@ -89,26 +90,32 @@ stream shorter than one buffer is hashed when it ends. ab-blake3 has no
 incremental API and sits out. The expected digests are the one-message
 ones.
 
-## The many-messages use case
+## The many-messages use cases
 
 A program with a queue of small messages to hash (a Merkle tree's
-leaves, a table of records) has two ways to spend a call: one message
-per call of the plain entry point, or a batch per call where the
-implementation offers that. The second use case measures both as they
-are. A contender without a batch entry point loops its plain entry
+nodes and leaves, a table of records) has two ways to spend a call: one
+message per call of the plain entry point, or a batch per call where
+the implementation offers that. The two many-messages use cases measure
+both as they are, with messages of 64 bytes (a Merkle tree's inner node,
+two 32-byte children) and of 256 bytes (a leaf in WHIR's proof system,
+for one). A contender without a batch entry point loops its plain entry
 point over the batch, one message per call: `for m in batch { hash(m) }`.
-Three have one. ab-blake3's `single_block_hash_many_exact::<N>` takes N
-messages of exactly one block (64 bytes) as one array and returns N
-digests; the bencher calls it with N the batch size (N is a const
-generic, so each batch size on the axis is its own call). BLAKE3
-servil's `hash_many(input, message_len, out)` takes messages of one
-length back to back in one buffer and fills one digest each; BLAKE3
-servil mt's `hash_many_multithreaded` does the same over the fork's
-worker threads. Messages are 64
-bytes for every contender because that is the one size ab-blake3's
-batch entry point accepts.
+Three have one. BLAKE3 servil's `hash_many(input, message_len, out)`
+takes messages of one length back to back in one buffer and fills one
+digest each; BLAKE3 servil mt's `hash_many_multithreaded` does the same
+over the fork's worker threads. The crates.io BLAKE3 crate has a hidden
+one, `blake3::platform::Platform::hash_many::<N>`, which programs that
+want its batch speed call directly (WHIR's Merkle trees do): the bencher
+calls it as they do, sixteen messages per call, with the flags that make
+each digest the message's hash. ab-blake3's
+`single_block_hash_many_exact::<N>` takes N messages of exactly one
+block (64 bytes) as one array and returns N digests; the bencher calls
+it with N the batch size (N is a const generic, so each batch size on
+the axis is its own call), and loops `const_hash` over 256-byte
+messages. A batch of one message is one call of the plain entry point
+for every contender.
 
-The axis counts messages per batch: 1, 2, 3, 4, 6, 8, 12, 16, 24, 32,
+Both axes count messages per batch: 1, 2, 3, 4, 6, 8, 12, 16, 24, 32,
 48, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536,
 131072, 262144 (16 MiB of input at the end). Powers of two up to 16 show a SIMD batch filling (the blake3
 crate's `hash_many` takes four blocks at a time on NEON, sixteen with
@@ -117,9 +124,9 @@ remainder past the sixteen-message groups ab-blake3 forms; from 64 up
 the per-batch overhead amortises and the rate settles. Results read in
 nanoseconds per message and million messages per second.
 
-BLAKE3 official mt takes no part in this use case: a 64-byte message is a call
-to `update_rayon` that no program would make, and the crate has no
-batch entry point. The bencher writes no wrapper of its own around any
+BLAKE3 official mt takes no part in these use cases: a 64- or 256-byte
+message is a call to `update_rayon` that no program would make, and the
+crate has no multithreaded batch entry point. The bencher writes no wrapper of its own around any
 contender; the contenders' own entry points are the whole of what it
 calls.
 
@@ -172,7 +179,8 @@ single-threaded.
 
 BLAKE3 is provided by the blake3 crate through the one-shot
 blake3::hash function, which is single-threaded (see "BLAKE3
-threading").
+threading"), and for a batch through its hidden batch function (see
+"The many-messages use cases").
 
 ab-blake3 is the ab-blake3 crate (0.2), "optimized and more exotic APIs
 around BLAKE3". For one message the bencher calls `const_hash`, a
@@ -287,12 +295,15 @@ BLAKE3 official mt leaves the caller's thread above one SIMD width of chunks;
 BLAKE3 servil mt can split over threads from 64 KiB, its fourth path, drawn
 as a triangle. SHA-256 and SHA-1DC run one path at every size.
 
-In the many-messages use case a contender looping one message per call
-runs its 64 B kernel at every batch size; ab-blake3's batch entry point
-changes path at sixteen messages, where the first full SIMD group forms;
-BLAKE3 servil's changes at two (the NEON hybrid parent kernels) and
-sixteen (the SME2 group kernel), and servil mt's again at 1024, where a
-64 KiB batch may leave the calling thread.
+In the many-messages use cases a contender looping one message per call
+runs the kernel for its message length at every batch size; ab-blake3's
+batch entry point changes path at sixteen messages, where the first
+full SIMD group forms; the crates.io crate's batch function at the
+platform's SIMD degree (four on NEON); BLAKE3 servil's changes, for
+64-byte messages, at two (the NEON hybrid parent kernels) and for
+256-byte messages at four (NEON, four messages at a time), for both at
+sixteen (the SME2 group kernel), and servil mt's again where a 64 KiB
+batch may leave the calling thread (1024 and 256 messages).
 
 The text report lists the kernel at each point for every contender in
 each use case (one line for a contender with a single kernel) and marks
@@ -316,7 +327,7 @@ little-endian 64-bit words `s << 48 | 0, s << 48 | 1, ...` cut to `n`
 bytes: every block of every input differs, so a kernel that mixed up
 its lanes would fail, and seed 1 gives the second shared copy different bytes.
 Its 72 one-message vectors cover both input seeds at every benchmark
-size, empty input, and short boundary tails; its 48 batch vectors cover both seeds at every batch size, each the SHA-256 of
+size, empty input, and short boundary tails; its 48 batch vectors per message length cover both seeds at every batch size, each the SHA-256 of
 the batch's digests concatenated in message order, so a batch entry
 point is checked digest by digest against a one-line anchor.
 Multithreaded entries also hash the same vectors in two simultaneous
@@ -342,7 +353,7 @@ The contenders run in a Williams design: a set of orders that together
 place every contender in every position equally often and realise every
 "Y right after X" adjacency equally often — the balance all permutations
 would give (n orders for an even count of contenders, 2n for odd). Point
-order (the seventy-eight points of the three use cases together) rotates independently. Each contender/point combination is
+order (the one hundred and two points of the four use cases together) rotates independently. Each contender/point combination is
 calibrated separately so its timed samples last about 1 ms each.
 
 Each combination collects 96 solo samples and 192 shared ones (fewer
@@ -397,7 +408,7 @@ determined. The text report marks such cells with `~`.
 
 ## The graph
 
-The SVG shows six plots, each use case solo and then shared, each with
+The SVG shows eight plots, each use case solo and then shared, each with
 median lines and confidence bands on a log-log grid.
 
 A switch at the header's left, above the y axes' titles, flips every plot between rate (the
