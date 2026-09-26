@@ -8,73 +8,61 @@ principles are in both repositories' `AGENTS.md`; the fork's hardware
 facts, design, and rejected ideas are in its `NOTES-servil.md` (read it
 before touching kernels or the pool); this repository's are in `NOTES.md`.
 
-## Resume here (checkpoint, September 26, 2026, 00:30 UTC; the session ran out of context)
+## Resume here (checkpoint, September 26, 2026, 02:15 UTC)
 
-State: fork `servil` f70c758 (pinned here); records on it (1fb6bcf), both
-machines quiet. GitHub Pages serves them. **The Mac runner had stopped**
-(last job 238 at 21:06 UTC); ask Zooko to restart it
-(`sh ~/piplayground/blake3-servil/tools/runner/setup-mac.sh`). Job 240 waits
-in `runner/jobs/`.
+State: fork `servil` f70c758 (pinned here); records on it (1fb6bcf).
+**The Mac runner is stopped** (last job 238); ask Zooko to restart it
+(`sh ~/piplayground/blake3-servil/tools/runner/setup-mac.sh`). Jobs
+240-246 wait in `runner/jobs/`; keep the VM idle while they run.
 
 ### Work in progress, in order
 
-1. **`candidate/mt-name`** (fork 4db6034, pushed): `kernel_report`'s
-   multithreaded split named "split over threads, SME2 on one for large
-   inputs" (the tooltip Zooko noticed). Strings only; VM check passed (a
-   first pre-commit run cried regression, a second found none). Waits for
-   Mac job 240 (`perf_regress` servil vs 4db6034), then promote (note, push,
-   delete branch).
+1. **`candidate/mt-name`** (fork 4db6034, pushed): strings only; VM check
+   passed. Waits for Mac job 240, then promote (note, push, delete branch).
 
-2. **`candidate/batch-blocks`** (fork, pushed, two commits; VM checks passed,
-   suites 79/75/65 lib, 22 doc; Mac verdict still needed):
-   - 220de01: `hash_many` batches equal messages of 2-16 whole blocks. New
-     SME2 entry point `blake3_sme2_hash16_messages_512` (the chunk kernel's
-     body with a block count in x6 and a counter step in x17; the chunk
-     entry sets 15 and 1). The SME2 remainder uses the NEON hybrids only for
-     whole chunks and one-block parents, else the C NEON kernel.
-   - 8d3a325: `hash_many_equal(input, message_len, out: &mut [[u8; 32]])`
-     and `hash_many_equal_multithreaded` (pool `Work::Equal`, `cut_equal`).
-   - VM, 2^16 messages, ns each: 256 B servil 39.0 (was 164), mt 8.6; the
-     official crate's hidden `Platform::hash_many` 16 per call (Remco's
-     method) 90.7. 64 B: servil 10.1, mt 2.2, official method 21.5.
+2. **`candidate/batch-blocks`** (fork d7ab55e, pushed; four commits; every
+   suite passes, 75/71/61 lib, 21 doc; every VM pre-commit check passed).
+   One batch API, one buffer (Zooko): `hash_many(input, message_len, out:
+   &mut [[u8; 32]])`, `hash_many_multithreaded`, `_with_budget`; the
+   slice-of-slices API is gone; `kernel_report_many(message_len)` and its
+   `_multithreaded`. Done in one commit instead of the planned two:
+   `perf_regress` renames an older commit's slice API to `*_slices` and
+   forwards the new names to `hash_many_equal` where it exists (judged),
+   else a copying shim (batch cells unjudged).
+   - Direct A/B, VM, 64 B batches, against 8d3a325's slice API with a
+     prebuilt pointer table: no slower cell; 1-64 level; 256-16384 5-30%
+     faster st, 5-46% mt. (`many::hash_run` must stay `#[inline(never)]`:
+     inlined, 2 messages took 30% longer.)
+   - 256 B, VM, ns/msg: servil st 185 at 1-3 (level with a loop of hash()
+     since d7ab55e sends the rest after groups of four to c1), 97 at 4-12,
+     39 from 16; mt 16 at 1024, 9.9 at 8192; official through its hidden
+     `Platform::hash_many` 16 per call 93-96; SHA-256 87-90.
+   - **Waits for the Mac**: 241 (`perf_regress` servil vs d7ab55e; batch
+     cells shimmed, one-message cells judged), 242-245 (direct 64 B batch
+     A/B: 8d3a325 + bench 9030642 against d7ab55e + bench 8542199, old new
+     new old; judge like `/tmp/ab.py` did: every pair's ratio past 3%),
+     246 (Remco's numbers, both batch axes). Then promote, pin here, merge
+     bench-hashes `candidate/one-buffer-batch` into `main`.
 
-3. **Next on that branch (Zooko, just decided): one batch API, one buffer.**
-   Remove every API taking slices of slices: `hash_many(&[&[u8]], ..)`,
-   `hash_many_multithreaded`, `hash_many_multithreaded_with_budget`, and
-   internally `many::hash_many_on` / `hash_many_until_longer`,
-   `lanes::hash_many`, `hash_many_over_pool`, `Work::Messages`,
-   `cut_messages`, `Pool::hash_messages`, their tests (convert the 64 B run
-   tests to the one-buffer API), the examples `many_probe.rs`,
-   `many_split.rs`, and host_lab's use. Add
-   `hash_many_equal_multithreaded_with_budget`. Then **rename** the
-   one-buffer functions to `hash_many`, `hash_many_multithreaded`,
-   `hash_many_multithreaded_with_budget`, in a **second commit**:
-   `perf_regress` builds the same benchmark against both commits, so (a)
-   step one's benchmark calls `hash_many_equal`, with a perf_regress shim for
-   commits lacking it (a copying shim over the slice API: mark it
-   `shimmed` so batch cells are not judged), and (b) the rename commit's
-   shim is a free forward (`pub fn hash_many(i, l, o) { hash_many_equal(i,
-   l, o) }` for commits that have `hash_many_equal` but no one-buffer
-   `hash_many`). Confirm the 64 B batch path did not slow with a direct A/B
-   (VM and Mac), since the check will not judge step one's batch cells.
-   Update docs: "For best performance", kernel_report_many's docs, the
-   fork README's preface, NOTES-servil.md.
+3. **bench-hashes `candidate/one-buffer-batch`** (8542199, pushed; builds
+   only against the fork's candidate, so it merges after the promotion):
+   servil batches through the one-buffer API; BLAKE3 official batches
+   (64 B too) through `blake3::platform::Platform::hash_many::<N>`, 16 per
+   call (Remco's method); a fourth use case, batches of 256-byte messages
+   (`ManyMessages256`, `--points "16 of 256 B"`, `MANY_256_VECTORS`, chips
+   wrap onto a third header line); docs updated. Graph check passes.
+   Then re-record both machines and tell Zooko the numbers for Remco:
+   his 16-per-call calls against one servil call per layer (> 16 messages,
+   Zooko: the whole layer in one call is the efficient use, and Remco may
+   switch to it).
 
-4. **Benchmark (bench-hashes) for Remco's case** (after 3):
-   - servil st/mt batch cells call the one-buffer API on the contiguous
-     batch (both 64 B and 256 B).
-   - BLAKE3 official's batch path becomes the crate's hidden
-     `blake3::platform::Platform::hash_many::<N>`, 16 messages per call,
-     flags 0 / CHUNK_START / CHUNK_END|ROOT, IncrementCounter::No, counter 0
-     (exactly Remco's `hash_many_const` in worldfnd/whir
-     src/hash/blake3_engine.rs); label it as the crate's hidden batch
-     function. Apply to the 64 B batches too (official 47 -> about 21 ns).
-   - A new use case "Batches of 256-byte messages" (x axis messages per
-     batch, same points as the 64 B batches; a chip for it). SHA-256 and
-     the others: a loop of one-shot hashes (no batch API). BLAKE3 official
-     mt sits out (listed pale, "not measured here"). Golden vectors for it
-     in `tools/gen-test-vectors.py` (MANY_VECTORS equivalent).
-   - Re-record both machines; then tell Zooko the numbers for Remco.
+4. **Weak cells the new plots show** (minimax, VM): 256 B at 4-12
+   messages servil only level with official (both NEON four-wide); 256 B
+   at 17-31 messages about 400 ns per call beyond the kernels (24: 75
+   ns/msg against 39 at 16; the SME2 remainder problem, open problem 6);
+   64 B at 4 messages servil 23.9 against official 23.4 ns/msg (NEON
+   hybrids against the C four-lane kernel); SHA-256 faster than BLAKE3
+   below 16 messages of 256 B (open problem 1's sizes).
 
 ### Remco (a potential user; context for 2-4)
 
