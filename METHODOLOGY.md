@@ -101,9 +101,10 @@ Three have one. ab-blake3's `single_block_hash_many_exact::<N>` takes N
 messages of exactly one block (64 bytes) as one array and returns N
 digests; the bencher calls it with N the batch size (N is a const
 generic, so each batch size on the axis is its own call). BLAKE3
-servil's `hash_many(&[&[u8]], &mut [Hash])` takes messages of any
-lengths and fills one digest each; BLAKE3 servil mt's
-`hash_many_multithreaded` does the same over the fork's worker threads. Messages are 64
+servil's `hash_many(input, message_len, out)` takes messages of one
+length back to back in one buffer and fills one digest each; BLAKE3
+servil mt's `hash_many_multithreaded` does the same over the fork's
+worker threads. Messages are 64
 bytes for every contender because that is the one size ab-blake3's
 batch entry point accepts.
 
@@ -210,7 +211,7 @@ On other CPUs it runs the kernels of the crates.io crate it forks
 (SSE4.1, AVX2, AVX-512 on x86). The report's kernel table names the
 platform the run measured. Its provenance line gives the repository,
 branch, and commit instead of a registry checksum. For a batch the fork's `hash_many`
-compresses runs of one-block messages many lanes at a time on the same
+compresses one-block messages many lanes at a time on the same
 kernels its tree uses for parent nodes (sixteen per group on SME2, the
 NEON hybrids below a group), and `kernel_report_many()` describes that
 by batch size.

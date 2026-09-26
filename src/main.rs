@@ -1773,24 +1773,22 @@ fn each_stream_into(input: &[u8], iterations: usize, new: fn() -> blake3_servil:
 }
 
 /// `iterations` passes over the batch through one of the fork's batch entry
-/// points, which take the messages as a slice of slices and fill a slice
-/// of digests; the whole batch's digests go to `consume` per pass.
+/// points, which take the messages back to back in one buffer with their
+/// length and fill a slice of digests; the whole batch's digests go to
+/// `consume` per pass.
 #[inline(always)]
 fn servil_batch(
     input: &[u8],
     messages: usize,
     iterations: usize,
-    hash_many: impl Fn(&[&[u8]], &mut [blake3_servil::Hash]),
+    hash_many: impl Fn(&[u8], usize, &mut [[u8; 32]]),
     mut consume: impl FnMut(&[u8]),
 ) {
-    let batch: Vec<&[u8]> = input.chunks_exact(MESSAGE_LEN).collect();
-    assert_eq!(batch.len(), messages);
-    let mut digests = vec![blake3_servil::Hash::from_bytes([0; 32]); messages];
+    assert_eq!(input.len(), messages * MESSAGE_LEN);
+    let mut digests = vec![[0u8; 32]; messages];
     for _ in 0..iterations {
-        hash_many(black_box(&batch), &mut digests);
-        for digest in &digests {
-            consume(digest.as_bytes());
-        }
+        hash_many(black_box(input), MESSAGE_LEN, &mut digests);
+        consume(digests.as_flattened());
     }
 }
 
