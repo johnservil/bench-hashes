@@ -8,139 +8,68 @@ principles are in both repositories' `AGENTS.md`; the fork's hardware
 facts, design, and rejected ideas are in its `NOTES-servil.md` (read it
 before touching kernels or the pool); this repository's are in `NOTES.md`.
 
-## Resume here (checkpoint, September 26, 2026, evening)
+## Resume here (checkpoint, September 26, 2026, night)
 
-State: fork `servil` 0.2.0 and after (see git), pinned here; no candidates open. Records
-(VM and Mac `--all`, with SHA3-256) are on 01bc76e (same src). Public
-links for Zooko: the WHIR note
-https://github.com/johnservil/BLAKE3/blob/servil/docs/whir-merkle-trees.md,
-the upstream report https://github.com/BLAKE3-team/BLAKE3/issues/590 (fix
-PR #591, with a catalog of every public caller of `blake3::platform`).
-README: a short warning in my voice, one speed chart (1 MiB, cores) drawn by
-`tools/speed_chart.py` from the Mac record (redraw after each Mac record),
-`media/speed-charts.md` behind a link. The Mac runner's installed copy
-predates the commonware and sha3-256 keys and the `test` job type: Zooko
-restarts it with `setup-mac.sh`.
+**State.** Fork `servil` 623be54 (version 0.2.0, tag
+`v0.2.0+30296341eef435521469f8eae3582047b02d67da`), pinned here; no
+candidates open; every promotion has its gate note in `refs/notes/perf`.
+Records (VM and Mac `--all`) are bench-hashes ee956b7, on servil f9d39b0
+(same src as the tip); the README's speed chart is drawn from the Mac one
+(`tools/speed_chart.py`; redraw after each Mac record). Runner jobs run
+to 317; the next job number is 318.
 
-Waiting on a quiet Mac: `candidate/agents-time` (the fork's AGENTS, docs
-only: time is discrete), its Mac gate.
+**Waiting on Zooko.**
+- Restart the Mac runner (`setup-mac.sh`) to install runner.py's patch
+  check for benchmark jobs (perf_regress jobs already use the fork's).
+- Try the graph on his iPhone: hiding plots no longer shrinks the page
+  (bench-hashes 20a87c6, in the records ee956b7; the likely cause of the zoom-in he saw).
+  If it still zooms, next idea: an HTML page around the SVG with a
+  viewport meta tag, or a double-tap reading of the tap.
+- A real x86-64 machine is coming for the x86 tests; no emulation, not
+  even for unit tests (Zooko).
+- Whether perf_regress should keep a few points of multi-block batches
+  (256 B, the Merkle-leaf path), now that the benchmark has none.
+- Upstream: BLAKE3-team/BLAKE3 issue #590 and PR #591 (Platform::hash_many
+  drops a partial block in release builds; a catalog of every public
+  caller of `blake3::platform`); watch for the maintainers' answer.
+- Remco's note is public:
+  https://github.com/johnservil/BLAKE3/blob/servil/docs/whir-merkle-trees.md
 
-- **Startup self-test** (Zooko, September 26; Niels Ferguson's idea):
-  39 chained cases before a process's first hash, every AArch64 assembly
-  entry (31, gdb-counted), 93-95 µs warm, 125-200 µs in a fresh process;
-  Zooko chose that budget (option 4) over leaving kernels out. Fork NOTES,
-  "The startup self-test". The long random differential run is deleted
-  (Zooko: superstitious fuzzing).
-- **x86-64**: tests wait for a real x86-64 machine Zooko is getting; no
-  emulation, not even for unit tests (Zooko).
+**Done this session** (details in the commits and the fork's NOTES):
+QUALITY.md (every check, the four bugs, formal verification tried);
+Kani proofs (`cfg(kani)`, Kani 0.64 in the guest); the startup
+self-test (39 chained cases, all 31 AArch64 assembly entries, fork NOTES
+"The startup self-test"); time kept as measured (`Measured`, `Fixed`
+Q64.64, samples v3 `ns/units`, `tools/check-report.py`); integers for
+time everywhere (clocks tick); SHA3-256 contender; 256 B batches,
+ab-blake3, commonware removed; the graph's header no longer follows the
+page, and the page never shrinks; the one-block tails from 5 (9eb2613);
+perf_regress reports shared cells without holding; the 0.2.0 release.
 
-- **Released 0.2.0** (tag v0.2.0+30296341eef4..., September 26): release
-  check against v0.1.0 clean on both machines (jobs 311; one-message cells
-  alone, the old batch API shimmed). The version bump showed cargo
-  ignoring a patch whose version differs from the lock: perf_regress and
-  the runner now lock the patched version and check the build's source.
-  Zooko restarts the runner with setup-mac.sh to install that for
-  benchmark jobs.
-- **Benchmark trimmed** (Zooko): no 256-byte batches, ab-blake3, or
-  commonware; the graph's header no longer follows the page (on a phone
-  it covered each plot's top). The regression check no longer watches
-  batches of multi-block messages (Merkle leaves); raise it with Zooko if
-  that path changes.
-- Records on f9d39b0 (VM, Mac job 314), the README's chart redrawn.
-
-Next: the weak cells.
-
-- **Time kept as measured** (done, September 26): samples are `ns/units`
-  (samples v3); statistics run on `Fixed` (Q64.64) and round once, for
-  the page; the report shows three significant digits (0.0311). The fork's
-  perf_regress, losses.py, and speed_chart.py read it exactly (Fraction).
-
-Found this session: the fork's test suites have never run under macOS
-(the runner runs benchmarks, perf_regress, and examples; tests ran only
-in the VM, on the M4's SME2 unit). Next: a runner job type `test` (the
-suites natively), which needs a runner restart; QUALITY.md says so until
-then.
-
-This session (Zooko asleep; his instructions: benchmark commonware's new
-BLAKE3, optimise, produce evidence of code quality):
-
-- **BLAKE3 commonware** (commonwarexyz/monorepo PR 4982, 25851f1) is a
-  contender here, batches only (2ff362e; NOTES.md "BLAKE3 commonware";
-  Zooko: a two-way door). probe/commonware (fork) measured it on the Mac
-  P/E (jobs 254-285). Every batch cell it led is now servil's.
-- **Batch speedups, all promoted with both gates** (fork NOTES "What runs
-  where", `hash_many`): padded SME2 groups for 2-16 blocks (9fd0ac9);
-  NEON parent plans for 2-16 blocks below ten (666e550; 256 B x 2-9
-  -40 to -58%); 2-15 chunks side by side on SME2 (0bed4e7; 16 x 4 KiB
-  1310 -> 661 ns/msg on the Mac, commonware 1757); one-block padded groups
-  (ffcef50); the padded batch contract, any length (7cd10ec; odd lengths
-  had trailed commonware 1.7x); two-chunk messages side by side on NEON
-  (0869c79).
-- **Code quality** (fork NOTES "Testing", "Checks beyond the suites"):
-  coverage 93% of lines and the tests it prompted; ASan, TSan (31 runs),
-  Miri (pure; 41 min) clean, each with a positive control; guard-page
-  tests for every kernel; four bugs fixed (d395f9e). The long random
-  differential run was deleted (Zooko, September 26: superstitious
-  fuzzing; the fixed-answer tests cover every path it could reach).
-  Raw logs in the fork's `tmp/quality/`. Nightly with miri, rust-src,
-  llvm-tools and the x86-64 std are installed in the guest until restart.
-
-### Zooko's answers (September 26, morning) and tonight's tasks
-
-- **One-block tails from 5: landed** (servil 9eb2613, Zooko, after the
-  correction): the old path ran 10.6 ns/msg at 64 B x 24 in the SME
-  unit's fast state and 25.5-31.5 in its slow one; the padded group runs
-  13.3 always (official 21.0-21.7). His reasons: the slow state improves
-  far more than the fast state slows, and the fast state stays ahead of
-  the nearest competitor. (My first summary had said we trailed at 24;
-  the trailing cells at 24 are 256 B messages.)
-- **`perf_regress` and shared cells: report, don't hold**, on the
-  presumption that a commit which slows a shared cell has a reason worth
-  more (a larger gain elsewhere, simpler code); the commit message names
-  the cells, their numbers, and that reason.
-- **The note for Remco: post it on GitHub** where Zooko can link it;
-  say that Zooko showed us Remco's comments and asked for something
-  useful to him.
-- **The `efficient` module and the Merkle API: worth building, later.**
-  Both are in "Ideas" below.
-- **New: a quality-assurance document** linked from the fork README: every
-  step taken for correctness and safety, how a user verifies it, the four
-  bugs with enough detail to find each bug and fix, and the formal
-  verification tools considered (why not yet, or what happened).
-- Then keep improving code, docs, and speed until further notice.
+**Lessons (this guest).**
+- `pkill -f PATTERN` matches the shell running it and kills the command;
+  kill by PID. Run verification tools (Kani, CBMC) under `timeout`: a
+  symbolic divisor over all of usize ran 3.5 hours.
+- A version bump makes cargo ignore a `[patch]` of a different version,
+  with only a warning; perf_regress and the runner now lock the patched
+  version first and fail stop unless the fork came from the checkout.
+- gdb needs `SHELL=/bin/sh` and `set startup-with-shell off`; bash
+  process substitution (`<(...)`) fails here (no /dev/fd): use files.
+- The runner reruns any job it never finished; to clear one, move its
+  file out of `runner/jobs/` (into `runner/jobs-archive/`).
 
 ### Next, in order
 
-0. Records on dddb5d3 (VM and Mac, `--all`), graph checks, commit.
-   Then weak cells: 2-chunk messages at 4 on E-cores (p4 two pairs),
-   1000 B x 4 on E-cores; tails of 1-4 multi-block messages past SME2
-   groups (slow state); a benchmark cell of odd-length messages (2000 B)
-   would show the padded contract.
-
-1. ~~**The padded batch contract**~~ done (7cd10ec); left: a probe of
-   129-byte messages at stride 192 against 256 (the rounding rule). Kernels take
-   the last block's length (SME2 `z14`, NEON packed word, hybrids); any
-   message length batches: chunk k of 16 messages in 16 lanes at counter
-   k, then each parent level across messages as one parent-kernel batch.
-   Tests from the reference implementation at 1-3000 B and around every
-   block and chunk boundary; a benchmark cell of long messages (2000 B)
-   against a loop of hash(); a probe of 129-byte messages at stride 192
-   against 256 settles the rounding rule.
-2. **Weak cells** (minimax; both records): 256 B at 4-12 messages servil
-   level with official or 1% behind (Mac 4: 99.2 against 98.0; both NEON
-   four-wide); 256 B at 17-31 messages about 400 ns per call beyond the
-   kernels (24: 74 ns/msg against 38 at 16; open problem 6); 64 B at 4
-   messages servil 24.0 against official 22.1 (Mac; the hybrids against
-   the C four-lane kernel); SHA-256 faster than BLAKE3 below 16 messages
-   of 256 B (open problem 1's sizes).
+1. **Weak cells** (minimax; both records): 64 B at 4 messages (Mac:
+   servil 24-25 ns/msg against official 22-23; the hybrids against the C
+   four-lane kernel); SHA-256 against BLAKE3 at 2-4 KiB single messages
+   (open problem 1); servil mt's shared batches (CHECKS: 48 and 128
+   messages, mt slower than st when two copies run).
+2. The E-core cells: 2-chunk messages at 4 (p4 two pairs), 1000 B x 4;
+   tails of 1-4 multi-block messages past SME2 groups (slow state).
 3. **One cell's aftereffects slow the next** (open, ours to explain): on
-   the VM, servil f70c758's shimmed 256-byte batch cells (the slice API
-   behind a copying wrapper, one message at a time) made the next SHA-256
-   64 B cell 3-6% slower, reproducibly, in `perf_regress`'s full point
-   list and in no shorter one. 3d83912 stops running unjudged cells,
-   which avoids it; the mechanism (allocator, caches, clock or SME state
-   after long integer runs) is unexplained, and a user's program could
-   meet it.
+   the VM, a long run of shimmed batch cells once made the next SHA-256
+   64 B cell 3-6% slower; the mechanism is unexplained.
 4. The text report's three-reader pass (CHECKS, TWO SPEEDS).
 5. A second SME2 thread in the pool (two SME units reachable, job 187).
 6. Open, smaller: hash(256 KiB)'s partial slow state; the VM's
@@ -243,6 +172,23 @@ commitment format (see "Idea: a full-fledged Merkle tree API").
   one place, the fork README's top; no copies elsewhere (Zooko).
 - Branch naming `candidate/<topic>`; no promotion without the Mac verdict.
 - The Mac runner is launched manually by Zooko; code from GitHub only.
+- Name Zooko as "Zooko" alone, everywhere (AGENTS).
+- The startup self-test: every assembly entry, at 0.1-0.2 ms once per
+  process (option 4), over a smaller budget that leaves kernels out.
+- No long random differential runs ("superstitious fuzzing"); no
+  emulators, not even for unit tests.
+- Time is discrete (every clock ticks): integers, kept as measured,
+  lossy steps deferred to one rounding for the reader (AGENTS).
+- The benchmark: no 256 B batches, ab-blake3, or commonware; SHA3-256 in
+  `--all`. The README shows one speed chart (1 MiB, BLAKE3 every core and
+  one core against the fastest SHA-256, SHA3-256, SHA-1), in cores alone,
+  labelled by hash, with a "how it was made" door.
+- The graph's header sits at the top of the page (the chips replace the
+  following header); the page never gets shorter than it loaded.
+- Releases follow semver; before 1.0 a breaking change bumps the minor
+  version (0.1.0 to 0.2.0: hash_many's one-buffer API, Stream).
+- perf_regress holds solo regressions and reports shared ones; a commit
+  that slows a shared cell names it and its reason (Zooko, September 26).
 
 ## Idea: the `efficient` module (worth building, later; Zooko, September 26)
 
