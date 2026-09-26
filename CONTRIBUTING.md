@@ -14,6 +14,8 @@ it measures, and keep your results comparable with ours.
   and each contender crate's version and source).
 - `tools/graph-check/`: drives the graph's script in jsdom and checks its
   layout (its README says how).
+- `tools/check-report.py`: recomputes every table cell of a run's report
+  from its samples, as exact fractions, and compares.
 
 ## Build and test
 
@@ -21,6 +23,7 @@ it measures, and keep your results comparable with ours.
 cargo test --release
 cargo run --release -- --quick     # seconds; a full run takes minutes
 node tools/graph-check/check.js benchmark-results/FOLDER/bench-hashes.graph.svg
+python3 tools/check-report.py benchmark-results/FOLDER
 ```
 
 ## Working on the fork alongside
