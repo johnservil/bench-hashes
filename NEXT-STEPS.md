@@ -70,8 +70,8 @@ use truncated permutations), and hashes each layer with its `HashEngine`
 trait's `hash_many(size, input, out)`. The plug-in for him is a servil
 engine calling the one-buffer `hash_many` (about 20 lines); a servil Merkle
 tree would change his commitment format. A generic, opinionated
-`servil::merkle` (domain-separated leaves and nodes, openings) is a later
-design project for other users: write its trade-offs up for Zooko first.
+`servil::merkle` is a later design project (see "Idea: a full-fledged
+Merkle tree API").
 
 ### Then, from before
 
@@ -193,6 +193,31 @@ merge runs in order. Design points:
 - Benchmark: a use case where the producer does work per piece (a copy
   from a source buffer, as a read would), timed end to end, so the overlap
   shows; synchronous contenders run the same producer.
+
+## Idea: a full-fledged Merkle tree API (Zooko, September 26)
+
+A `servil::merkle` module that builds, opens, and verifies Merkle trees,
+so a user like Remco calls one function per tree instead of looping
+`hash_many` over layers. Write its trade-offs up for Zooko before
+building. Design points, as we know them now:
+- It rides on the batch API: leaves through `hash_many(leaves, leaf_len,
+  ..)`, each node layer through `hash_many(previous_layer, 64, ..)`. A
+  layer's digests lie back to back, so each pair of children is already
+  one 64-byte message in place: zero copying from leaves to root, and
+  the multithreaded forms split a layer over threads.
+- Fused layers: hash the leaves and the lowest node layers together
+  while the digests are still in cache (or in the SME2 unit's registers)
+  instead of writing every layer to memory and reading it back.
+- Domain separation between leaves and nodes (against second-preimage
+  tricks): BLAKE3's keyed mode or `derive_key` contexts give it at no
+  cost; a prefix byte would break the 64-byte alignment. An opinionated
+  default and, perhaps, a mode that reproduces a plain-hash format such
+  as Remco's (his commitments use plain BLAKE3 of the children), since
+  changing a proof system's commitment format is its authors' call.
+- What the caller gets back: the root alone, or every layer (openings
+  need them); openings (authentication paths) and their verification.
+- Leaf counts that are no power of two: pad to one, or carry an odd node
+  up; the padded batch contract (above) sets the leaf layout.
 
 ## Open problems
 
