@@ -31,6 +31,26 @@ non-power-of-two trees, one at the SIMD ramp and one at the plateau; a
 contender whose work splitting assumes powers of two shows it there (and
 one did).
 
+**BLAKE3 commonware** (added September 26, 2026; a two-way door, Zooko:
+remove it whenever it stops paying for its build time). Commonware's
+cryptography crate, at the commit of its pull request 4982
+(github.com/commonwarexyz/monorepo, 25851f1, open when added), gives
+BLAKE3 its own batch kernels: `Blake3::hash_many` over any
+`AsRef<[u8]>` messages, runs of equal length a vector's width at a time
+(NEON four lanes, AVX2 eight, AVX-512 sixteen, spare lanes repeating the
+first message), a group of one through the official crate. Its one
+message, its stream, and its multithreading (`hash_with` over a
+`Strategy`, the official crate's hazmat subtrees on Rayon) are the
+official crate's, so it takes part in the batch use cases alone. The
+bencher hands it the messages as `[u8; N]` arrays in place (no table to
+build) and counts the returned `Vec` as part of the call, as its API has
+it. Its default features stay on: run-time AVX detection on x86-64 needs
+"std", which also builds BLS signatures (155 crates in all, about 20 s of
+build). Before it joined, probe/commonware (fork job 254, then 256-271)
+measured it beside servil on the Mac, P- and E-cores: servil led every
+batch cell but 3 x 256 B (144 against 183 ns/msg, P-core) and 2-3 x 256
+B on E-cores; fork 9fd0ac9 and 666e550 closed those (3 x 256 B: 79).
+
 **Batch sizes.** Twenty-four on each of two axes: 1 to 262144 messages
 of 64 B (a Merkle tree's inner nodes) and of 256 B (its leaves, as in
 WHIR), with 3, 6, 12, 24, 48 beside the powers of two to leave SIMD
