@@ -25,7 +25,6 @@ from pathlib import Path
 HEADINGS = {
     "One input at a time": "OneMessage",
     "Batches of 64-byte messages": "ManyMessages",
-    "Batches of 256-byte messages": "ManyMessages256",
     "One input arriving in 64 KiB pieces": "Streaming",
 }
 MASK = (1 << 64) - 1

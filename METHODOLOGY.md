@@ -3,12 +3,11 @@
 This file explains what a run measures, how it keeps the numbers honest,
 and what each contender runs. [README.md](README.md) says how to run it.
 
-Every run measures each contender in four use cases and two scenarios.
+Every run measures each contender in three use cases and two scenarios.
 **One message per call**: a call hashes one input, at twenty-seven sizes
-from 64 B to 128 MiB, reported per byte. **Many messages per call**, in
-two use cases: a call hashes a batch of 64-byte messages, or of 256-byte
-messages, at twenty-four batch sizes from 1 to 262144 messages, reported
-per message. **Streamed**: the same
+from 64 B to 128 MiB, reported per byte. **Many messages per call**: a call
+hashes a batch of 64-byte messages, at twenty-four batch sizes from 1 to
+262144 messages, reported per message. **Streamed**: the same
 inputs as one message, produced in 64 KiB pieces (the last one
 shorter), each copied as a read would copy it and fed to the contender's
 incremental API, then finalized, so the implementation never learns the
@@ -24,10 +23,7 @@ single-threaded (servil st),
 and SHA-256 from two crates, sha2 and ring, since each is the faster
 SHA-256 at some sizes. `--all` adds every other contender the machine can
 run: the crates.io BLAKE3 crate, single-threaded and on its Rayon pool
-(BLAKE3 official mt), ab-blake3 (a crate with a `const fn` BLAKE3 and a
-batch entry point for many 64-byte messages), and BLAKE3 commonware (the
-batch entry point of Commonware's cryptography crate, in the batch use
-cases alone), and SHA3-256 (the `sha3` crate, with the CPU's SHA-3
+(BLAKE3 official mt), and SHA3-256 (the `sha3` crate, with the CPU's SHA-3
 instructions where it has them). `--contenders` names any
 set, including two that run only when named: SHA-1DC (`sha1dc`, SHA-1
 with the collision detection git uses), far slower than every other
@@ -92,46 +88,39 @@ full 1 MiB buffer on another thread while the next pieces are read
 (`Stream::new` for BLAKE3 servil st, `Stream::new_multithreaded` for
 BLAKE3 servil mt): its time is about the slower of the reading and the
 hashing, plus the first buffer's reading and the last one's hashing. A
-stream shorter than one buffer is hashed when it ends. ab-blake3 has no
-incremental API and sits out. The expected digests are the one-message
-ones.
+stream shorter than one buffer is hashed when it ends. The expected
+digests are the one-message ones.
 
-## The many-messages use cases
+## The many-messages use case
 
 A program with a queue of small messages to hash (a Merkle tree's
-nodes and leaves, a table of records) has two ways to spend a call: one
-message per call of the plain entry point, or a batch per call where
-the implementation offers that. The two many-messages use cases measure
-both as they are, with messages of 64 bytes (a Merkle tree's inner node,
-two 32-byte children) and of 256 bytes (a leaf in WHIR's proof system,
-for one). A contender without a batch entry point loops its plain entry
-point over the batch, one message per call: `for m in batch { hash(m) }`.
-Three have one. BLAKE3 servil's `hash_many(input, message_len, out)`
+nodes, a table of records) has two ways to spend a call: one message per
+call of the plain entry point, or a batch per call where the
+implementation offers that. The many-messages use case measures both as
+they are, with messages of 64 bytes (a Merkle tree's inner node, two
+32-byte children). A contender without a batch entry point loops its
+plain entry point over the batch, one message per call: `for m in batch
+{ hash(m) }`. Three have one. BLAKE3 servil's `hash_many(input, message_len, out)`
 takes messages of one length back to back in one buffer and fills one
 digest each; BLAKE3 servil mt's `hash_many_multithreaded` does the same
 over the fork's worker threads. The crates.io BLAKE3 crate has a hidden
 one, `blake3::platform::Platform::hash_many::<N>`, which programs that
 want its batch speed call directly (WHIR's Merkle trees do): the bencher
 calls it as they do, sixteen messages per call, with the flags that make
-each digest the message's hash. ab-blake3's
-`single_block_hash_many_exact::<N>` takes N messages of exactly one
-block (64 bytes) as one array and returns N digests; the bencher calls
-it with N the batch size (N is a const generic, so each batch size on
-the axis is its own call), and loops `const_hash` over 256-byte
-messages. A batch of one message is one call of the plain entry point
-for every contender.
+each digest the message's hash. A batch of one message is one call of
+the plain entry point for every contender.
 
-Both axes count messages per batch: 1, 2, 3, 4, 6, 8, 12, 16, 24, 32,
+The axis counts messages per batch: 1, 2, 3, 4, 6, 8, 12, 16, 24, 32,
 48, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536,
 131072, 262144 (16 MiB of input at the end). Powers of two up to 16 show a SIMD batch filling (the blake3
 crate's `hash_many` takes four blocks at a time on NEON, sixteen with
 AVX-512); 3, 6, 12, 24, and 48 leave a group partly filled or leave a
-remainder past the sixteen-message groups ab-blake3 forms; from 64 up
+remainder past sixteen-message groups; from 64 up
 the per-batch overhead amortises and the rate settles. Results read in
 nanoseconds per message and million messages per second.
 
-BLAKE3 official mt takes no part in these use cases: a 64- or 256-byte
-message is a call to `update_rayon` that no program would make, and the
+BLAKE3 official mt takes no part in this use case: a 64-byte message is
+a call to `update_rayon` that no program would make, and the
 crate has no multithreaded batch entry point. The bencher writes no wrapper of its own around any
 contender; the contenders' own entry points are the whole of what it
 calls.
@@ -186,28 +175,7 @@ single-threaded.
 BLAKE3 is provided by the blake3 crate through the one-shot
 blake3::hash function, which is single-threaded (see "BLAKE3
 threading"), and for a batch through its hidden batch function (see
-"The many-messages use cases").
-
-BLAKE3 commonware is `commonware_cryptography::Blake3::hash_many` from
-github.com/commonwarexyz/monorepo, at the commit of the pull request that
-adds its batch kernels (25851f1): runs of equal-length messages hashed a
-vector's width at a time, one message per lane (NEON four lanes, AVX2
-eight, AVX-512 sixteen), and a group of one through the official crate's
-`blake3::hash`. The bencher hands it the batch's messages as fixed-size
-arrays in place, one call per batch, which returns a `Vec` of digests.
-It takes part in the batch use cases alone: for one message and for a
-stream it calls the official crate, whose cells those are already.
-
-ab-blake3 is the ab-blake3 crate (0.2), "optimized and more exotic APIs
-around BLAKE3". For one message the bencher calls `const_hash`, a
-`const fn` copy of the reference tree: portable compression at every
-size with no run-time SIMD dispatch, so above one chunk it runs below
-the crates.io crate. For a batch of 64-byte messages it calls
-`single_block_hash_many_exact::<N>`, which hands each full group of
-sixteen blocks to the blake3 crate's platform `hash_many` (the SIMD
-path the BLAKE3 kernel table names) and compresses the blocks past the
-last full group one at a time; below sixteen messages every block is
-its own compression.
+"The many-messages use case").
 
 SHA-256 is provided by RustCrypto's sha2 crate (0.11), whose built-in
 backends use the ARMv8 SHA-256 instructions on AArch64 and SHA-NI on
@@ -315,14 +283,11 @@ BLAKE3 servil mt can split over threads from 64 KiB, its fourth path, drawn
 as a triangle. SHA-256, SHA3-256, and SHA-1DC run one path at every size.
 
 In the many-messages use cases a contender looping one message per call
-runs the kernel for its message length at every batch size; ab-blake3's
-batch entry point changes path at sixteen messages, where the first
-full SIMD group forms; the crates.io crate's batch function at the
-platform's SIMD degree (four on NEON); BLAKE3 servil's changes, for
-64-byte messages, at two (the NEON hybrid parent kernels) and for
-256-byte messages at four (NEON, four messages at a time), for both at
-sixteen (the SME2 group kernel), and servil mt's again where a 64 KiB
-batch may leave the calling thread (1024 and 256 messages).
+runs the kernel for its message length at every batch size; the
+crates.io crate's batch function changes path at the platform's SIMD
+degree (four on NEON); BLAKE3 servil's at two (the NEON hybrid parent
+kernels) and at sixteen (the SME2 group kernel), and servil mt's again
+where a 64 KiB batch may leave the calling thread (1024 messages).
 
 The text report lists the kernel at each point for every contender in
 each use case (one line for a contender with a single kernel) and marks
@@ -464,7 +429,7 @@ range is narrowed, restores every input. The chips at the header's right
 show and hide plots, by scenario (solo, shared) and by use case (one
 input, batches, pieces); the plots shown close ranks, and a row keeps at
 least one chip pressed. The header (title, strip, chips, and rate/time
-switch) stays at the top of the window while the page scrolls.
+switch) sits at the top of the page.
 
 The page is written for three readers at once: a newcomer who holds only
 the page, a regular who knows the benchmark, and a maintainer. The header
@@ -473,7 +438,7 @@ opens a panel on the lines, bands, and dot shapes; "About this run" at
 the bottom opens section by section onto the machine, the run, the
 sources, the method behind each dot shape, and each hash's version. A
 hash of the run that takes no part in a plot (BLAKE3 official mt has no batch
-function over threads, ab-blake3 no way to take an input in pieces) is
+function over threads) is
 listed under that plot's legend in pale type, "not measured here", with
 the reason as a tooltip; each name's tooltip says what the hash is. A
 comment at the top of the SVG source points maintainers to the code and

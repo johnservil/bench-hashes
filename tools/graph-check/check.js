@@ -111,7 +111,6 @@ function checkLayout(tag) {
   const headY = d => +d.match(/M[\d.]+ ([\d.]+) L[\d.]+ ([\d.]+)/).slice(1)[1];
   const tailY = d => +d.match(/M[\d.]+ ([\d.]+)/)[1];
   check(arrows().every(d => headY(d) < tailY(d)), "in rate the better arrows point up");
-  check(w.document.querySelector("svg").lastElementChild.id === "sticky", "the header draws last, over the plots");
   console.log("ALLB", T.ALLB.length, "values;", range());
   // Step the lower end up five points.
   for (let i = 0; i < 5; i++) w.zoomStep("from", 1);

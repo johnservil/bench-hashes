@@ -6,11 +6,10 @@ compiled directly with rustc. SHA-256, SHA-1, and SHA3-256 use Python hashlib. N
 source calls the optimized servil kernels. Requires Python 3 and rustc.
 Run from bench-hashes: python3 tools/gen-test-vectors.py > src/test_vectors.rs
 
-Three tables. VECTORS: one message of each length, its digests.
+Two tables. VECTORS: one message of each length, its digests.
 MANY_VECTORS: a batch of N 64-byte messages (the buffer
 make_input_seeded(64 * N, seed) cut into 64-byte slices), and for each
 family the SHA-256 of the N digests concatenated in message order.
-MANY_256_VECTORS: the same for batches of N 256-byte messages.
 """
 import array
 import hashlib
@@ -28,10 +27,9 @@ SIZES = sorted(set([1 << n for n in range(6, 28)] + [3 << 10, 3 << 20,
     # an 802.11 frame body (MSDU) at most, an 802.11n A-MSDU of the smaller
     # and the larger maximum, a Packet over SONET/SDH MTU.
     2304, 3839, 7935, 4470]))
-# The many-messages axes in src/main.rs (POINTS): their message lengths,
-# and the counts per batch both share (ab-blake3's batch entry point's
-# const generic accepts exactly these counts).
-BATCH_TABLES = [("MANY_VECTORS", 64), ("MANY_256_VECTORS", 256)]
+# The many-messages axis in src/main.rs (POINTS): its message length and
+# its counts per batch.
+BATCH_TABLES = [("MANY_VECTORS", 64)]
 BATCHES = [1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 128, 256, 512, 1024,
     2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144]
 
