@@ -10,7 +10,7 @@ before touching kernels or the pool); this repository's are in `NOTES.md`.
 
 ## Resume here (checkpoint, September 26, 2026, evening)
 
-State: fork `servil` c248f2e, pinned here; no candidates open. Records
+State: fork `servil` 0.2.0 and after (see git), pinned here; no candidates open. Records
 (VM and Mac `--all`, with SHA3-256) are on 01bc76e (same src). Public
 links for Zooko: the WHIR note
 https://github.com/johnservil/BLAKE3/blob/servil/docs/whir-merkle-trees.md,
@@ -33,6 +33,20 @@ only: time is discrete), its Mac gate.
   (Zooko: superstitious fuzzing).
 - **x86-64**: tests wait for a real x86-64 machine Zooko is getting; no
   emulation, not even for unit tests (Zooko).
+
+- **Released 0.2.0** (tag v0.2.0+30296341eef4..., September 26): release
+  check against v0.1.0 clean on both machines (jobs 311; one-message cells
+  alone, the old batch API shimmed). The version bump showed cargo
+  ignoring a patch whose version differs from the lock: perf_regress and
+  the runner now lock the patched version and check the build's source.
+  Zooko restarts the runner with setup-mac.sh to install that for
+  benchmark jobs.
+- **Benchmark trimmed** (Zooko): no 256-byte batches, ab-blake3, or
+  commonware; the graph's header no longer follows the page (on a phone
+  it covered each plot's top). The regression check no longer watches
+  batches of multi-block messages (Merkle leaves); raise it with Zooko if
+  that path changes.
+- Records on f9d39b0 (VM, Mac job 314), the README's chart redrawn.
 
 Next: the weak cells.
 
