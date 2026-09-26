@@ -10,7 +10,7 @@ before touching kernels or the pool); this repository's are in `NOTES.md`.
 
 ## Resume here (checkpoint, September 26, 2026, evening)
 
-State: fork `servil` f0c6e89, pinned here; no candidates open. Records
+State: fork `servil` c248f2e, pinned here; no candidates open. Records
 (VM and Mac `--all`, with SHA3-256) are on 01bc76e (same src). Public
 links for Zooko: the WHIR note
 https://github.com/johnservil/BLAKE3/blob/servil/docs/whir-merkle-trees.md,
@@ -22,7 +22,12 @@ README: a short warning in my voice, one speed chart (1 MiB, cores) drawn by
 predates the commonware and sha3-256 keys and the `test` job type: Zooko
 restarts it with `setup-mac.sh`.
 
-Next: the weak cells.
+**The Mac is in use by Zooko (September 26, evening): no benchmark,
+perf_regress, or probe results from it, or from the VM on it, count until
+he says so.** Work that needs no quiet machine continues: correctness,
+tests, docs, numerical tooling (`tools/check-report.py`).
+
+Next: the weak cells, when the machine is quiet again.
 
 - **Time kept as measured** (done, September 26): samples are `ns/units`
   (samples v3); statistics run on `Fixed` (Q64.64) and round once, for
