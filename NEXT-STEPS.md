@@ -8,36 +8,90 @@ principles are in both repositories' `AGENTS.md`; the fork's hardware
 facts, design, and rejected ideas are in its `NOTES-servil.md` (read it
 before touching kernels or the pool); this repository's are in `NOTES.md`.
 
-## Resume here (checkpoint, September 25, 2026, afternoon)
+## Resume here (checkpoint, September 26, 2026, 00:30 UTC; the session ran out of context)
 
-State: fork `servil` f70c758, pinned; records on it (bench-hashes 1fb6bcf),
-both machines quiet.
+State: fork `servil` f70c758 (pinned here); records on it (1fb6bcf), both
+machines quiet. GitHub Pages serves them. **The Mac runner had stopped**
+(last job 238 at 21:06 UTC); ask Zooko to restart it
+(`sh ~/piplayground/blake3-servil/tools/runner/setup-mac.sh`). Job 240 waits
+in `runner/jobs/`.
 
-- **Streaming scope** (Zooko): input in memory goes to one call (`hash`,
-  `hash_multithreaded`); input that arrives goes to a `Stream`, each read
-  landing in its buffers (`update_reader`, or `buffer()`/`filled(n)`).
-  `Hasher::update_multithreaded` and `Stream`'s copying `update`/`io::Write`
-  are gone from the API. The streamed use case reads each piece as a memory
-  copy (the cheapest read) for every contender; servil's reads go through
-  `buffer()`/`filled()`.
-- **Short streams**: servil now leads BLAKE3 official at every streamed size
-  (128 B had been lost by 1-3%; 87c3bbf).
-- **Schedule**: steady cells 24 samples, unsure 48, long cells 8/16; VM
-  default roster 48 s against 99-107 s, medians inside the old schedule's
-  run-to-run spread (NOTES.md). Mac `--all` with nine contenders: 124 s.
-- **Roster**: the default is the four standard contenders; `--all` is
-  every contender the build can run (SHA-1DC and CommonCrypto included);
-  `--contenders` picks. The crates.io crate is BLAKE3 official
-  (`blake3-official`, `blake3-official-mt`).
-- **Graph**: the band drags by its ends or whole, precisely (slow travel at
-  a third, 3 px hysteresis, lit ticks); chips show and hide plots by
-  scenario and use case; the better arrows are measured; the legend stays
-  inside its plot. The M3 Ultra result is unpublished (old Hasher streams).
+### Work in progress, in order
 
-Next, in order:
+1. **`candidate/mt-name`** (fork 4db6034, pushed): `kernel_report`'s
+   multithreaded split named "split over threads, SME2 on one for large
+   inputs" (the tooltip Zooko noticed). Strings only; VM check passed (a
+   first pre-commit run cried regression, a second found none). Waits for
+   Mac job 240 (`perf_regress` servil vs 4db6034), then promote (note, push,
+   delete branch).
 
-1. The text report's three-reader pass (CHECKS and TWO SPEEDS read as the
-   maintainer's).
+2. **`candidate/batch-blocks`** (fork, pushed, two commits; VM checks passed,
+   suites 79/75/65 lib, 22 doc; Mac verdict still needed):
+   - 220de01: `hash_many` batches equal messages of 2-16 whole blocks. New
+     SME2 entry point `blake3_sme2_hash16_messages_512` (the chunk kernel's
+     body with a block count in x6 and a counter step in x17; the chunk
+     entry sets 15 and 1). The SME2 remainder uses the NEON hybrids only for
+     whole chunks and one-block parents, else the C NEON kernel.
+   - 8d3a325: `hash_many_equal(input, message_len, out: &mut [[u8; 32]])`
+     and `hash_many_equal_multithreaded` (pool `Work::Equal`, `cut_equal`).
+   - VM, 2^16 messages, ns each: 256 B servil 39.0 (was 164), mt 8.6; the
+     official crate's hidden `Platform::hash_many` 16 per call (Remco's
+     method) 90.7. 64 B: servil 10.1, mt 2.2, official method 21.5.
+
+3. **Next on that branch (Zooko, just decided): one batch API, one buffer.**
+   Remove every API taking slices of slices: `hash_many(&[&[u8]], ..)`,
+   `hash_many_multithreaded`, `hash_many_multithreaded_with_budget`, and
+   internally `many::hash_many_on` / `hash_many_until_longer`,
+   `lanes::hash_many`, `hash_many_over_pool`, `Work::Messages`,
+   `cut_messages`, `Pool::hash_messages`, their tests (convert the 64 B run
+   tests to the one-buffer API), the examples `many_probe.rs`,
+   `many_split.rs`, and host_lab's use. Add
+   `hash_many_equal_multithreaded_with_budget`. Then **rename** the
+   one-buffer functions to `hash_many`, `hash_many_multithreaded`,
+   `hash_many_multithreaded_with_budget`, in a **second commit**:
+   `perf_regress` builds the same benchmark against both commits, so (a)
+   step one's benchmark calls `hash_many_equal`, with a perf_regress shim for
+   commits lacking it (a copying shim over the slice API: mark it
+   `shimmed` so batch cells are not judged), and (b) the rename commit's
+   shim is a free forward (`pub fn hash_many(i, l, o) { hash_many_equal(i,
+   l, o) }` for commits that have `hash_many_equal` but no one-buffer
+   `hash_many`). Confirm the 64 B batch path did not slow with a direct A/B
+   (VM and Mac), since the check will not judge step one's batch cells.
+   Update docs: "For best performance", kernel_report_many's docs, the
+   fork README's preface, NOTES-servil.md.
+
+4. **Benchmark (bench-hashes) for Remco's case** (after 3):
+   - servil st/mt batch cells call the one-buffer API on the contiguous
+     batch (both 64 B and 256 B).
+   - BLAKE3 official's batch path becomes the crate's hidden
+     `blake3::platform::Platform::hash_many::<N>`, 16 messages per call,
+     flags 0 / CHUNK_START / CHUNK_END|ROOT, IncrementCounter::No, counter 0
+     (exactly Remco's `hash_many_const` in worldfnd/whir
+     src/hash/blake3_engine.rs); label it as the crate's hidden batch
+     function. Apply to the 64 B batches too (official 47 -> about 21 ns).
+   - A new use case "Batches of 256-byte messages" (x axis messages per
+     batch, same points as the 64 B batches; a chip for it). SHA-256 and
+     the others: a loop of one-shot hashes (no batch API). BLAKE3 official
+     mt sits out (listed pale, "not measured here"). Golden vectors for it
+     in `tools/gen-test-vectors.py` (MANY_VECTORS equivalent).
+   - Re-record both machines; then tell Zooko the numbers for Remco.
+
+### Remco (a potential user; context for 2-4)
+
+Merkle trees for a binary-field SNARK (WHIR), 2^16-2^24 leaves of 256 B,
+inner nodes the standalone BLAKE3 hash of two 32-byte children (64 B).
+His tree (`src/protocols/merkle_tree.rs`) keeps every node, pads to a power
+of two, chooses a hash engine per layer (recorded in its config; nodes may
+use truncated permutations), and hashes each layer with its `HashEngine`
+trait's `hash_many(size, input, out)`. The plug-in for him is a servil
+engine calling the one-buffer `hash_many` (about 20 lines); a servil Merkle
+tree would change his commitment format. A generic, opinionated
+`servil::merkle` (domain-separated leaves and nodes, openings) is a later
+design project for other users: write its trade-offs up for Zooko first.
+
+### Then, from before
+
+1. The text report's three-reader pass (CHECKS, TWO SPEEDS).
 2. A second SME2 thread in the pool (two SME units reachable, job 187).
 3. Open: hash(256 KiB)'s partial slow state; the VM's per-process two
    speeds; shared streamed 64 B two-speed on the VM.
