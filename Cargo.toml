@@ -49,6 +49,17 @@ features = ["std"]
 version = "0.2"
 default-features = false
 
+# BLAKE3 through commonware-cryptography (github.com/commonwarexyz/monorepo)
+# at the commit of its pull request 4982, which adds its own batch kernels
+# (Blake3::hash_many: NEON four lanes, AVX2 eight, AVX-512 sixteen). Its
+# default "std" feature detects AVX2 and AVX-512 at run time on x86-64, as a
+# program using it would; it also builds BLS signatures (blst). Added
+# September 26, 2026, while the pull request is open; a two-way door (Zooko):
+# remove it whenever it stops paying for its build time.
+[dependencies.commonware-cryptography]
+git = "https://github.com/commonwarexyz/monorepo"
+rev = "25851f1eda0127b239e323663d282641acb53f8a"
+
 # SHA-1 with collision detection (the SHA-1DC construction git uses), pure
 # Rust; there is no hardware path for the detection.
 [dependencies.sha1-checked]

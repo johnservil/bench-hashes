@@ -96,6 +96,7 @@ const RING_SOURCE_INFO: &str = env!("RING_SOURCE_INFO");
 const SHA1_CHECKED_SOURCE_INFO: &str = env!("SHA1_CHECKED_SOURCE_INFO");
 const BLAKE3_SERVIL_SOURCE_INFO: &str = env!("BLAKE3_SERVIL_SOURCE_INFO");
 const AB_BLAKE3_SOURCE_INFO: &str = env!("AB_BLAKE3_SOURCE_INFO");
+const COMMONWARE_SOURCE_INFO: &str = env!("COMMONWARE_SOURCE_INFO");
 
 /*
  * Every power of two from 64 B to 128 MiB, plus 3 KiB and 3 MiB. Between
@@ -502,6 +503,12 @@ enum Algorithm {
     /// the reference tree), and single_block_hash_many_exact for a batch of
     /// 64-byte messages.
     AbBlake3,
+    /// commonware-cryptography's Blake3 (commonwarexyz monorepo, the pull
+    /// request that adds its batch kernels): Blake3::hash_many for a batch,
+    /// its own vector kernels one message per lane. Its one-message and
+    /// streaming paths are the official crate's, so it takes part in the
+    /// batch use cases alone.
+    Commonware,
 }
 
 /// The hash function a contender implements, which names its golden digests.
@@ -523,7 +530,7 @@ impl Family {
 }
 
 impl Algorithm {
-    const ALL: [Algorithm; 9] = [
+    const ALL: [Algorithm; 10] = [
         Algorithm::Blake3,
         Algorithm::Sha256,
         Algorithm::Sha1Dc,
@@ -533,6 +540,7 @@ impl Algorithm {
         Algorithm::Blake3Rayon,
         Algorithm::Blake3ServilMt,
         Algorithm::AbBlake3,
+        Algorithm::Commonware,
     ];
 
     /// Command-line key, as in `--contenders blake3,sha256-cc`.
@@ -547,12 +555,13 @@ impl Algorithm {
             Self::Blake3Rayon => "blake3-official-mt",
             Self::Blake3ServilMt => "blake3-servil-mt",
             Self::AbBlake3 => "ab-blake3",
+            Self::Commonware => "blake3-commonware",
         }
     }
 
     fn family(self) -> Family {
         match self {
-            Self::Blake3 | Self::Blake3ServilSt | Self::Blake3Rayon | Self::Blake3ServilMt | Self::AbBlake3 => Family::Blake3,
+            Self::Blake3 | Self::Blake3ServilSt | Self::Blake3Rayon | Self::Blake3ServilMt | Self::AbBlake3 | Self::Commonware => Family::Blake3,
             Self::Sha256 | Self::Sha256CommonCrypto | Self::Sha256Ring => Family::Sha256,
             Self::Sha1Dc => Family::Sha1Dc,
         }
@@ -567,13 +576,15 @@ impl Algorithm {
     /// out of the many-messages use cases: `update_rayon` exists for large
     /// inputs, and a 64- or 256-byte message is a call to it that no
     /// program would make. The fork's multithreaded contenders take part
-    /// through its batch entry point, `hash_many_multithreaded`.
+    /// through its batch entry point, `hash_many_multithreaded`. commonware
+    /// takes part in the batches alone: for one message and for a stream it
+    /// calls the official crate, whose cells those are already.
     fn takes_part(self, use_case: UseCase) -> bool {
         match use_case {
-            UseCase::OneMessage => true,
+            UseCase::OneMessage => !matches!(self, Self::Commonware),
             UseCase::ManyMessages | UseCase::ManyMessages256 => !matches!(self, Self::Blake3Rayon),
             /* ab-blake3 has no incremental API. */
-            UseCase::Streaming => !matches!(self, Self::AbBlake3),
+            UseCase::Streaming => !matches!(self, Self::AbBlake3 | Self::Commonware),
         }
     }
 
@@ -591,7 +602,8 @@ impl Algorithm {
             | Self::Blake3ServilSt
             | Self::Blake3Rayon
             | Self::Blake3ServilMt
-            | Self::AbBlake3 => Ok(()),
+            | Self::AbBlake3
+            | Self::Commonware => Ok(()),
             Self::Sha256CommonCrypto => {
                 if cfg!(target_vendor = "apple") {
                     Ok(())
@@ -613,6 +625,7 @@ impl Algorithm {
             Self::Blake3Rayon => "BLAKE3 official mt",
             Self::Blake3ServilMt => "BLAKE3 servil mt",
             Self::AbBlake3 => "ab-blake3",
+            Self::Commonware => "BLAKE3 commonware",
         }
     }
 
@@ -625,6 +638,7 @@ impl Algorithm {
             Self::Blake3ServilSt => "a fork of the official BLAKE3 Rust crate with extra code for Apple M4-class chips, on one thread",
             Self::Blake3ServilMt => "a fork of the official BLAKE3 Rust crate with extra code for Apple M4-class chips, spreading large inputs over every CPU core",
             Self::AbBlake3 => "another Rust crate for BLAKE3, on one thread",
+            Self::Commonware => "BLAKE3 from Commonware's cryptography Rust crate, its own batch code, on one thread",
             Self::Sha256 => "SHA-256 from the sha2 Rust crate, with the CPU's SHA-256 instructions where it has them",
             Self::Sha256Ring => "SHA-256 from the ring Rust crate, with the CPU's SHA-256 instructions where it has them",
             Self::Sha256CommonCrypto => "SHA-256 from Apple's CommonCrypto library",
@@ -648,6 +662,7 @@ impl Algorithm {
             Self::Blake3Rayon => "#1e3a8a",
             Self::Blake3ServilMt => "#4c1d95",
             Self::AbBlake3 => "#c026d3",
+            Self::Commonware => "#0f766e",
         }
     }
 
@@ -663,6 +678,7 @@ impl Algorithm {
             Self::Blake3Rayon => BLAKE3_SOURCE_INFO,
             Self::Blake3ServilMt => BLAKE3_SERVIL_SOURCE_INFO,
             Self::AbBlake3 => AB_BLAKE3_SOURCE_INFO,
+            Self::Commonware => COMMONWARE_SOURCE_INFO,
         }
     }
 
@@ -678,6 +694,7 @@ impl Algorithm {
             | Self::Sha256Ring => "single-threaded",
             Self::Blake3ServilSt => "single-threaded; blake3_servil::hash for one message, blake3_servil::hash_many for a batch, Stream for a stream",
             Self::AbBlake3 => "single-threaded; ab_blake3::const_hash for one message and for each 256-byte message of a batch, ab_blake3::single_block_hash_many_exact::<N> for a batch of N 64-byte messages",
+            Self::Commonware => "single-threaded; commonware_cryptography::Blake3::hash_many (the Hasher trait) over the batch's messages as fixed-size arrays, one call per batch returning a Vec of digests",
             Self::Blake3Rayon => "multithreaded; Hasher::update_rayon (per piece, for a stream) on Rayon's global pool, the crate's own multithreading as a program gets it by default: the tree splits recursively over the pool, and inputs under a few chunks stay on the caller's thread",
             Self::Blake3ServilMt => "multithreaded; blake3_servil::hash_multithreaded for one message, hash_many_multithreaded for a batch, and Stream::new_multithreaded for a stream: the fork chooses whether to use its shared resident workers; the kernel tables below show the thresholds",
         }
@@ -1004,7 +1021,8 @@ shared with a second copy of the same contender
   bench-hashes --list              contenders and their availability here
 
 Keys: blake3-servil-st, blake3-servil-mt, sha256, sha256-ring,
-      blake3-official, blake3-official-mt, ab-blake3, sha1dc, sha256-cc
+      blake3-official, blake3-official-mt, ab-blake3, blake3-commonware,
+      sha1dc, sha256-cc
 
 A run takes a few minutes: every point, to 128 MiB inputs and batches of
 262144 messages, 96 rounds, the longest cells sampled until their medians
@@ -1568,11 +1586,13 @@ impl<'a> Progress<'a> {
  * so far, or a placeholder before the first round completes.
  */
 fn running_medians(roster: &Roster, samples: &Samples, size_index: usize) -> String {
-    if samples[0][size_index].is_empty() {
+    if samples.iter().all(|contender| contender[size_index].is_empty()) {
         return format!("medians at {} pending", POINTS[size_index].label);
     }
 
+    /* Contenders that take no part in this point's use case have no samples there. */
     let parts: Vec<String> = (0..roster.len())
+        .filter(|&algorithm_index| !samples[algorithm_index][size_index].is_empty())
         .map(|algorithm_index| {
             let mut sorted = samples[algorithm_index][size_index].clone();
             sorted.sort_unstable();
@@ -1742,6 +1762,7 @@ fn hash_batch(
                 servil_batch(input, messages, message_len, iterations, blake3_servil::hash_many_multithreaded, consume)
             }
         }
+        Algorithm::Commonware => commonware_batch(input, message_len, iterations, consume),
         Algorithm::AbBlake3 => {
             if messages == 1 || point.use_case != UseCase::ManyMessages {
                 each_message(input, message_len, iterations, |m| ab_blake3::const_hash(m), consume)
@@ -1804,7 +1825,7 @@ fn hash_stream(algorithm: Algorithm, input: &[u8], iterations: usize, consume: i
             digest.copy_from_slice(hasher.try_finalize().hash());
             digest
         }, consume),
-        Algorithm::AbBlake3 => unreachable!("ab-blake3 takes no part in the streaming use case"),
+        Algorithm::AbBlake3 | Algorithm::Commonware => unreachable!("{} takes no part in the streaming use case", algorithm.key()),
     }
 }
 
@@ -1909,6 +1930,32 @@ fn blake3_batch_of<const N: usize>(input: &[u8], iterations: usize, mut consume:
             platform.hash_many::<N>(&table[..group.len()], &IV, 0, blake3::IncrementCounter::No, 0, CHUNK_START, CHUNK_END | ROOT, out.as_flattened_mut());
         }
         consume(digests.as_flattened());
+    }
+}
+
+/// `iterations` passes over the batch through commonware's
+/// `Blake3::hash_many`, the messages as `[u8; N]` arrays in place (its
+/// `AsRef<[u8]>` messages need no table built): one call per pass, whose
+/// Vec of digests goes to `consume`. A batch of one message is a call too.
+#[inline(always)]
+fn commonware_batch(input: &[u8], message_len: usize, iterations: usize, consume: impl FnMut(&[u8])) {
+    match message_len {
+        MESSAGE_LEN => commonware_batch_of::<MESSAGE_LEN>(input, iterations, consume),
+        LEAF_LEN => commonware_batch_of::<LEAF_LEN>(input, iterations, consume),
+        other => panic!("no commonware batch of {other}-byte messages"),
+    }
+}
+
+#[inline(always)]
+fn commonware_batch_of<const N: usize>(input: &[u8], iterations: usize, mut consume: impl FnMut(&[u8])) {
+    use commonware_cryptography::Hasher as _;
+    let (messages, rest) = input.as_chunks::<N>();
+    assert!(rest.is_empty(), "a batch is whole {N}-byte messages");
+    for _ in 0..iterations {
+        let digests = commonware_cryptography::Blake3::hash_many(black_box(messages));
+        for digest in &digests {
+            consume(&digest.0);
+        }
     }
 }
 
@@ -3065,12 +3112,17 @@ fn detect_kernels(algorithm: Algorithm, use_case: UseCase) -> Kernels {
         Algorithm::Blake3Rayon => detect_blake3_rayon_kernels(),
         Algorithm::Blake3ServilMt => servil_kernels(blake3_servil::kernel_report_multithreaded()),
         Algorithm::AbBlake3 => detect_ab_blake3_kernels(),
+        /* Its one message is the official crate's blake3::hash. */
+        Algorithm::Commonware => detect_blake3_kernels(),
     };
     match use_case {
         UseCase::OneMessage => one_message,
         /* A stream runs the one-message kernels piece by piece, so those that start past PIECE_LEN never run. */
         UseCase::Streaming => one_message.up_to(PIECE_LEN),
         UseCase::ManyMessages if algorithm == Algorithm::AbBlake3 => detect_ab_blake3_many_kernels(),
+        UseCase::ManyMessages | UseCase::ManyMessages256 if algorithm == Algorithm::Commonware => {
+            detect_commonware_many_kernels(use_case.message_len())
+        }
         UseCase::ManyMessages | UseCase::ManyMessages256 if algorithm == Algorithm::Blake3 => {
             detect_blake3_many_kernels(use_case.message_len())
         }
@@ -3170,6 +3222,44 @@ fn detect_ab_blake3_many_kernels() -> Kernels {
             },
         ],
     )
+}
+
+/*
+ * commonware's Blake3::hash_many (simd::batch in its crate) hashes runs
+ * of equal-length messages in groups as wide as its widest kernel for this
+ * CPU (NEON four lanes on AArch64; AVX-512 sixteen, AVX2 eight on x86-64),
+ * spare lanes repeating the group's first message, once a group has two
+ * messages or more; a group of one, and every message on other CPUs, goes
+ * to the official crate's blake3::hash.
+ */
+fn detect_commonware_many_kernels(message_len: usize) -> Kernels {
+    #[cfg(target_arch = "aarch64")]
+    let (platform, lanes) = ("NEON", Some(("four", 4)));
+    #[cfg(target_arch = "x86_64")]
+    let (platform, lanes) = if std::arch::is_x86_feature_detected!("avx512f") {
+        ("AVX-512", Some(("sixteen", 16)))
+    } else if std::arch::is_x86_feature_detected!("avx2") {
+        ("AVX2", Some(("eight", 8)))
+    } else {
+        ("portable", None)
+    };
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    let (platform, lanes): (&str, Option<(&str, usize)>) = ("portable", None);
+    let mut kernels = vec![Kernel {
+        first: 0,
+        name: "one message at a time".to_owned(),
+        why: "A lone message goes to the official crate's blake3::hash.".to_owned(),
+        mark: Mark::Circle,
+    }];
+    if let Some((words, _)) = lanes {
+        kernels.push(Kernel {
+            first: 2 * message_len,
+            name: format!("{platform} vectors, {words} messages at a time"),
+            why: format!("From two messages, each group of up to {words} fills this CPU's widest vectors, one message per lane, the spare lanes hashing a copy."),
+            mark: Mark::Diamond,
+        });
+    }
+    Kernels::new(platform, kernels)
 }
 
 /*
@@ -4105,13 +4195,19 @@ fn generate_svg(
         summary: "the version and settings of each hash shown".to_owned(),
         lines: Vec::new(),
     });
+    /* Each contender's provenance lines go with the first plot it takes part in. */
+    let first_plot: Vec<usize> = (0..roster.len())
+        .map(|algorithm_index| {
+            plots.iter().position(|plot| plot.kernels[algorithm_index].is_some()).expect("every contender takes part in some plot")
+        })
+        .collect();
     let provenance_total = provenance_cats.len()
         + provenance_cats.iter().map(|cat| cat.lines.len()).sum::<usize>()
         + roster
             .algorithms
             .iter()
             .enumerate()
-            .map(|(algorithm_index, &algorithm)| contender_provenance_lines(algorithm, plots[0].kernels(algorithm_index)).len())
+            .map(|(algorithm_index, &algorithm)| contender_provenance_lines(algorithm, plots[first_plot[algorithm_index]].kernels(algorithm_index)).len())
             .sum::<usize>();
     let svg_height = svg_height(provenance_top, provenance_total);
 
@@ -4444,7 +4540,7 @@ fn generate_svg(
     /* Each plot is one group, which the script moves or hides as the header's chips choose. */
     for plot in &plots {
         writeln!(svg, r##"  <g id="plot-{}" class="plot-group">"##, plot.index).unwrap();
-        write_plot(&mut svg, plot, roster, results, &mut provenance_slot);
+        write_plot(&mut svg, plot, roster, results, &first_plot, &mut provenance_slot);
         writeln!(svg, "  </g>").unwrap();
     }
 
@@ -4500,6 +4596,7 @@ fn generate_svg(
         ("SHA-256 ring source", RING_SOURCE_INFO),
         ("BLAKE3 servil source", BLAKE3_SERVIL_SOURCE_INFO),
         ("ab-blake3 source", AB_BLAKE3_SOURCE_INFO),
+        ("commonware source", COMMONWARE_SOURCE_INFO),
     ] {
         writeln!(
             svg,
@@ -4587,7 +4684,7 @@ fn generate_svg(
  * beneath. The first plot's series groups also carry each contender's
  * provenance lines, which hide with the contender.
  */
-fn write_plot(svg: &mut String, plot: &Plot, roster: &Roster, results: &Results, provenance_slot: &mut usize) {
+fn write_plot(svg: &mut String, plot: &Plot, roster: &Roster, results: &Results, first_plot: &[usize], provenance_slot: &mut usize) {
     let p = plot.index;
     let top = plot.top;
     let bottom = plot.bottom;
@@ -4745,7 +4842,7 @@ fn write_plot(svg: &mut String, plot: &Plot, roster: &Roster, results: &Results,
     /*
      * One group per contender holds everything that belongs to it: band,
      * line, dots, value labels, the clickable label at right, and (in the
-     * first plot) its provenance lines. Toggling flips one attribute on
+     * first plot it takes part in) its provenance lines. Toggling flips one attribute on
      * the group.
      */
     for &algorithm_index in &plot.contenders {
@@ -4992,7 +5089,7 @@ fn write_plot(svg: &mut String, plot: &Plot, roster: &Roster, results: &Results,
         writeln!(svg, "    </g>").unwrap();
 
         /* This contender's provenance lines, hidden along with it. */
-        if p == 0 {
+        if first_plot[algorithm_index] == p {
             for line in contender_provenance_lines(algorithm, kernels) {
                 writeln!(
                     svg,
@@ -5475,6 +5572,10 @@ fn contender_provenance_lines(
             "{name}: {} · const_hash for one message, single_block_hash_many_exact::<N> for a batch · {}",
             package_name_and_version(AB_BLAKE3_SOURCE_INFO),
             algorithm.mode().split(';').next().unwrap(),
+        )],
+        Algorithm::Commonware => vec![format!(
+            "{name}: {} · Blake3::hash_many for a batch · single-threaded · platform {platform}",
+            package_name_and_version(COMMONWARE_SOURCE_INFO),
         )],
     }
 }

@@ -24,8 +24,10 @@ single-threaded (servil st),
 and SHA-256 from two crates, sha2 and ring, since each is the faster
 SHA-256 at some sizes. `--all` adds every other contender the machine can
 run: the crates.io BLAKE3 crate, single-threaded and on its Rayon pool
-(BLAKE3 official mt), and ab-blake3 (a crate with a `const fn` BLAKE3 and a
-batch entry point for many 64-byte messages). `--contenders` names any
+(BLAKE3 official mt), ab-blake3 (a crate with a `const fn` BLAKE3 and a
+batch entry point for many 64-byte messages), and BLAKE3 commonware (the
+batch entry point of Commonware's cryptography crate, in the batch use
+cases alone). `--contenders` names any
 set, including two that run only when named: SHA-1DC (`sha1dc`, SHA-1
 with the collision detection git uses), far slower than every other
 contender at every size, whose large inputs took a quarter of an `--all`
@@ -181,6 +183,16 @@ BLAKE3 is provided by the blake3 crate through the one-shot
 blake3::hash function, which is single-threaded (see "BLAKE3
 threading"), and for a batch through its hidden batch function (see
 "The many-messages use cases").
+
+BLAKE3 commonware is `commonware_cryptography::Blake3::hash_many` from
+github.com/commonwarexyz/monorepo, at the commit of the pull request that
+adds its batch kernels (25851f1): runs of equal-length messages hashed a
+vector's width at a time, one message per lane (NEON four lanes, AVX2
+eight, AVX-512 sixteen), and a group of one through the official crate's
+`blake3::hash`. The bencher hands it the batch's messages as fixed-size
+arrays in place, one call per batch, which returns a `Vec` of digests.
+It takes part in the batch use cases alone: for one message and for a
+stream it calls the official crate, whose cells those are already.
 
 ab-blake3 is the ab-blake3 crate (0.2), "optimized and more exotic APIs
 around BLAKE3". For one message the bencher calls `const_hash`, a

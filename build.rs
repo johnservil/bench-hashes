@@ -60,6 +60,11 @@ fn main() {
         &lock,
         "ab-blake3",
     );
+    emit_required_package(
+        "COMMONWARE_SOURCE_INFO",
+        &lock,
+        "commonware-cryptography",
+    );
     emit_servil_package(&manifest_dir, &lock);
 
     emit_git_metadata(&manifest_dir);

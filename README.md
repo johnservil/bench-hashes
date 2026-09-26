@@ -75,7 +75,8 @@ The contenders:
 
 `cargo run --release -- --all` adds every other hash the benchmark knows
 (the official BLAKE3 crate on one thread and on its thread pool,
-ab-blake3, SHA-1DC, and on Apple CommonCrypto's SHA-256) and takes
+ab-blake3, BLAKE3 commonware for batches, SHA-1DC, and on Apple
+CommonCrypto's SHA-256) and takes
 longer; `--contenders` picks any set by name (`--list` shows the names).
 
 ## Share your results
