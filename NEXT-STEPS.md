@@ -8,13 +8,12 @@ principles are in both repositories' `AGENTS.md`; the fork's hardware
 facts, design, and rejected ideas are in its `NOTES-servil.md` (read it
 before touching kernels or the pool); this repository's are in `NOTES.md`.
 
-## Resume here (checkpoint, September 26, 2026, 04:50 UTC)
+## Resume here (checkpoint, September 26, 2026, 05:15 UTC)
 
-State: fork `servil` 76e3f4a, pinned here (59d168e); no candidates open.
-Records (74adeea) measure 4cad0c6, whose code 76e3f4a keeps (it adds the
-README's warning). Zooko is asleep until about 13:00 UTC and asked for
-autonomous work overnight; this section says what was done and what is
-next as it goes.
+State: fork `servil` 37f1247, pinned here (a198a87); no candidates open;
+both working trees clean. Records (74adeea) measure 4cad0c6, whose code
+37f1247 keeps (later commits touch documents alone). The session ended
+with the documents refreshed; Zooko gives the next instructions.
 
 ### Waiting on Zooko
 
