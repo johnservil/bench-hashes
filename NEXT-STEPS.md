@@ -8,18 +8,25 @@ principles are in both repositories' `AGENTS.md`; the fork's hardware
 facts, design, and rejected ideas are in its `NOTES-servil.md` (read it
 before touching kernels or the pool); this repository's are in `NOTES.md`.
 
-## Resume here (checkpoint, September 26, 2026, afternoon)
+## Resume here (checkpoint, September 26, 2026, evening)
 
-State: fork `servil` 9eb2613, pinned here. Open: `candidate/quality`
-(NOTES checkpoint, perf_regress shared cells reported, the WHIR note
-`docs/whir-merkle-trees.md`, Kani proofs under `cfg(kani)`, `QUALITY.md`
-linked from the README's warning); gate it (VM compare, a Mac job),
-promote, then give Zooko the WHIR note's link on `servil`. Records (VM
-and Mac `--all`) are stale: make both on the new tip next. The Mac
-runner's installed copy predates the commonware key (job 287 was
-refused): Zooko restarts it with `setup-mac.sh` to pick up runner.py.
-The WHIR tree probe: probe/whir-merkle (jobs 296 Mac; VM run in the
-note).
+State: fork `servil` 6ee5b7a, pinned here; no candidates open. Records
+(VM and Mac `--all`, with SHA3-256) are on 01bc76e (same src). Public
+links for Zooko: the WHIR note
+https://github.com/johnservil/BLAKE3/blob/servil/docs/whir-merkle-trees.md,
+the upstream report https://github.com/BLAKE3-team/BLAKE3/issues/590 (fix
+PR #591, with a catalog of every public caller of `blake3::platform`).
+README: a short warning in my voice, two speed charts drawn by
+`tools/speed_chart.py` from the Mac record (redraw after each Mac record),
+`media/speed-charts.md` behind a link. The Mac runner's installed copy
+predates the commonware and sha3-256 keys and the `test` job type: Zooko
+restarts it with `setup-mac.sh`.
+
+Next: femtosecond samples (below); then the weak cells.
+
+- **Precision: samples in femtoseconds** (proposed to Zooko). Samples
+  and the report hold integer ps per unit; at 1 MiB servil mt runs 31
+  ps/B on the Mac, so one unit is 3%, the solo margin of perf_regress.
 
 Found this session: the fork's test suites have never run under macOS
 (the runner runs benchmarks, perf_regress, and examples; tests ran only
