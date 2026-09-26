@@ -1637,10 +1637,7 @@ impl<'a> Progress<'a> {
         if name == "measuring" {
             self.measuring_started = Some(Instant::now());
         }
-        self.draw(&format!(
-            "[{:>5.1}s] {name}…",
-            self.started.elapsed().as_secs_f64(),
-        ));
+        self.draw(&format!("[{:>5}s] {name}…", tenths_of_seconds(self.started.elapsed())));
     }
 
     /* Called at the start of each round; `samples` holds every round so far. */
@@ -1654,20 +1651,21 @@ impl<'a> Progress<'a> {
             .expect("round() runs inside the measuring phase");
 
         let rounds = self.roster.rounds;
-        let done = round as f64 / rounds as f64;
-        let filled = (done * Self::BAR_WIDTH as f64).round() as usize;
+        let filled = (round * Self::BAR_WIDTH + rounds / 2) / rounds;
         let bar: String = "█".repeat(filled) + &"░".repeat(Self::BAR_WIDTH - filled);
 
-        let elapsed = measuring_started.elapsed().as_secs_f64();
+        /* The rounds left at the rate so far: elapsed × left / done, in whole seconds. */
         let remaining = if round > 0 {
-            format!("{:>3.0}s left", elapsed / done * (1.0 - done))
+            let elapsed_ns = measuring_started.elapsed().as_nanos();
+            let left_ns = elapsed_ns * (rounds - round) as u128 / round as u128;
+            format!("{:>3}s left", (left_ns + 500_000_000) / 1_000_000_000)
         } else {
             " estimating".to_owned()
         };
 
         self.draw(&format!(
-            "[{:>5.1}s] measuring {bar} {:>3}/{rounds} rounds · {remaining} · {medians}",
-            self.started.elapsed().as_secs_f64(),
+            "[{:>5}s] measuring {bar} {:>3}/{rounds} rounds · {remaining} · {medians}",
+            tenths_of_seconds(self.started.elapsed()),
             round,
         ));
     }
@@ -1680,8 +1678,8 @@ impl<'a> Progress<'a> {
         let bar = "█".repeat(Self::BAR_WIDTH);
         let rounds = self.roster.rounds;
         self.draw(&format!(
-            "[{:>5.1}s] measured  {bar} {rounds}/{rounds} rounds · {medians}",
-            self.started.elapsed().as_secs_f64(),
+            "[{:>5}s] measured  {bar} {rounds}/{rounds} rounds · {medians}",
+            tenths_of_seconds(self.started.elapsed()),
         ));
         eprintln!();
     }
@@ -1704,6 +1702,12 @@ impl<'a> Progress<'a> {
  * "BLAKE3 0.39 · SHA-256 0.33 · … ns/B at 1 MiB" from the samples collected
  * so far, or a placeholder before the first round completes.
  */
+/// A duration in seconds with one decimal, rounded once: "12.3".
+fn tenths_of_seconds(duration: std::time::Duration) -> String {
+    let tenths = (duration.as_nanos() + 50_000_000) / 100_000_000;
+    format!("{}.{}", tenths / 10, tenths % 10)
+}
+
 fn running_medians(roster: &Roster, samples: &Samples, size_index: usize) -> String {
     if samples.iter().all(|contender| contender[size_index].is_empty()) {
         return format!("medians at {} pending", POINTS[size_index].label);
@@ -2802,9 +2806,10 @@ fn cell_wants_sample(solo: &[Measured], shared: &[Measured], slot: usize, rounds
 
 /// Whether the median of `taken` is still unsure: fewer than UNSURE_BELOW
 /// samples, or a 95% interval wider than PRECISION_PERMILLE of the
-/// median. The interval is the order-statistic one (ranks n/2 ± 0.98 √n),
-/// a sort and two look-ups, cheap enough to ask of every cell each round;
-/// the report's intervals come from the bootstrap.
+/// median. The interval is the order-statistic one (ranks n/2 ± 0.98 √n,
+/// in hundredths of a rank, the square root rounded up), a sort and two
+/// look-ups, cheap enough to ask of every cell each round; the report's
+/// intervals come from the bootstrap.
 fn median_unsure(taken: &[Measured]) -> bool {
     let n = taken.len();
     if n < UNSURE_BELOW {
@@ -2812,9 +2817,10 @@ fn median_unsure(taken: &[Measured]) -> bool {
     }
     let mut sorted: Vec<PerUnit> = taken.iter().map(|m| m.per_unit()).collect();
     sorted.sort_unstable();
-    let half_width = 0.98 * (n as f64).sqrt();
-    let low = ((n as f64 / 2.0 - half_width).floor().max(0.0)) as usize;
-    let high = ((n as f64 / 2.0 + half_width).ceil() as usize).min(n - 1);
+    /* 100 × 0.98 √n = √(9604 n), rounded up: hundredths of a rank. */
+    let half_width = (9604 * n - 1).isqrt() + 1;
+    let low = (50 * n).saturating_sub(half_width) / 100;
+    let high = ((50 * n + half_width).div_ceil(100)).min(n - 1);
     let median = median_of_sorted(&sorted);
     (sorted[high] - sorted[low]) * 1000 > median * PRECISION_PERMILLE
 }
