@@ -1,0 +1,5 @@
+# Every function starts on a 64-byte boundary, so a contender's speed does
+# not depend on where the linker happened to place its code among the
+# others' (unrelated code moved SHA-256's 64-byte messages 8% in the VM).
+[build]
+rustflags = ["-C", "llvm-args=-align-all-functions=6"]
