@@ -1412,6 +1412,8 @@ fn main() {
     if arguments.first().map(String::as_str) == Some("b3sum") {
         return b3sum::command(&arguments[1..]);
     }
+    #[cfg(feature = "layout-perturb")]
+    black_box(layout_perturbation(arguments.len() as u64));
     let Options { selection, explicit, points, rounds, trace_path, quick } = parse_arguments();
     let mut trace = trace_path.map(ClockTrace::new);
     let mut machine = machine_metadata();
@@ -3801,6 +3803,18 @@ fn regress_command(arguments: &[String]) -> i32 {
     }
     println!("{power}");
     i32::from(slower > 0)
+}
+
+#[cfg(feature = "layout-perturb")]
+#[inline(never)]
+fn layout_perturbation(x: u64) -> u64 {
+    // About 2 KiB of code the program never needs: it moves everything
+    // after it in the binary (probe/final-calibration).
+    let mut v = x;
+    for i in 0..64u64 {
+        v = v.wrapping_mul(6364136223846793005 ^ i).rotate_left((i % 63) as u32).wrapping_add(i);
+    }
+    v
 }
 
 fn generate_samples_tsv(roster: &Roster, samples: &RunSamples, machine: &MachineMetadata, selection_note: &str) -> String {
