@@ -73,12 +73,12 @@ plan. Next runner job 1146.
    at return), documented: a window sliding along the input would bound
    it at the cost of a second mechanism (refilling the window, merging as
    it goes), and simplicity of implementation wins here.
-4. Done: b3sum on the pool, promoted (servil 6039657; its perf note has
-   the gate): files already in the page cache mapped, the rest read while
-   the pool hashes (Mac 1 GiB warm 68.6 -> 37.3 ms, cold 367 -> 159).
-   Open: the warm mixed tree 14% behind mapping every file with WILLNEED
-   (the fork's NOTES, "b3sum, measured"). bench-hashes' candidate lock
-   pins 6039657. Next runner job 1156.
+4. Done: b3sum on the pool, promoted (servil a926404; its perf notes have
+   the gates): files of 512 KiB or more already in the page cache mapped,
+   the rest read while the pool hashes (Mac 1 GiB warm 68.6 -> 37.3 ms,
+   cold 367 -> 159, warm mixed tree 34.3 -> 24.4; the fork's NOTES, "b3sum,
+   measured"). bench-hashes' candidate lock pins a926404. Next runner job
+   1164.
 
 ## Resume here (October 2, 2026, morning): a night on the fork, Mac first
 
