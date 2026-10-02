@@ -73,7 +73,7 @@ ul.paths svg { display: inline; width: 14px; height: 14px; vertical-align: -2px;
 </details>
 <details><summary>How this was measured</summary>
 <p id="method"></p>
-<p>Each dot is the median of that cell's samples; a fainter dot is a second, slower speed that some samples ran at, its share in the hover. Where a cell ran at two speeds, the sentence above the chart compares the faster ones. Hover over a dot for the time of one call, the throughput, and the code path that ran.</p>
+<p>Each dot is the mean of that cell's samples: their total time over the work they did, what a program pays on average. Hover over a dot for the time of one call, the throughput, and the code path that ran.</p>
 <ul class="paths" id="paths"></ul>
 </details>
 </section>
@@ -231,8 +231,8 @@ function drawSpeed() {
   /* The sentence, from the same numbers as the dots: the size from which the lead holds to the largest. */
   let text = `${mine.name}, measured alone; this run has no SHA-256 to compare with.`;
   if (theirs) {
-    const ahead = points.map(k => +plot.series[r.contender].med[k] < +plot.series[other].med[k]);
-    const behind = points.map(k => +plot.series[r.contender].med[k] > +plot.series[other].med[k]);
+    const ahead = points.map(k => +plot.series[r.contender].mean[k] < +plot.series[other].mean[k]);
+    const behind = points.map(k => +plot.series[r.contender].mean[k] > +plot.series[other].mean[k]);
     let from = ahead.length;
     while (from > 0 && ahead[from - 1]) from--;
     if (points.length === 1) text = `${ahead[0] ? "Faster than" : behind[0] ? "Slower than" : "As fast as"} ${theirs.name} on a ${plot.labels[points[0]]} message${plot.use === "LentPieces" || r.call === "Queue::pieces" ? " in 64 KiB pieces" : ""}.`;
@@ -251,7 +251,7 @@ function drawSpeed() {
   const placed = [];
   for (const i of points.map((_, i) => i).sort((a, b) => (Number.isInteger(logs[b]) - Number.isInteger(logs[a])) || a - b)) if (placed.every(j => Math.abs(xs[i] - xs[j]) >= 58)) placed.push(i);
   const rate = ns => (plot.batch ? 1000 : 1) / ns;
-  const vals = series.flatMap(([, s]) => points.flatMap(k => [+s.med[k], s.med2[k] === null ? +s.med[k] : +s.med2[k]]));
+  const vals = series.flatMap(([, s]) => points.map(k => +s.mean[k]));
   /* The range reaches out to a gridline (1, 2, or 5 times a power of ten) at each end, so every chart has numbers on its axis. */
   const nice = (v, up) => { const e = 10 ** Math.floor(Math.log10(v)); const ms = up ? [1, 2, 5, 10] : [10, 5, 2, 1]; return e * ms.find(m => up ? e * m >= v : e * m <= v); };
   const lo = nice(Math.min(...vals.map(rate)) / 1.15, false), hi = nice(Math.max(...vals.map(rate)) * 1.15, true);
@@ -271,14 +271,13 @@ function drawSpeed() {
   const kernelAt = (s, k) => { let name = ""; let kind = "circle"; for (const kernel of s.kernels) if (plot.bytes[k] >= kernel.from) { name = kernel.name; kind = kernel.mark; } return { name, kind }; };
   const usedMarks = new Map();
   for (const [c, s] of series) {
-    svg += `<polyline points="${points.map((k, i) => `${xs[i]},${y(rate(+s.med[k]))}`).join(" ")}" fill="none" stroke="${c.color}" stroke-width="2.2"/>`;
+    svg += `<polyline points="${points.map((k, i) => `${xs[i]},${y(rate(+s.mean[k]))}`).join(" ")}" fill="none" stroke="${c.color}" stroke-width="2.2"/>`;
     points.forEach((k, i) => {
       const { name, kind } = kernelAt(s, k);
       usedMarks.set(`${c.key}|${name}`, [c, kind, name]);
-      svg += mark(kind, 4, xs[i], y(rate(+s.med[k])), c.color, `stroke="#fdfdfc" stroke-width="1.2"`).replace("<g ", `<g class="dot" `).replace("</g>", `<title>${escapeXml(`${c.name}, ${plot.labels[k]}${unit}: ${humanTime(+s.lat[k])} per ${plot.batch ? "batch" : "call"} · ${humanRate(+s.med[k], plot.batch)}${name ? ` · ${name}` : ""}`)}</title></g>`);
-      if (s.med2[k] !== null) svg += mark(kind, 3.5, xs[i], y(rate(+s.med2[k])), c.color, `opacity="${Math.max(0.2, s.share2[k] / 1000)}"`).replace("</g>", `<title>${escapeXml(`${c.name}, ${plot.labels[k]}${unit}, the slower speed (${Math.round(s.share2[k] / 10)}% of samples): ${humanTime(+s.lat2[k])} per ${plot.batch ? "batch" : "call"} · ${humanRate(+s.med2[k], plot.batch)}`)}</title></g>`);
+      svg += mark(kind, 4, xs[i], y(rate(+s.mean[k])), c.color, `stroke="#fdfdfc" stroke-width="1.2"`).replace("<g ", `<g class="dot" `).replace("</g>", `<title>${escapeXml(`${c.name}, ${plot.labels[k]}${unit}: ${humanTime(+s.lat[k])} per ${plot.batch ? "batch" : "call"} · ${humanRate(+s.mean[k], plot.batch)}${name ? ` · ${name}` : ""}`)}</title></g>`);
     });
-    let ly = y(rate(+s.med[points.at(-1)]));
+    let ly = y(rate(+s.mean[points.at(-1)]));
     for (const o of labelYs) if (Math.abs(ly - o) < 16) ly = o + 16;
     labelYs.push(ly);
     svg += `<text x="${W - R + 8}" y="${ly + 4}" font-size="12" font-weight="600" fill="${c.color}">${c.name}</text>`;

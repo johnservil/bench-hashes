@@ -11,8 +11,8 @@ const { chromium } = require('playwright');
     const template = fs.readFileSync(path.join(__dirname, '../../src/guide.html'), 'utf8');
     const labels = ['64 B', '256 B', '1 KiB', '4 KiB'];
     const units = [64, 256, 1024, 4096];
-    const series = med => ({ med, med2: [null, null, null, null], share2: [0, 0, 0, 0],
-      lat: med.map((v, i) => v * units[i]), lat2: [null, null, null, null], kernels: [] });
+    const series = mean => ({ mean,
+      lat: mean.map((v, i) => v * units[i]), kernels: [] });
     const data = med => ({ machine: 'synthetic test', date: '2026-10-01', contenders: [
       { key: 'blake3-servil-st', name: 'BLAKE3 servil st', color: '#7c3aed' },
       { key: 'sha256-ring', name: 'SHA-256 ring', color: '#c2410c' }], plots: [{

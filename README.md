@@ -95,6 +95,26 @@ by name, including the official crate on its thread pool
 (`blake3-official-mt`), which runs only when named (`--list` shows the
 names).
 
+## How fast is b3sum?
+
+`bench-hashes b3sum` times builds of `b3sum`, the BLAKE3 command-line
+tool, as you run it: each run a new process, from its start to its exit,
+on fixed files from 4 KiB to 1 GiB and on two directory trees, with the
+files in the page cache (read moments before) and, on Linux and macOS,
+evicted from it before each run (read from storage):
+
+    sh tools/b3sum-contenders.sh /path/to/BLAKE3-fork /tmp/b3c
+    cargo run --release -- b3sum --files ~/b3sum-files official=/tmp/b3c/b3sum-official-1.8.2 fork=/tmp/b3c/b3sum-abc1234
+
+A contender is `NAME=COMMAND`, a `b3sum` and its flags (the files are
+appended); `tools/b3sum-contenders.sh` builds official BLAKE3's `b3sum`
+1.8.2 and the fork's at given commits. The first contender is the one
+the others are compared with. `--files` chooses where the files live:
+put them on the storage you care about (they are made once, 1.4 GiB, and
+kept). `--quick` runs a smaller set in seconds. The report and samples go
+to `benchmark-results/`, as `b3sum.result.txt` and `b3sum.samples.tsv`;
+`bench-hashes compare` reads the samples as it reads the hashes'.
+
 ## Share your results
 
 Your graph is one self-contained file. Post it and `bench-hashes.result.txt`

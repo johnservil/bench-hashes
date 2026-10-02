@@ -58,7 +58,7 @@ its SIMD paths fill (4-way NEON at 4 KiB, a sixteen-lane SME2 group at
 16 KiB); above that the bulk rate settles. 3 KiB is where the SME2 fork's
 integer + NEON hybrid kernels first overtake hardware SHA-256. The sizes
 past 1 MiB show the plateau: a contender whose 32, 64, and 128 MiB
-medians agree has levelled out. The multithreaded contenders take
+means agree has levelled out. The multithreaded contenders take
 longest to get there, since a pool hand-off or a subtree merge amortises
 more slowly than one kernel call (the fork's was still climbing at
 8 MiB, and Rayon's still is at 128 MiB in a Linux VM); from 8 MiB up an
@@ -69,7 +69,9 @@ ramp: a tree that is no power of two (a 2 MiB left subtree beside a
 1 MiB right one), so a splitter that cuts at subtree boundaries hands
 its threads unequal work there.
 
-The report gives each cell's median time per unit in nanoseconds, to
+The report gives each cell's mean time per unit in nanoseconds (the
+total time of its samples over the total work they did, what a caller
+pays on average), to
 three decimals or three significant digits, whichever shows more; lower
 is better. Each sample is kept as measured, the clock's nanoseconds over
 the units they covered, and the statistics work on it in fixed point with
@@ -210,8 +212,8 @@ hold the other program's code and data. After idling the core may have
 slowed or powered down, or the thread may wake on another core: an
 Apple M4 Max meets full clock, its lowest, or a step between, for each
 call and every contender alike, and in a VM two speeds about 3.5 times
-apart, so these cells often run at two speeds, which the report shows
-with their shares. Longer calls meet the clock of a mostly idle core
+apart, so these cells mix speeds, and their means weigh each by how
+often it came. Longer calls meet the clock of a mostly idle core
 too: on an Apple M4 Max, a call of several milliseconds after idling ran
 15-50% slower than after other work (SHA-256 at 8 MiB 0.43-0.51 against
 0.29-0.34 ns/B), its core near 3.8-4.0 GHz where after other work it ran
@@ -232,7 +234,7 @@ messages of 64 B-4 KiB; two copies at once are no faster than one; a hash
 that runs on its core alone (no shared SME unit, no helper threads) is no
 slower beside a second copy; and more work within the first-level cache
 (up to 32 KiB) is no slower per byte or message than a size that divides
-it. Each is judged on the cells' fast speeds, over 10% apart. A broken relation names a bug in the
+it. Each is judged on the cells' means, over 10% apart. A broken relation names a bug in the
 benchmark or in the contender, or a finding to explain; the file lists
 each, or says that all hold.
 
@@ -424,38 +426,46 @@ complete balance; other counts give a partial design. For example, a
 roster of eight has eight orders for messages, while seven participants
 in its batch use case have fourteen: 56 rounds completes both designs.
 
-Shorter samples (0.5 ms) were tried and rejected: every median read 1.6%
-slower, since a sample's fixed cost weighs twice as much.
+Shorter samples (0.5 ms) were tried and rejected: every cell read 1.6%
+slower, since a sample's fixed cost weighs twice as much. Before it sizes
+a cell's samples, the run calls the cell's batch once, untimed, so that
+one-time costs (a pool or a queue's thread starting, buffers touched for
+the first time) leave the size alone.
 
-Each dot is its cell's median. The hover panel also gives the cell's
+Each dot is its cell's mean. The hover panel also gives the cell's
 fastest and slowest samples, and the samples file holds every timing.
-How far a median moves between runs depends on the cell (a call after a
-gap moves with each process's state); a lead between two runs is
+Most of a measurement's uncertainty lies between runs, not inside one:
+where a program's code landed, where its threads were placed, which of
+two speeds a cell settled into, all fixed for a whole process. Some
+cells run at two speeds: two copies of an SME2 kernel run at full speed
+when macOS places them on different P-clusters and at about half when it
+places them on one, which shares its SME unit. The mean weighs each speed
+by how often it came, which is what a caller pays, and the samples file
+keeps every timing for a look at the speeds. A lead between two runs is
 established by repeating them.
 
-Some cells run at two speeds, and then every report shows both, with
-equal weight, faster first. The clearest case: two copies of an SME2
-kernel run at full speed when macOS places them on different P-clusters
-and at about half when it places them on one, which shares its SME unit;
-the share of rounds in each state varies from run to run, so a single
-median would land on either speed by chance. A cell has two speeds when
-its sorted samples split at a gap of 4% or more, with a tenth or more of
-the samples on each side and the two sides' medians 1.25× or more apart.
-The text tables print such a cell as `a|b`. In the graph each speed is
-drawn as strong as its share of the point's samples (0.15 opacity at the
-least): the contender's line splits into a fast and a slow path where a
-point ran at two speeds, and the paths coincide at full strength where
-it ran at one. The value label gives both (`a | b`),
-the hover panel says "Two speeds here" with each speed's median and
-share of samples, and a footnote under the plots names
-common causes: performance and efficiency cores, two copies sharing one
-unit of the chip, a VM's host moving it between cores.
+## Comparing runs
+
+`bench-hashes compare OLD.tsv... -- NEW.tsv...` gives each cell's mean on
+each side (over several runs, the median of their means) and the ratio,
+and says so beside any run whose load was busy or unmeasured.
+`bench-hashes regress OLD_EXE NEW_EXE` judges two builds: eight pairs of
+runs, one of each, back to back in alternating order, over the lent cells
+(a program hands its buffer to a call and waits). Each pair gives each
+cell one ratio, new mean over old; a cell is slower when the median of
+its ratios exceeds its margin (3% alone, 10% beside a second copy) and an
+exact sign test says it was slower in more pairs than chance would give
+(seven of eight). The queue's cells stay out of it: on identical code
+their means move 6-60% between processes, more than a 3% check can
+judge. The check, calibrated on an Apple M4 Max with planted slowdowns
+and builds of identical code, is in the fork's NOTES ("The regression
+check, calibrated").
 
 ## The graph
 
 The SVG shows a plot for each use case and scenario the run has (the
 calls after a gap solo, the nonstop ones solo and then shared), each with
-median lines on a log-log grid.
+lines through the means on a log-log grid.
 
 A switch at the header's left, above the y axes' titles, flips every plot between rate (the
 default; higher is better: GB/s above, million messages per second
@@ -467,7 +477,7 @@ every label, value, and hover figure follows the chosen unit. Ratios
 between contenders are unitless and stay put.
 
 Hovering a dot opens a panel for that point: the hovered
-contender's median, range, and method (its code path), then every visible contender
+contender's mean, range, and method (its code path), then every visible contender
 of that plot ranked fastest first with its time, rate, and speed
 relative to the hovered one ("▲ 1.35× faster" in green, "about the same" in grey, "▼ 3.22×
 slower" in red; contender colours stay away from those two hues).
@@ -521,10 +531,46 @@ the names themselves keep their look, so they always show which
 contenders are hidden. A viewer
 without script support shows every contender, laid out identically.
 
+## b3sum
+
+`bench-hashes b3sum NAME=COMMAND...` measures builds of `b3sum` as a
+person runs them. Each run is a new process, timed from just before its
+start to its exit (`clocks::child`), with the counts the operating
+system keeps for it: CPU time, peak memory, bytes read from storage, and
+major page faults (Linux and macOS), and on macOS its cycles and
+instructions on each core kind. The samples file keeps them as comment
+lines beside each run's time.
+
+**Inputs.** Single files of 4 KiB, 64 KiB, 1 MiB, 16 MiB, 256 MiB, and
+1 GiB; a tree of 1000 files of 16 KiB passed together, as `b3sum $(find
+src -type f)` passes them; and a mixed tree of 1000 files, 74 MiB in all,
+as a source checkout holds them (300 of 1 KiB, 300 of 4 KiB, 200 of
+16 KiB, 120 of 64 KiB, 60 of 256 KiB, 15 of 1 MiB, 4 of 4 MiB, one of
+16 MiB, their sizes interleaved), hashed in one run as `find . -type f
+-print0 | xargs -0 b3sum` hashes them. Each file holds BLAKE3's extended
+output of its name (its path under the files directory): the same files
+on every machine, and incompressible, so a filesystem or drive that
+compresses reads them in full.
+
+**Page cache.** *Warm*: the files were read moments before. *Cold*: each
+file is evicted before each run, without root: Linux with
+`posix_fadvise(DONTNEED)`, macOS with `msync(MS_INVALIDATE)`. The report
+checks every cold run's reads from storage and names any cell the page
+cache still served. Cold runs are skipped on Windows and on filesystems
+kept in memory (tmpfs). In a virtual machine the host's own cache may
+serve a guest's cold reads.
+
+**Rounds.** Every contender runs once on every input, untimed, then 15
+rounds (5 with `--quick`), the contenders' order rotating. Each cell's
+figure is its mean time per run; a contender's `xN` is the median, over
+the rounds, of its time against the first contender's in the same round,
+marked slower or faster by the rule `regress` uses (3%, an exact sign
+test over the rounds).
+
 ## Output
 
 The run prints the text report on stdout and progress on stderr (the
-phase, a bar over the sample rounds, and the running median of every
+phase, a bar over the sample rounds, and the running mean of every
 contender at the largest input size), and writes five files to
 `benchmark-results/{CPU}.{OS}/`: `bench-hashes.result.txt` (the
 report), `bench-hashes.graph.svg` (the graph), `bench-hashes.guide.html`
@@ -604,14 +650,11 @@ another program, where measured). A sentence above the chart says from
 which size the call leads SHA-256, computed from the dots. Hovering a dot
 gives what a caller waits for, the time of one call or batch to three
 significant digits, with the rate and the code path; for the queue that
-time is the stream's average per input with many in flight. Where a cell
-ran at two speeds, a fainter dot shows the slower, its share in the
-hover.
+time is the stream's average per input with many in flight.
 `Queue::messages` covers messages up to 64 KiB and `Queue::pieces` the
 longer ones. For a message arriving in pieces now and then, the guide
 shows `hash`'s cells, labelled by piece length: each piece costs about
 what `hash` costs on a buffer that long. A run that lacks the
 recommended cells says so. The chips keep the recommended call: on
 several threads, nonstop pieces show `update_multithreaded`, and pieces
-now and then show `update`, with `hash`'s cells standing in. Where a cell
-ran at two speeds, the sentence compares the faster ones.
+now and then show `update`, with `hash`'s cells standing in.

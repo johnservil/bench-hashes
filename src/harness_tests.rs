@@ -67,7 +67,7 @@ fn sparse_runs_remove_previous_visualizations() {
 }
 
 #[test]
-fn guide_medians_match_the_exact_report_rounding() {
+fn guide_means_match_the_exact_report_rounding() {
     let point = UseCase::LentPieces.points().start;
     let roster = Roster::new(vec![Algorithm::Blake3ServilSt, Algorithm::Sha256Ring], false, Some(vec![point]), Some(2));
     let statistics = summarize_measured(&[Measured::new(2135, 400), Measured::new(2135, 400)]);
@@ -76,7 +76,7 @@ fn guide_medians_match_the_exact_report_rounding() {
         cells[point] = Some(super::Cell { solo: statistics, shared: Some(statistics) });
     }
     let guide = generate_guide(&roster, &results, &machine_metadata());
-    assert!(guide.contains("\"med\":[5.338]"), "the report rounds 2135/400 to 5.338; the guide must too");
+    assert!(guide.contains("\"mean\":[5.338]"), "the report rounds 2135/400 to 5.338; the guide must too");
 }
 
 #[test]

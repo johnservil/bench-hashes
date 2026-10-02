@@ -840,32 +840,36 @@ impl Measured {
     }
 }
 
-/// The exact midpoint of two measured times per unit (repeat a sample
-/// for an odd median). Keep it for display: Q64.64 is ample for statistics,
-/// yet a half-way decimal can move one display tick if approximated first.
+/// A cell's mean exactly as measured: total ns over total units. Kept for
+/// display: Q64.64 is ample for statistics, yet a half-way decimal can move
+/// one display tick if approximated first.
 #[derive(Clone, Copy)]
-struct ExactMedian(Measured, Measured);
+struct ExactMean {
+    ns: u128,
+    units: u128,
+}
 
-impl ExactMedian {
-    fn of_sorted(samples: &[Measured]) -> Self {
-        assert!(!samples.is_empty(), "a median needs samples");
-        Self(samples[(samples.len() - 1) / 2], samples[samples.len() / 2])
+impl ExactMean {
+    fn of(samples: &[Measured]) -> Self {
+        assert!(!samples.is_empty(), "a mean needs samples");
+        Self { ns: samples.iter().map(|m| u128::from(m.ns)).sum(), units: samples.iter().map(|m| u128::from(m.units)).sum() }
+    }
+
+    fn fixed(self) -> PerUnit {
+        Fixed(clocks::summary::mean([(u64::try_from(self.ns).expect("a cell's samples total under 2^64 ns"), u64::try_from(self.units).expect("a cell's units fit in u64"))]))
     }
 
     /// Scale the measured ratio before its one rounding for the reader.
-    /// Requires cross-products and display scaling to fit in u128.
     fn format_ns(self, factor: u64) -> String {
-        let (a, b) = (self.0, self.1);
-        let numerator = (u128::from(a.ns) * u128::from(b.units) + u128::from(b.ns) * u128::from(a.units))
-            .checked_mul(u128::from(factor)).expect("a scaled median fits in u128");
-        let denominator = (2 * u128::from(a.units)).checked_mul(u128::from(b.units)).expect("a median denominator fits in u128");
+        let numerator = self.ns.checked_mul(u128::from(factor)).expect("a scaled mean fits in u128");
+        let denominator = self.units;
         let mut decimals = 3u32;
         while decimals < 6 && numerator * 10u128.pow(decimals - 2) < denominator {
             decimals += 1;
         }
         let scale = 10u128.pow(decimals);
         let rounded = numerator.checked_mul(scale).and_then(|n| n.checked_add(denominator / 2))
-            .expect("a rounded median fits in u128") / denominator;
+            .expect("a rounded mean fits in u128") / denominator;
         format!("{}.{:0width$}", rounded / scale, rounded % scale, width = decimals as usize)
     }
 }
@@ -955,63 +959,24 @@ impl Fixed {
 
 
 /*
- * Summary of one cell's samples: its median, and `minimum` and `maximum`,
- * the extremes seen.
- *
- * `two_speeds` is set when the samples split into two clusters at least
- * 4% apart, their medians at least 1.25× apart, with a tenth or more of
- * the samples on each side: the code ran
- * at two speeds in this context (two SME2 copies sharing a unit or not,
- * the interleaving's neighbours), which a single median cannot express and
- * would report as whichever cluster happens to hold the middle sample.
- * Each speed then carries its own median, and every report
- * shows both, the faster first.
+ * Summary of one cell's samples: its mean, the total time of its samples
+ * over the total work they did (clocks::summary), what a caller pays on
+ * average; `minimum` and `maximum`, the extremes seen.
  */
 #[derive(Clone, Copy)]
 struct Statistics {
     /// Samples behind these figures.
     count: usize,
     minimum: PerUnit,
-    median: PerUnit,
+    mean: PerUnit,
     maximum: PerUnit,
-    two_speeds: Option<[Speed; 2]>,
-    exact_median: Option<ExactMedian>,
-}
-
-/// One speed a cell ran at: the median of its samples, and how many
-/// samples it holds.
-#[derive(Clone, Copy)]
-struct Speed {
-    median: PerUnit,
-    exact_median: Option<ExactMedian>,
-    count: usize,
-}
-
-impl Speed {
-    fn format_median(self, factor: u64) -> String {
-        self.exact_median.map_or_else(|| (self.median * factor).format_ns(), |m| m.format_ns(factor))
-    }
+    exact_mean: Option<ExactMean>,
 }
 
 impl Statistics {
-    /// The cell's speeds, faster first: one, or two for a two-speed cell.
-    fn speeds(&self) -> Vec<Speed> {
-        match self.two_speeds {
-            Some(pair) => pair.to_vec(),
-            None => vec![Speed { median: self.median, exact_median: self.exact_median, count: self.count }],
-        }
+    fn format_mean(&self, factor: u64) -> String {
+        self.exact_mean.map_or_else(|| (self.mean * factor).format_ns(), |m| m.format_ns(factor))
     }
-}
-
-/*
- * A cell's speeds and their medians come from the clocks crate's speeds module, the one rule every
- * measurement in both projects uses (its docs: a gap of 4% of the median
- * between sorted neighbours, a tenth of the samples or more on each side,
- * the sides' medians 1.25x apart or more). PerUnit's Q64.64 is its
- * representation.
- */
-fn raw(sorted: &[PerUnit]) -> Vec<u128> {
-    sorted.iter().map(|value| value.0).collect()
 }
 
 /*
@@ -1443,6 +1408,9 @@ fn main() {
     }
     if arguments.first().map(String::as_str) == Some("regress") {
         std::process::exit(regress_command(&arguments[1..]));
+    }
+    if arguments.first().map(String::as_str) == Some("b3sum") {
+        return b3sum::command(&arguments[1..]);
     }
     let Options { selection, explicit, points, rounds, trace_path, quick } = parse_arguments();
     let mut trace = trace_path.map(ClockTrace::new);
@@ -1900,9 +1868,7 @@ fn running_medians(roster: &Roster, samples: &Samples, size_index: usize) -> Str
     let parts: Vec<String> = (0..roster.len())
         .filter(|&algorithm_index| !samples[algorithm_index][size_index].is_empty())
         .map(|algorithm_index| {
-            let mut sorted = per_units(&samples[algorithm_index][size_index]);
-            sorted.sort_unstable();
-            format!("{} {}", roster.algorithms[algorithm_index].name(), median_of_sorted(&sorted).format_ns())
+            format!("{} {}", roster.algorithms[algorithm_index].name(), ExactMean::of(&samples[algorithm_index][size_index]).format_ns(1))
         })
         .collect();
 
@@ -3125,6 +3091,14 @@ fn calibrate_batch(
 ) -> (usize, u128) {
     let fewest = continuous_min_inputs(input, point);
     let mut iterations = fewest;
+    /*
+     * A cell's first calls carry one-time costs (a pool or a queue's
+     * delivery thread starting, a self-test, first-touched buffers), which
+     * would size its samples short: one untimed batch first (Devon Jonte,
+     * bench-hashes#4: the queue's 64 B samples 154-199 us against the 1 ms
+     * target; the Mac's 176 us).
+     */
+    run_batch(algorithm, input, point, fewest);
 
     loop {
         let started = clocks::now();
@@ -3144,21 +3118,6 @@ fn calibrate_batch(
         }
 
         if elapsed_ns >= CALIBRATION_PROBE_NS {
-            /*
-             * A contender's first call may carry one-time costs (a pool
-             * starting, a self-test), which would make one call look long
-             * and leave its cell a single cold call per sample (the fork's
-             * multithreaded 64 KiB: 1 iteration instead of 81, samples 5x
-             * slow). A single call that reaches the probe is timed again,
-             * and the faster time kept.
-             */
-            let elapsed_ns = if iterations == 1 {
-                let started = clocks::now();
-                run_batch(algorithm, input, point, 1);
-                elapsed_ns.min(u128::from(clocks::since_ns(started)))
-            } else {
-                elapsed_ns
-            };
             let scaled = (
                 iterations as u128 * TARGET_SAMPLE_NS
                     + elapsed_ns / 2
@@ -3200,49 +3159,19 @@ fn per_units(samples: &[Measured]) -> Vec<PerUnit> {
     samples.iter().map(|m| m.per_unit()).collect()
 }
 
-fn median_of_sorted(sorted: &[PerUnit]) -> PerUnit {
-    Fixed(clocks::speeds::median_of_sorted(&raw(sorted)))
-}
-
-/// Statistics use the shared Q64.64 rule; displayed medians keep their
-/// original measured ratios. The same split selects both representations.
+/// A cell's summary from its samples: their mean (clocks::summary), kept
+/// exact for display, and their extremes.
 fn summarize_measured(samples: &[Measured]) -> Statistics {
-    let mut measured = samples.to_vec();
-    measured.sort_unstable_by(|a, b| (u128::from(a.ns) * u128::from(b.units)).cmp(&(u128::from(b.ns) * u128::from(a.units))));
-    let mut values = per_units(&measured);
-    let mut statistics = summarize(&mut values);
-    statistics.exact_median = Some(ExactMedian::of_sorted(&measured));
-    if let Some(pair) = statistics.two_speeds.as_mut() {
-        let at = clocks::speeds::split(&raw(&values)).expect("the shared rule selected two speeds");
-        pair[0].exact_median = Some(ExactMedian::of_sorted(&measured[..at]));
-        pair[1].exact_median = Some(ExactMedian::of_sorted(&measured[at..]));
-    }
-    statistics
-}
-
-/// Requires a non-empty slice; sorts it. Zeros summarise to zeros.
-fn summarize(samples: &mut [PerUnit]) -> Statistics {
     assert!(!samples.is_empty(), "a cell has at least one sample");
-    samples.sort_unstable();
-
-    let median = median_of_sorted(samples);
-
+    let values = per_units(samples);
+    let exact = ExactMean::of(samples);
     Statistics {
         count: samples.len(),
-        minimum: samples[0],
-        median,
-        maximum: samples[samples.len() - 1],
-        two_speeds: two_speeds(samples),
-        exact_median: None,
+        minimum: *values.iter().min().unwrap(),
+        mean: exact.fixed(),
+        maximum: *values.iter().max().unwrap(),
+        exact_mean: Some(exact),
     }
-}
-
-/// The cell's two speeds, faster first, when the rule splits its sorted
-/// samples (clocks::speeds::speeds).
-fn two_speeds(sorted: &[PerUnit]) -> Option<[Speed; 2]> {
-    let found = clocks::speeds::speeds(&raw(sorted));
-    let speed = |s: &clocks::speeds::Speed| Speed { median: Fixed(s.median), exact_median: None, count: s.count };
-    (found.len() == 2).then(|| [speed(&found[0]), speed(&found[1])])
 }
 
 /*
@@ -3729,104 +3658,80 @@ fn read_samples(path: &str) -> SamplesFile {
  * repetition alone moves.
  */
 fn compare_command(arguments: &[String]) {
-    let split = arguments.iter().position(|argument| argument == "--").expect("usage: bench-hashes compare OLD.tsv... -- NEW.tsv...");
+    let usage = "usage: bench-hashes compare OLD.tsv... -- NEW.tsv...";
+    let split = arguments.iter().position(|argument| argument == "--").expect(usage);
     let (old, new) = (&arguments[..split], &arguments[split + 1..]);
-    assert!(!old.is_empty() && !new.is_empty(), "usage: bench-hashes compare OLD.tsv... -- NEW.tsv...");
-    let pool = |paths: &[String]| {
+    assert!(!old.is_empty() && !new.is_empty(), "{usage}");
+    // Each side: every cell's mean in every run (one samples file a run).
+    let side = |paths: &[String]| {
         let mut order: Vec<String> = Vec::new();
-        let mut cells: std::collections::HashMap<String, Vec<PerUnit>> = std::collections::HashMap::new();
+        let mut cells: std::collections::HashMap<String, Vec<u128>> = std::collections::HashMap::new();
         for path in paths {
             let file = read_samples(path);
-            if file.load.starts_with("busy") {
-                println!("{path}: other programs kept the machine busy ({}): its samples are no evidence of speed", file.load);
+            if !file.load.starts_with("quiet") {
+                println!("{path}: {}: its samples are no evidence of speed", file.load);
             }
             for (key, samples) in file.cells {
                 if !cells.contains_key(&key) {
                     order.push(key.clone());
                 }
-                cells.entry(key).or_default().extend(per_units(&samples));
+                cells.entry(key).or_default().push(ExactMean::of(&samples).fixed().0);
             }
         }
         (order, cells)
     };
-    let ((order, old), (_, new)) = (pool(old), pool(new));
+    let ((order, old), (_, new)) = (side(old), side(new));
     for key in order {
-        if let Some(new_values) = new.get(&key) {
-            println!("{key}: {}", speeds_line(&old[&key], new_values));
+        if let Some(new_means) = new.get(&key) {
+            let (a, b) = (median_u128(&old[&key]), median_u128(new_means));
+            let r = clocks::summary::ratio_permille(b, a);
+            println!("{key}: {} -> {} ns/unit  x{}.{:03}  ({} -> {} runs)", Fixed(a).format_ns(), Fixed(b).format_ns(), r / 1000, r % 1000, old[&key].len(), new_means.len());
         }
     }
 }
 
-/// One cell's samples on two sides compared speed with speed
-/// (clocks::speeds::compare): "old speeds -> new speeds  [fast xF, slow
-/// xS, slow share a% -> b%]".
-fn speeds_line(old: &[PerUnit], new: &[PerUnit]) -> String {
-    let ratio = |permille: u64| format!("x{}.{:03}", permille / 1000, permille % 1000);
-    let describe = |speeds: &[clocks::speeds::Speed]| -> String {
-        let total: usize = speeds.iter().map(|speed| speed.count).sum();
-        match speeds {
-            [one] => Fixed(one.median).format_ns(),
-            _ => speeds.iter().map(|speed| format!("{} ({}%)", Fixed(speed.median).format_ns(), (speed.count * 100 + total / 2) / total)).collect::<Vec<_>>().join(" | "),
-        }
-    };
-    let c = clocks::speeds::compare(&sorted_raw(old), &sorted_raw(new));
-    let share = |permille: u64| (permille + 5) / 10;
-    format!("{} -> {}  [fast {}, slow {}, slow share {}% -> {}%]",
-        describe(&c.old), describe(&c.new), ratio(c.fast_permille), ratio(c.slow_permille),
-        share(c.old_slow_share_permille), share(c.new_slow_share_permille))
-}
-
-fn sorted_raw(values: &[PerUnit]) -> Vec<u128> {
-    let mut v = raw(values);
-    v.sort_unstable();
-    v
+/// The median of some values (for an even count, the mean of the middle two).
+fn median_u128(values: &[u128]) -> u128 {
+    assert!(!values.is_empty(), "a median needs a value");
+    let mut sorted = values.to_vec();
+    sorted.sort_unstable();
+    let n = sorted.len();
+    if n % 2 == 1 { sorted[n / 2] } else { (sorted[n / 2 - 1] + sorted[n / 2]).div_ceil(2) }
 }
 
 /*
- * `bench-hashes regress OLD NEW [--points NAME,...]`: whether the
- * executable NEW is slower than OLD, measured side by side on this
- * machine (the fork's tools/perf_regress.py builds the two; NOTES-servil
- * "perf_regress" holds the rule's calibration).
- *
- * Runs go A B B A A B B A, each over every point, so a cell's neighbours
- * stay the same in every run, with SHA-256 the control (the same code on
- * both sides), BLAKE3 servil st and mt the subjects. A pair's verdict on a
- * cell is the ratio of the fast speeds, new over old, of the two runs'
- * samples (clocks::speeds::compare, as `compare` reports it). A cell is
- * slower (faster) when every one of the four pairs exceeds 1 + its margin
- * (falls below 1 - it): 3% solo, 10% shared (Zooko, September 25, 2026).
- * The pairs stop once no cell can still be called either. A slower cell
- * starts four more pairs, which must agree. Exit 0: no regression in a
- * cell that holds a change (solo; shared cells slower are listed); 1: a
- * confirmed regression in one; 2: no verdict, when a run's load was busy
- * or unobserved (clocks::load), or the control moved.
+ * `bench-hashes regress OLD NEW`: whether the executable NEW is slower than
+ * OLD, measured on this machine (the fork's tools/perf_regress.py builds
+ * the two). REGRESS_PAIRS pairs of runs, one of each side, back to back in
+ * alternating order (A B, B A, ...), each over REGRESS_POINTS, the lent
+ * cells, where a program hands its buffer to a call and waits (the queue's
+ * cells move 20-45% between processes of identical code, beyond what a 3%
+ * check can judge: bench-hashes NEXT-STEPS). Each pair gives each cell one
+ * ratio, new mean over old; a cell is slower or faster by
+ * clocks::summary::verdict, its margin 3% solo and 10% shared. Calibrated
+ * on the Mac (fork NOTES, "The regression check, calibrated"). Exit 0: no
+ * cell slower; 1: a cell slower; 2: no verdict, when a run's load was busy
+ * or unobserved (clocks::load).
  */
-const REGRESS_CONTROL: Algorithm = Algorithm::Sha256;
 const REGRESS_SUBJECTS: [Algorithm; 2] = [Algorithm::Blake3ServilSt, Algorithm::Blake3ServilMt];
-/// The code paths and boundaries of the nonstop use cases: the queue's
-/// short messages (members), a first subtree task, one piece, many pieces;
-/// hash on one message, bulk, over the pool; a long message in pieces;
-/// batches as members and as tasks of their own.
-const REGRESS_POINTS: [&str; 14] = [
-    "continuous 64 B", "continuous 1 KiB", "continuous 16 KiB", "continuous 64 KiB", "continuous 1 MiB",
-    "continuous batch 16", "continuous batch 256", "continuous batch 4096",
-    "lent 64 B", "lent 64 KiB", "lent 1 MiB", "lent pieces 64 MiB", "lent batch 16", "lent batch 4096",
-];
+/// The lent cells' code paths: one message short, in the pool's pieces,
+/// bulk on one thread; a long message in pieces; batches as members and as
+/// tasks of their own.
+const REGRESS_POINTS: [&str; 6] = ["lent 64 B", "lent 64 KiB", "lent 1 MiB", "lent pieces 64 MiB", "lent batch 16", "lent batch 4096"];
 const REGRESS_ROUNDS: usize = 24;
-const REGRESS_PAIRS: usize = 4;
+const REGRESS_PAIRS: usize = 8;
 
 fn regress_margin_permille(key: &str) -> u64 {
     if key.split('|').nth(1) == Some("solo") { 30 } else { 100 }
 }
 
-/// One run of `exe` over `points`: its samples, sorted per cell, its load
-/// and power lines.
-fn regress_run(exe: &str, points: &str) -> SamplesFile {
+/// One run of `exe` over the regress points: its samples file.
+fn regress_run(exe: &str) -> SamplesFile {
     let directory = std::env::temp_dir().join(format!("bench-hashes-regress-{}-{}", std::process::id(), clocks::load::now_ns()));
     fs::create_dir_all(&directory).unwrap();
-    let contenders: Vec<&str> = std::iter::once(REGRESS_CONTROL).chain(REGRESS_SUBJECTS).map(Algorithm::key).collect();
+    let contenders: Vec<&str> = REGRESS_SUBJECTS.iter().map(|a| a.key()).collect();
     let status = std::process::Command::new(exe)
-        .args(["--contenders", &contenders.join(","), "--points", points, "--rounds", &REGRESS_ROUNDS.to_string()])
+        .args(["--contenders", &contenders.join(","), "--points", &REGRESS_POINTS.join(","), "--rounds", &REGRESS_ROUNDS.to_string()])
         .current_dir(&directory)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -3841,146 +3746,61 @@ fn regress_run(exe: &str, points: &str) -> SamplesFile {
     file
 }
 
-/// Each cell's samples per unit, for every run of one side.
-type Side = Vec<std::collections::HashMap<String, Vec<PerUnit>>>;
-
-/// The cells whose every pair so far exceeds the margin one way, with
-/// their pair ratios in permille.
-fn regress_open(old: &Side, new: &Side) -> Vec<(String, Vec<u64>)> {
-    let mut keys: Vec<&String> = old[0].keys().collect();
-    keys.sort();
-    keys.into_iter().filter_map(|key| {
-        let ratios: Vec<u64> = old.iter().zip(new).map(|(a, b)| clocks::speeds::compare(&sorted_raw(&a[key]), &sorted_raw(&b[key])).fast_permille).collect();
-        let m = regress_margin_permille(key);
-        (ratios.iter().all(|&r| r > 1000 + m) || ratios.iter().all(|&r| r < 1000 - m)).then(|| (key.clone(), ratios))
-    }).collect()
-}
-
-/// Up to REGRESS_PAIRS pairs (old first in even pairs of `start`), stopping
-/// once no cell is open; the loads and powers they met into `seen`.
-fn regress_pairs(old_exe: &str, new_exe: &str, start: usize, points: &str, seen: &mut (Vec<String>, Vec<String>)) -> (Side, Side) {
-    let (mut old, mut new) = (Vec::new(), Vec::new());
-    let side = |exe: &str, runs: &mut Side, seen: &mut (Vec<String>, Vec<String>)| {
-        let file = regress_run(exe, points);
-        if file.load.starts_with("busy") || file.load.starts_with("not measured") {
-            seen.0.push(file.load.clone());
+fn regress_command(arguments: &[String]) -> i32 {
+    let [old_exe, new_exe] = arguments else { panic!("usage: bench-hashes regress OLD_EXE NEW_EXE") };
+    eprintln!("regress: {new_exe} against {old_exe}, {REGRESS_PAIRS} pairs over {} points", REGRESS_POINTS.len());
+    let mut unreliable = Vec::new();
+    let mut powers: Vec<String> = Vec::new();
+    let mut ratios: std::collections::BTreeMap<String, Vec<u64>> = std::collections::BTreeMap::new();
+    let mut means = |exe: &str| -> std::collections::HashMap<String, u128> {
+        let file = regress_run(exe);
+        if !file.load.starts_with("quiet") {
+            unreliable.push(file.load.clone());
         }
-        if !seen.1.contains(&file.power) {
-            seen.1.push(file.power.clone());
+        if !powers.contains(&file.power) {
+            powers.push(file.power.clone());
         }
-        runs.push(file.cells.into_iter().map(|(key, samples)| (key, per_units(&samples))).collect());
+        file.cells.into_iter().map(|(key, samples)| (key, ExactMean::of(&samples).fixed().0)).collect()
     };
     for pair in 0..REGRESS_PAIRS {
         let began = clocks::now();
-        if (start + pair) % 2 == 0 {
-            side(old_exe, &mut old, seen);
-            side(new_exe, &mut new, seen);
-        } else {
-            side(new_exe, &mut new, seen);
-            side(old_exe, &mut old, seen);
+        let (old, new) = if pair % 2 == 0 { let o = means(old_exe); (o, means(new_exe)) } else { let n = means(new_exe); (means(old_exe), n) };
+        for (key, old_mean) in &old {
+            ratios.entry(key.clone()).or_default().push(clocks::summary::ratio_permille(new[key], *old_mean));
         }
-        let open = regress_open(&old, &new).len();
         let tenths = (clocks::since_ns(began) + 50_000_000) / 100_000_000;
-        eprintln!("regress: pair {} done in {}.{} s ({open} cells still open)", start + pair + 1, tenths / 10, tenths % 10);
-        if open == 0 {
-            break;
-        }
+        eprintln!("regress: pair {} of {REGRESS_PAIRS} in {}.{} s", pair + 1, tenths / 10, tenths % 10);
     }
-    (old, new)
-}
-
-fn regress_command(arguments: &[String]) -> i32 {
-    let usage = "usage: bench-hashes regress OLD_EXE NEW_EXE [--points NAME,...]";
-    let (exes, points) = match arguments {
-        [old, new] => ([old.as_str(), new.as_str()], REGRESS_POINTS.join(",")),
-        [old, new, flag, list] if flag == "--points" => ([old.as_str(), new.as_str()], list.clone()),
-        _ => panic!("{usage}"),
-    };
-    for name in points.split(',') {
-        point_named(name);
-    }
-    let [old_exe, new_exe] = exes;
-    let mut seen = (Vec::new(), Vec::new());
-    let power = |seen: &(Vec<String>, Vec<String>)| format!("regress: power during the check: {}", seen.1.join("; "));
-    let pooled = |side: &Side, key: &str| -> Vec<PerUnit> { side.iter().flat_map(|run| run[key].clone()).collect() };
-    let percent = |ratios: &[u64]| {
-        let mut sorted = ratios.to_vec();
-        sorted.sort_unstable();
-        let median = sorted[sorted.len() / 2] as i64 - 1000;
-        format!("{}{}.{}%", if median < 0 { "-" } else { "+" }, median.abs() / 10, median.abs() % 10)
-    };
-    let unreliable = |old: &Side, new: &Side, seen: &(Vec<String>, Vec<String>)| -> bool {
-        if !seen.0.is_empty() {
-            println!("regress: other programs kept the machine busy, or clocks saw no load window, during {} runs. No verdict (exit 2); run again when nothing else runs on the machine.", seen.0.len());
-            for load in &seen.0 {
-                println!("  {load}");
-            }
-            return true;
+    let power = format!("regress: power during the check: {}", powers.join("; "));
+    if !unreliable.is_empty() {
+        println!("regress: other programs kept the machine busy, or clocks saw no load window, during {} runs. No verdict (exit 2); run again when nothing else runs on the machine.", unreliable.len());
+        for load in &unreliable {
+            println!("  {load}");
         }
-        let control: Vec<_> = regress_open(old, new).into_iter().filter(|(key, ratios)| key.starts_with(REGRESS_CONTROL.key()) && ratios.len() == old.len() && old.len() == REGRESS_PAIRS).collect();
-        if !control.is_empty() {
-            println!("regress: the control ({}, the same code on both sides) moved in {} cells: the machine's state changed within pairs. No verdict (exit 2); run again when nothing else runs on the machine.", REGRESS_CONTROL.key(), control.len());
-            for (key, ratios) in control {
-                println!("  control {key}: {}", percent(&ratios));
-            }
-            return true;
-        }
-        false
-    };
-    let verdicts = |old: &Side, new: &Side| -> (Vec<(String, Vec<u64>)>, Vec<(String, Vec<u64>)>) {
-        let called: Vec<_> = regress_open(old, new).into_iter()
-            .filter(|(key, _)| old.len() == REGRESS_PAIRS && REGRESS_SUBJECTS.iter().any(|a| key.starts_with(&format!("{}|", a.key()))))
-            .collect();
-        called.into_iter().partition(|(_, ratios)| ratios[0] > 1000)
-    };
-    eprintln!("regress: {new_exe} against {old_exe}, {REGRESS_PAIRS} alternating pairs over {} points", points.split(',').count());
-    let (old, new) = regress_pairs(old_exe, new_exe, 0, &points, &mut seen);
-    if unreliable(&old, &new, &seen) {
-        println!("{}", power(&seen));
+        println!("{power}");
         return 2;
     }
-    let (slower, faster) = verdicts(&old, &new);
-    let mut code = 0;
-    if !slower.is_empty() {
-        eprintln!("regress: {} cells slower in {REGRESS_PAIRS} pairs; {REGRESS_PAIRS} more pairs must agree", slower.len());
-        let (old2, new2) = regress_pairs(old_exe, new_exe, REGRESS_PAIRS, &points, &mut seen);
-        if unreliable(&old2, &new2, &seen) {
-            println!("{}", power(&seen));
-            return 2;
+    let percent = |permille: u64| {
+        let d = permille as i64 - 1000;
+        format!("{}{}.{}%", if d < 0 { "-" } else { "+" }, d.abs() / 10, d.abs() % 10)
+    };
+    let mut slower = 0;
+    for (key, values) in &ratios {
+        let verdict = clocks::summary::verdict(values, regress_margin_permille(key));
+        if verdict == clocks::summary::Verdict::Level {
+            continue;
         }
-        let (slower2, _) = verdicts(&old2, &new2);
-        let confirmed: Vec<_> = slower.iter().filter_map(|(key, first)| slower2.iter().find(|(k, _)| k == key).map(|(_, then)| (key, first, then))).collect();
-        let (held, reported): (Vec<_>, Vec<_>) = confirmed.into_iter().partition(|(key, _, _)| key.split('|').nth(1) == Some("solo"));
-        let show = |cells: &[(&String, &Vec<u64>, &Vec<u64>)]| {
-            for (key, first, then) in cells {
-                let (all_old, all_new): (Vec<PerUnit>, Vec<PerUnit>) = (
-                    [pooled(&old, key), pooled(&old2, key)].concat(), [pooled(&new, key), pooled(&new2, key)].concat());
-                println!("  {key}: {}, then {}", percent(first), percent(then));
-                println!("      speeds: {}", speeds_line(&all_old, &all_new));
-            }
-        };
-        if !held.is_empty() {
-            println!("regress: REGRESSION: {} cells that hold a change are slower (solo; fast speeds, median of pair ratios):", held.len());
-            show(&held);
-            code = 1;
-        }
-        if !reported.is_empty() {
-            println!("regress: {} shared cells are slower; they do not hold the change: name them, their numbers, and the change's reason in its commit message:", reported.len());
-            show(&reported);
-        }
-        if held.is_empty() && reported.is_empty() {
-            println!("regress: the second {REGRESS_PAIRS} pairs did not confirm");
-        }
+        let word = if verdict == clocks::summary::Verdict::Slower { slower += 1; "SLOWER" } else { "faster" };
+        let pairs: Vec<String> = values.iter().map(|&r| percent(r)).collect();
+        println!("  {word} {key}: {} (median of {} pairs: {})", percent(clocks::summary::median_permille(values)), values.len(), pairs.join(" "));
     }
-    for (key, ratios) in &faster {
-        println!("  faster  {key}: {}", percent(ratios));
-        println!("      speeds: {}", speeds_line(&pooled(&old, key), &pooled(&new, key)));
+    if slower > 0 {
+        println!("regress: REGRESSION: {slower} cells slower");
+    } else {
+        println!("regress: no cell slower");
     }
-    if code == 0 {
-        println!("regress: no regression in a cell that holds a change");
-    }
-    println!("{}", power(&seen));
-    code
+    println!("{power}");
+    i32::from(slower > 0)
 }
 
 fn generate_samples_tsv(roster: &Roster, samples: &RunSamples, machine: &MachineMetadata, selection_note: &str) -> String {
@@ -4148,15 +3968,15 @@ const CACHED_BYTES: usize = 32 * 1024;
 
 /// Where `slow` is slower than `fast` by more than the margin: slow over
 /// fast, in permille.
-fn slower_by(slow: Speed, fast: Speed) -> Option<u64> {
-    (fast.median.cmp_permille(0).is_gt()
-        && slow.median.ratio(fast.median).cmp_permille(1000 + CONSISTENCY_PERMILLE).is_gt())
-        .then(|| slow.median.ratio(fast.median).permille())
+fn slower_by(slow: Statistics, fast: Statistics) -> Option<u64> {
+    (fast.mean.cmp_permille(0).is_gt()
+        && slow.mean.ratio(fast.mean).cmp_permille(1000 + CONSISTENCY_PERMILLE).is_gt())
+        .then(|| slow.mean.ratio(fast.mean).permille())
 }
 
 /// The consistency checks' report: one line per broken relation.
 fn consistency(roster: &Roster, results: &Results) -> String {
-    let fast = |a: usize, p: usize, scenario: Scenario| cell(results, a, p).get(scenario).speeds()[0];
+    let fast = |a: usize, p: usize, scenario: Scenario| cell(results, a, p).get(scenario);
     let point = |use_case: UseCase, label: &str| use_case.points().find(|&p| POINTS[p].label == label && roster.measures(p));
     let mut broken: Vec<String> = Vec::new();
     let mut note = |check: &str, a: usize, what: String, permille: u64| {
@@ -4168,7 +3988,7 @@ fn consistency(roster: &Roster, results: &Results) -> String {
             if let (Some(n), Some(b)) = (point(UseCase::LentMessages, label), point(UseCase::OneMessage, label)) {
                 let (fnon, fb) = (fast(a, n, Scenario::Solo), fast(a, b, Scenario::Solo));
                 if let Some(r) = slower_by(fnon, fb) {
-                    note("nonstop slower than after other work", a, format!("{label}, {} against {} ns/B", fnon.median.format_ns(), fb.median.format_ns()), r);
+                    note("nonstop slower than after other work", a, format!("{label}, {} against {} ns/B", fnon.mean.format_ns(), fb.mean.format_ns()), r);
                 }
             }
         }
@@ -4179,11 +3999,11 @@ fn consistency(roster: &Roster, results: &Results) -> String {
                 for &p in &points {
                     let (solo, shared) = (fast(a, p, Scenario::Solo), fast(a, p, Scenario::Shared));
                     if let Some(r) = slower_by(solo, shared) {
-                        note("shared faster than solo", a, format!("{}, {}: solo {} against shared {} {}", use_case.short(), POINTS[p].label, solo.median.format_ns(), shared.median.format_ns(), use_case.time_unit()), r);
+                        note("shared faster than solo", a, format!("{}, {}: solo {} against shared {} {}", use_case.short(), POINTS[p].label, solo.mean.format_ns(), shared.mean.format_ns(), use_case.time_unit()), r);
                     }
                     if algorithm.core_only() {
                         if let Some(r) = slower_by(shared, solo) {
-                            note("a hash on the cores alone slowed by a second copy", a, format!("{}, {}: shared {} against solo {} {}", use_case.short(), POINTS[p].label, shared.median.format_ns(), solo.median.format_ns(), use_case.time_unit()), r);
+                            note("a hash on the cores alone slowed by a second copy", a, format!("{}, {}: shared {} against solo {} {}", use_case.short(), POINTS[p].label, shared.mean.format_ns(), solo.mean.format_ns(), use_case.time_unit()), r);
                         }
                     }
                 }
@@ -4203,7 +4023,7 @@ fn consistency(roster: &Roster, results: &Results) -> String {
                     for scenario in Scenario::ALL.into_iter().filter(|&scenario| scenario.measures(use_case)) {
                         let (l, m) = (fast(a, large, scenario), fast(a, small, scenario));
                         if let Some(r) = slower_by(l, m) {
-                            note("more work, slower per unit", a, format!("{} ({}), {} against {}: {} against {} {}", use_case.short(), scenario.key(), POINTS[large].label, POINTS[small].label, l.median.format_ns(), m.median.format_ns(), use_case.time_unit()), r);
+                            note("more work, slower per unit", a, format!("{} ({}), {} against {}: {} against {} {}", use_case.short(), scenario.key(), POINTS[large].label, POINTS[small].label, l.mean.format_ns(), m.mean.format_ns(), use_case.time_unit()), r);
                         }
                     }
                 }
@@ -4242,8 +4062,7 @@ fn append_table(output: &mut String, roster: &Roster, results: &Results, scenari
         write!(output, "  {:<8}", POINTS[point_index].label).unwrap();
         for &algorithm_index in &contenders {
             let statistics = cell(results, algorithm_index, point_index).get(scenario);
-            let figures: Vec<String> = statistics.speeds().iter().map(|speed| speed.format_median(1)).collect();
-            write!(output, "  {:>13} ", figures.join("|")).unwrap();
+            write!(output, "  {:>13} ", statistics.format_mean(1)).unwrap();
         }
         writeln!(output).unwrap();
     }
@@ -4498,22 +4317,10 @@ const LABEL_TOP_ROOM: f64 = 4.0;
 /// contenders with different shape counts. Four covers every contender.
 const SWATCH_SLOTS: usize = 4;
 /// Where provenance starts, below the last of `plots` plots.
-/// Where provenance starts, below the last of `plots` plots and the
-/// footnote's `footnote_lines`.
-fn provenance_top(plots: usize, footnote_lines: usize) -> f64 {
-    PLOT_TOP + (plots - 1) as f64 * PLOT_PITCH + PLOT_HEIGHT + 85.0 + footnote_lines as f64 * FOOTNOTE_LINE_HEIGHT
+fn provenance_top(plots: usize) -> f64 {
+    PLOT_TOP + (plots - 1) as f64 * PLOT_PITCH + PLOT_HEIGHT + 85.0
 }
-const FOOTNOTE_LINE_HEIGHT: f64 = 15.0;
 
-/*
- * The footnote the hover panel of a two-speed point refers to, under the
- * last plot; a graph with no two-speed point has none.
- */
-const TWO_SPEEDS_FOOTNOTE: [&str; 3] = [
-    "[*] Two speeds: at some sizes the timings fell into two clearly different speeds, so the line splits in two there, each speed drawn as strong",
-    "as its share of the timings. A common cause is a chip with fast performance cores and slower efficiency cores, where the operating",
-    "system may run the work on either kind. Two programs sharing one part of the chip, or a virtual machine its host moves between cores, split speeds too.",
-];
 const PROVENANCE_LINE_HEIGHT: f64 = 14.0;
 
 fn plot_top(plot_index: usize) -> f64 {
@@ -4597,8 +4404,8 @@ impl Plot {
         let visible: Vec<usize> = contenders.iter().copied().filter(|&a| shown[a]).collect();
         assert!(!visible.is_empty(), "every contender shown at first takes part in every use case");
         let cells = || visible.iter().flat_map(|&a| points.clone().map(move |s| (a, s))).map(|(a, s)| cell(results, a, s));
-        let observed_max = cells().map(|cell| cell.get(scenario).speeds().last().unwrap().median).max().expect("there are results");
-        let observed_min = cells().map(|cell| cell.get(scenario).speeds()[0].median).min().expect("there are results");
+        let observed_max = cells().map(|cell| cell.get(scenario).mean).max().expect("there are results");
+        let observed_min = cells().map(|cell| cell.get(scenario).mean).min().expect("there are results");
 
         /*
          * The static render shows gigabytes per second, the default unit:
@@ -4653,7 +4460,7 @@ impl Plot {
         let last = points.end - 1;
         let mut label_slots: Vec<(usize, f64)> = contenders
             .iter()
-            .map(|&algorithm_index| (algorithm_index, plot.map_y(plot.stats(results, algorithm_index, last).median)))
+            .map(|&algorithm_index| (algorithm_index, plot.map_y(plot.stats(results, algorithm_index, last).mean)))
             .collect();
         label_slots.sort_by(|a, b| a.1.total_cmp(&b.1));
         for index in 1..label_slots.len() {
@@ -4735,15 +4542,12 @@ fn generate_guide(roster: &Roster, results: &Results, machine: &MachineMetadata)
                 if !first_series { data.push(','); }
                 first_series = false;
                 write!(data, "{}:{{", json_string(algorithm.key())).unwrap();
-                /* Per point: the fast speed's median (ns per unit), the slow speed's median and share, and each speed's exact per-call latency. */
+                /* Per point: the mean (ns per unit), and the exact per-call latency. */
                 let per_point = |f: &dyn Fn(Statistics, u64) -> String| -> String {
                     points.iter().map(|&index| f(cell(results, algorithm_index, index).get(scenario), use_case.units(POINTS[index], 1))).collect::<Vec<_>>().join(",")
                 };
-                write!(data, "\"med\":[{}],", per_point(&|t, _| t.speeds()[0].format_median(1))).unwrap();
-                write!(data, "\"med2\":[{}],", per_point(&|t, _| t.two_speeds.map_or("null".to_owned(), |pair| pair[1].format_median(1)))).unwrap();
-                write!(data, "\"share2\":[{}],", per_point(&|t, _| t.two_speeds.map_or("0".to_owned(), |pair| ((pair[1].count * 1000 + t.count / 2) / t.count).to_string()))).unwrap();
-                write!(data, "\"lat\":[{}],", per_point(&|t, units| t.speeds()[0].format_median(units))).unwrap();
-                write!(data, "\"lat2\":[{}],", per_point(&|t, units| t.two_speeds.map_or("null".to_owned(), |pair| pair[1].format_median(units)))).unwrap();
+                write!(data, "\"mean\":[{}],", per_point(&|t, _| t.format_mean(1))).unwrap();
+                write!(data, "\"lat\":[{}],", per_point(&|t, units| t.format_mean(units))).unwrap();
                 /* The code paths, by the first byte count each serves; the graph's marks name them. */
                 let kernels = detect_kernels(*algorithm, use_case).up_to(POINTS[*points.last().unwrap()].bytes);
                 data.push_str("\"kernels\":[");
@@ -4798,11 +4602,7 @@ fn generate_svg(
             }
         }
     }
-    let two_speeds = plots.iter().any(|plot| {
-        plot.contenders.iter().any(|&a| plot.points.clone().any(|point_index| plot.stats(results, a, point_index).two_speeds.is_some()))
-    });
-    let footnote: &[&str] = if two_speeds { &TWO_SPEEDS_FOOTNOTE } else { &[] };
-    let provenance_top = provenance_top(plots.len(), footnote.len());
+    let provenance_top = provenance_top(plots.len());
     for plot in &mut plots {
         plot.provenance_top = provenance_top;
     }
@@ -5170,9 +4970,6 @@ fn generate_svg(
         howto.push("Nonstop, each input (each 64 KiB piece of a message in pieces) is first read into memory, a memory copy, the cheapest read, inside the time.".to_owned());
         howto.push("Owned buffers: the program hands each buffer over and fills the next while it is hashed. Lent buffers: the program waits for each call to return before refilling its buffer.".to_owned());
     }
-    if two_speeds {
-        howto.push("Where a line splits in two, the timings ran at two different speeds; the note under the last plot says why.".to_owned());
-    }
     let howto_height = 16.0 + howto.len() as f64 * 16.0;
     writeln!(svg, r##"  <g id="howto" style="display:none" onclick="event.stopPropagation(); toggleHowto()">"##).unwrap();
     writeln!(svg, r##"    <rect class="howto-box" x="{:.0}" y="{:.0}" width="{:.0}" height="{howto_height:.0}" rx="6"/>"##, PLOT_LEFT - 10.0, HEADER_BOTTOM + 4.0, PLOT_RIGHT - PLOT_LEFT + 20.0).unwrap();
@@ -5198,20 +4995,6 @@ fn generate_svg(
         write_plot(&mut svg, plot, roster, results, &first_plot, &mut provenance_slot);
         writeln!(svg, "  </g>").unwrap();
     }
-
-    /* What lies below the plots follows them up when plots are hidden. */
-    writeln!(svg, r##"  <g class="below">"##).unwrap();
-    let footnote_top = plot_bottom(plots.len() - 1) + 92.0;
-    for (line_index, line) in footnote.iter().enumerate() {
-        writeln!(
-            svg,
-            r##"  <text x="{PLOT_LEFT:.0}" y="{:.1}" class="method">{}</text>"##,
-            footnote_top + line_index as f64 * FOOTNOTE_LINE_HEIGHT,
-            xml_escape(line),
-        )
-        .unwrap();
-    }
-    writeln!(svg, "  </g>").unwrap();
 
     /*
      * Hover panel, filled by the script when a dot is hovered. Last among
@@ -5528,31 +5311,15 @@ fn write_plot(svg: &mut String, plot: &Plot, roster: &Roster, results: &Results,
 
         writeln!(svg, r##"    <g class="marks" clip-path="url(#plot-clip-{p})">"##).unwrap();
 
-        /*
-         * Two speeds: each speed is drawn as strong as its share of the
-         * point's samples (share_hundredths): two paths, the fast and the
-         * slow speed, which coincide at full strength where a point ran at
-         * one, so a line neither jumps between speeds nor favours one. Each
-         * segment is as strong as the average of its ends. The script
-         * redraws the same segments.
-         */
-        let speeds_at = |k: usize| cell_at(k).get(plot.scenario).speeds();
-        let point = |k: usize, value: PerUnit| (plot.x_positions[k], plot.map_y(value));
-        for speed in 0..2 {
-            for k in 0..plot.len().saturating_sub(1) {
-                let (here, next) = (speeds_at(k), speeds_at(k + 1));
-                if speed == 1 && here.len() == 1 && next.len() == 1 {
-                    continue;
-                }
-                let ((x0, m0), (x1, m1)) = (point(k, here[speed.min(here.len() - 1)].median), point(k + 1, next[speed.min(next.len() - 1)].median));
-                let strength = (share_hundredths(&here, speed) + share_hundredths(&next, speed)) / 2;
-                writeln!(
-                    svg,
-                    r##"      <path class="median" data-k="{k}" data-speed="{speed}" d="M {x0:.2} {m0:.2} L {x1:.2} {m1:.2}" fill="none" stroke="{color}" stroke-opacity="{:.2}" stroke-width="2.5" stroke-linecap="round"/>"##,
-                    strength as f64 / 100.0,
-                )
-                .unwrap();
-            }
+        /* The line through the means, a segment between each pair of points. */
+        let point = |k: usize| (plot.x_positions[k], plot.map_y(cell_at(k).get(plot.scenario).mean));
+        for k in 0..plot.len().saturating_sub(1) {
+            let ((x0, m0), (x1, m1)) = (point(k), point(k + 1));
+            writeln!(
+                svg,
+                r##"      <path class="median" data-k="{k}" d="M {x0:.2} {m0:.2} L {x1:.2} {m1:.2}" fill="none" stroke="{color}" stroke-width="2.5" stroke-linecap="round"/>"##,
+            )
+            .unwrap();
         }
 
         let mut dots = format!("  <g class=\"dots\" id=\"dots-{p}-{algorithm_index}\" data-on=\"{shown}\" clip-path=\"url(#plot-clip-{p})\">\n");
@@ -5560,7 +5327,6 @@ fn write_plot(svg: &mut String, plot: &Plot, roster: &Roster, results: &Results,
         for k in 0..plot.len() {
             let x = plot.x_positions[k];
             let statistics = cell_at(k).get(plot.scenario);
-            let speeds = statistics.speeds();
 
             /*
              * The dot's shape names the code path that produced this point;
@@ -5568,17 +5334,14 @@ fn write_plot(svg: &mut String, plot: &Plot, roster: &Roster, results: &Results,
              * size with no ring. Hovering shows the path's explanation.
              */
             let kernel = &kernels.kernels[kernels.kernel_index_for(POINTS[plot.points.start + k].bytes)];
-            for (speed_index, speed) in speeds.iter().enumerate() {
-                let median_y = plot.map_y(speed.median);
-                let dim = if speeds.len() == 2 { format!(r#" opacity="{:.2}""#, share_hundredths(&speeds, speed_index) as f64 / 100.0) } else { String::new() };
-                writeln!(
-                    dots,
-                    r##"    <g class="dot" data-size="{k}" data-speed="{speed_index}"{dim} transform="translate({x:.2} {median_y:.2})" onpointerenter="hoverDot(event,{p},{algorithm_index},{k})" onpointerleave="leaveDot(event)" onclick="tapDot(event,{p},{algorithm_index},{k})">"##,
-                )
-                    .unwrap();
-                writeln!(dots, "      {}", mark_shape(kernel.mark, color, 5.0)).unwrap();
-                dots.push_str("    </g>\n");
-            }
+            let mean_y = plot.map_y(statistics.mean);
+            writeln!(
+                dots,
+                r##"    <g class="dot" data-size="{k}" transform="translate({x:.2} {mean_y:.2})" onpointerenter="hoverDot(event,{p},{algorithm_index},{k})" onpointerleave="leaveDot(event)" onclick="tapDot(event,{p},{algorithm_index},{k})">"##,
+            )
+                .unwrap();
+            writeln!(dots, "      {}", mark_shape(kernel.mark, color, 5.0)).unwrap();
+            dots.push_str("    </g>\n");
 
             /* With two dozen columns, a value at every dot would overprint. */
             if !value_columns[k] {
@@ -5601,7 +5364,7 @@ fn write_plot(svg: &mut String, plot: &Plot, roster: &Roster, results: &Results,
             writeln!(
                 svg,
                 r##"      <text class="value-label" data-size="{k}" x="{label_x:.2}" y="{label_y:.2}" fill="{color}" text-anchor="{anchor}"{display}>{}</text>"##,
-                speeds.iter().map(|speed| format_rate_value(speed.median, plot.use_case)).collect::<Vec<_>>().join(" | "),
+                format_rate_value(statistics.mean, plot.use_case),
             )
                 .unwrap();
         }
@@ -5682,8 +5445,8 @@ fn write_plot(svg: &mut String, plot: &Plot, roster: &Roster, results: &Results,
             svg,
             r##"      <text class="series-detail" x="{:.1}" y="18">{} · {} {} at {}</text>"##,
             name_x,
-            format_rate(statistics.median, plot.use_case),
-            statistics.median.format_ns(),
+            format_rate(statistics.mean, plot.use_case),
+            statistics.mean.format_ns(),
             plot.use_case.time_unit(),
             xml_escape(POINTS[plot.points.end - 1].label),
         )
@@ -5832,20 +5595,6 @@ fn value_label_columns(x: &[f64]) -> Vec<bool> {
     labeled
 }
 
-/// How strongly a point's speed `speed` is drawn, in hundredths: its share
-/// of the point's samples, at least SPEED_MIN_HUNDREDTHS so it stays
-/// findable; 100 at a point of one speed, where both speeds are it.
-const SPEED_MIN_HUNDREDTHS: u64 = 15;
-
-fn share_hundredths(speeds: &[Speed], speed: usize) -> u64 {
-    if speeds.len() == 1 {
-        return 100;
-    }
-    let total = speeds.iter().map(|s| s.count as u64).sum::<u64>();
-    ((100 * speeds[speed].count as u64 + total / 2) / total).max(SPEED_MIN_HUNDREDTHS)
-}
-
-
 /*
  * Value labels sit above their dot by default. Within a column, labels
  * are processed top to bottom; one that would land within a label height
@@ -5875,14 +5624,14 @@ fn place_value_labels(plot: &Plot, results: &Results, shown: &[bool]) -> Vec<Vec
         let point_index = plot.points.start + k;
         let mut order: Vec<usize> = plot.contenders.iter().copied().filter(|&a| shown[a]).collect();
         order.sort_by(|&a, &b| {
-            plot.stats(results, b, point_index).median.cmp(&plot.stats(results, a, point_index).median)
+            plot.stats(results, b, point_index).mean.cmp(&plot.stats(results, a, point_index).mean)
         });
         /* Smallest y (fastest, highest on the plot) first. */
         order.reverse();
-        let dots: Vec<f64> = order.iter().map(|&a| plot.map_y(plot.stats(results, a, point_index).median)).collect();
+        let dots: Vec<f64> = order.iter().map(|&a| plot.map_y(plot.stats(results, a, point_index).mean)).collect();
         let mut taken: Vec<f64> = Vec::new();
         for algorithm_index in order {
-            let dot_y = plot.map_y(plot.stats(results, algorithm_index, point_index).median);
+            let dot_y = plot.map_y(plot.stats(results, algorithm_index, point_index).mean);
             let y = [VALUE_LABEL_ABOVE, VALUE_LABEL_BELOW, VALUE_LABEL_REACH]
                 .into_iter()
                 .map(|offset| dot_y + offset)
@@ -6283,9 +6032,10 @@ fn write_interaction_script(
                 .unwrap();
             }
             let cell_at = |k: usize| cell(results, algorithm_index, plot.points.start + k);
-            /* Whole-cell figures, then each speed's (speed 1 repeats speed 0 at a one-speed point). */
+            /* Each point's mean, extremes, and sample count. */
             for (key, pick) in [
-                ("min", (|t: Statistics| t.minimum.format_ns()) as fn(Statistics) -> String),
+                ("med", (|t: Statistics| t.format_mean(1)) as fn(Statistics) -> String),
+                ("min", |t| t.minimum.format_ns()),
                 ("max", |t| t.maximum.format_ns()),
                 ("n", |t| t.count.to_string()),
             ] {
@@ -6294,25 +6044,6 @@ fn write_interaction_script(
                     if k > 0 { data.push(','); }
                     data.push_str(&pick(cell_at(k).get(plot.scenario)));
                 }
-            }
-            for speed in 0..2 {
-                let suffix = if speed == 0 { "" } else { "2" };
-                for (key, pick) in [
-                    ("med", (|v: Speed| v.format_median(1)) as fn(Speed) -> String),
-                    ("cnt", |v| v.count.to_string()),
-                ] {
-                    write!(data, "],\"{key}{suffix}\":[").unwrap();
-                    for k in 0..plot.len() {
-                        if k > 0 { data.push(','); }
-                        let speeds = cell_at(k).get(plot.scenario).speeds();
-                        data.push_str(&pick(speeds[speed.min(speeds.len() - 1)]));
-                    }
-                }
-            }
-            data.push_str("],\"two\":[");
-            for k in 0..plot.len() {
-                if k > 0 { data.push(','); }
-                data.push_str(if cell_at(k).get(plot.scenario).two_speeds.is_some() { "1" } else { "0" });
             }
             data.push(']');
             data.push('}');
@@ -6662,11 +6393,6 @@ function relayout() {
   layoutProv();
 }
 
-/* A point's speed or speeds in the settled unit: "12" or "10 | 19", faster first. */
-function speedsText(s, k, p, digits) {
-  const one = v => fmt(v, p, digits);
-  return s.two[k] ? `${one(s.med[k])} | ${one(s.med2[k])}` : one(s.med[k]);
-}
 
 function relayoutPlot(p) {
   const plot = DATA.plots[p];
@@ -6680,8 +6406,8 @@ function relayoutPlot(p) {
     for (const i of visible) {
       const s = plot.series[i];
       for (let k = wnd.k0; k <= wnd.k1; k++) {
-        lo = Math.min(lo, s.med[k], s.med2[k]);
-        hi = Math.max(hi, s.med[k], s.med2[k]);
+        lo = Math.min(lo, s.med[k]);
+        hi = Math.max(hi, s.med[k]);
       }
     }
     return visible.length === 0 ? [0.1, 1] : [lo, hi];
@@ -6739,7 +6465,7 @@ function relayoutPlot(p) {
     old.querySelectorAll("text").forEach(t => { t.setAttribute("y", (mapY(+t.getAttribute("data-ns")) + 3.5).toFixed(2)); });
   }
 
-  /* Each series: median line, dots, value labels. */
+  /* Each series: its line through the means, dots, value labels. */
   plot.series.forEach((s, i) => {
     if (!s) return;
     const g = document.getElementById("series-" + p + "-" + i);
@@ -6747,16 +6473,14 @@ function relayoutPlot(p) {
     g.setAttribute("data-on", on[i] ? "true" : "false");
     dots.setAttribute("data-on", on[i] ? "true" : "false");
     if (!on[i]) return;
-    /* Each speed's segments keep their static strength (med2 repeats med at a point of one speed). */
     const pt = (k, v) => X[k].toFixed(2) + " " + mapY(v).toFixed(2);
     g.querySelectorAll(".median").forEach(el => {
-      const k = +el.getAttribute("data-k"), m = el.getAttribute("data-speed") === "1" ? s.med2 : s.med;
-      el.setAttribute("d", `M ${pt(k, m[k])} L ${pt(k + 1, m[k + 1])}`);
+      const k = +el.getAttribute("data-k");
+      el.setAttribute("d", `M ${pt(k, s.med[k])} L ${pt(k + 1, s.med[k + 1])}`);
     });
     dots.querySelectorAll(".dot").forEach(dot => {
       const k = +dot.getAttribute("data-size");
-      const m = dot.getAttribute("data-speed") === "1" ? s.med2 : s.med;
-      dot.setAttribute("transform", `translate(${X[k].toFixed(2)} ${mapY(m[k]).toFixed(2)})`);
+      dot.setAttribute("transform", `translate(${X[k].toFixed(2)} ${mapY(s.med[k]).toFixed(2)})`);
     });
   });
 
@@ -6781,7 +6505,7 @@ function relayoutPlot(p) {
           t.setAttribute("x", (k === w.k0 ? X[k] + 9 : X[k]).toFixed(2));
           t.setAttribute("text-anchor", k === w.k0 ? "start" : "middle");
           t.setAttribute("display", shown && y !== undefined ? "inline" : "none");
-          t.textContent = speedsText(plot.series[i], k, p, 2);
+          t.textContent = fmt(plot.series[i].med[k], p, 2);
         }
       });
     }
@@ -6813,9 +6537,7 @@ function relayoutPlot(p) {
     lab.setAttribute("transform", `translate(0 ${y.toFixed(2)})`);
     const detail = lab.querySelector(".series-detail");
     const s = plot.series[i];
-    detail.textContent = s.two[last]
-      ? `${speedsText(s, last, p, 2)} ${unitLabel(p)} at ${plot.sizes[last]}`
-      : `${fmt(s.med[last], p, 2)} ${unitLabel(p)} · ${fmtOther(s.med[last], p)} at ${plot.sizes[last]}`;
+    detail.textContent = `${fmt(s.med[last], p, 2)} ${unitLabel(p)} · ${fmtOther(s.med[last], p)} at ${plot.sizes[last]}`;
   }
 
   /*
@@ -7007,7 +6729,7 @@ function textEl(x, y, cls, content, extra) {
 }
 
 /*
- * Hovering a dot: the hovered contender's median and range at that point,
+ * Hovering a dot: the hovered contender's mean and range at that point,
  * then every visible contender of that plot ranked fastest first, each
  * with its speed relative to the hovered one. Hidden contenders stay out
  * of the ranking.
@@ -7041,19 +6763,8 @@ function showHover(p, focus, k) {
   /* In the rate unit the fastest sample (min time) is the top of the range. */
   const asc = (a, b) => unit === "ns" ? [a, b] : [b, a];
   const [rLo, rHi] = asc(f.min[k], f.max[k]);
-  const speedRow = (label, m, share) => {
-    body.appendChild(note(textEl(PAD, y, "hover-sub", `${label} ${fmt(m, p)} ${unitLabel(p)} (${fmtOther(m, p)})${share}`)));
-    y += 13;
-  };
-  if (f.two[k]) {
-    const total = f.cnt[k] + f.cnt2[k];
-    body.appendChild(note(textEl(PAD, y, "hover-sub", "Two speeds here: see the note [*] under the last plot.", { "font-weight": "700" })));
-    y += 13;
-    speedRow("median", f.med[k], ` · ${Math.round(f.cnt[k] * 100 / total)}% of timings`);
-    speedRow("median", f.med2[k], ` · ${Math.round(f.cnt2[k] * 100 / total)}% of timings`);
-  } else {
-    speedRow("median", f.med[k], "");
-  }
+  body.appendChild(note(textEl(PAD, y, "hover-sub", `mean ${fmt(f.med[k], p)} ${unitLabel(p)} (${fmtOther(f.med[k], p)})`)));
+  y += 13;
   body.appendChild(note(textEl(PAD, y, "hover-sub", `fastest and slowest of ${f.n[k]} timings: ${fmt(rLo, p)}–${fmt(rHi, p)} ${unitLabel(p)}`)));
 
   /* Code path at this point, by name; the Code paths section at the bottom says what it is. */
@@ -7076,18 +6787,13 @@ function showHover(p, focus, k) {
       let rel, color;
       if (i === focus) { rel = "—"; color = "#9a9a9a"; }
       else {
-        /* Every pairing of the focus's speeds with this row's: time ratios, focus over row. */
-        const mine = f.two[k] ? [f.med[k], f.med2[k]] : [f.med[k]];
-        const theirs = s.two[k] ? [s.med[k], s.med2[k]] : [s.med[k]];
-        const ratios = mine.flatMap(a => theirs.map(b => a / b));
-        const rMin = Math.min(...ratios), rMax = Math.max(...ratios);
-        const x = (a, b) => a.toFixed(2) === b.toFixed(2) ? a.toFixed(2) : `${a.toFixed(2)}–${b.toFixed(2)}`;
-        if (rMin > 0.95 && rMax < 1.05) { rel = "about the same"; color = "#777777"; }
-        else if (rMin >= 1.05) { rel = "\u25b2 " + x(rMin, rMax) + "\u00d7 faster"; color = "#15803d"; }
-        else if (rMax <= 0.95) { rel = "\u25bc " + x(1 / rMax, 1 / rMin) + "\u00d7 slower"; color = "#b91c1c"; }
-        else { rel = x(rMin, rMax) + "\u00d7, faster or slower"; color = "#777777"; }
+        /* The focus's mean over this row's: the row's time ratio. */
+        const r = f.med[k] / s.med[k];
+        if (r > 0.95 && r < 1.05) { rel = "about the same"; color = "#777777"; }
+        else if (r >= 1.05) { rel = "\u25b2 " + r.toFixed(2) + "\u00d7 faster"; color = "#15803d"; }
+        else { rel = "\u25bc " + (1 / r).toFixed(2) + "\u00d7 slower"; color = "#b91c1c"; }
       }
-      return { i, s, name: name(i), value: speedsText(s, k, p), other: s.two[k] ? `${other(s.med[k])} | ${other(s.med2[k])}` : other(med), rel, color };
+      return { i, s, name: name(i), value: fmt(s.med[k], p), other: other(med), rel, color };
     });
     const GAP = 14;
     const colW = (key, cls, head) => Math.max(widthOf(head, "hover-sub"), ...table.map(r => widthOf(r[key], cls)));
@@ -7123,7 +6829,7 @@ function showHover(p, focus, k) {
       relCells.push(rel);
     }
     y += 12;
-    body.appendChild(note(textEl(PAD, y, "hover-note", `each row's speed compared with ${name(focus)}; medians, ranked fastest first`)));
+    body.appendChild(note(textEl(PAD, y, "hover-note", `each row's speed compared with ${name(focus)}; means, ranked fastest first`)));
     y += 4;
     /* The comparison column ends at the panel's right edge, known once every line is measured. */
     relCells.forEach(el => el.setAttribute("x", wide - PAD));
@@ -7350,6 +7056,7 @@ fn xml_escape(input: &str) -> String {
 
 #[cfg(test)]
 mod harness_tests;
+mod b3sum;
 
 #[cfg(test)]
 mod correctness_tests {
@@ -7451,8 +7158,8 @@ mod correctness_tests {
                     samples.solo_started_ns[a][p].push(r as u64 * 1_000_000);
                 }
                 results[a][p] = Some(Cell {
-                    solo: summarize(&mut per_units(&samples.solo[a][p])),
-                    shared: Scenario::Shared.measures(POINTS[p].use_case).then(|| summarize(&mut per_units(&samples.shared[a][p]))),
+                    solo: summarize_measured(&samples.solo[a][p]),
+                    shared: Scenario::Shared.measures(POINTS[p].use_case).then(|| summarize_measured(&samples.shared[a][p])),
                 });
             }
         }
@@ -7485,7 +7192,7 @@ mod correctness_tests {
             for sample in samples.shared[a][p16].iter_mut() {
                 *sample = Measured::new(sample.ns * factor.0 / factor.1, sample.units);
             }
-            results[a][p16].as_mut().unwrap().shared = Some(summarize(&mut per_units(&samples.shared[a][p16])));
+            results[a][p16].as_mut().unwrap().shared = Some(summarize_measured(&samples.shared[a][p16]));
         }
         let report = consistency(&roster, &results);
         for (check, who) in [("nonstop slower than after other work", "SHA-256"),
@@ -7536,15 +7243,18 @@ mod correctness_tests {
     }
 
     #[test]
-    fn medians_at_decimal_halfways_round_the_original_measurement_once() {
+    fn means_at_decimal_halfways_round_the_original_measurement_once() {
         // Independently established rational values: 2135/400 = 5.3375,
         // 20555/400 = 51.3875; half-up decimal rounding gives these anchors.
         for (ns, expected) in [(2135, "5.338"), (20555, "51.388")] {
             let measured = [Measured::new(ns, 400), Measured::new(ns, 400)];
             let statistics = summarize_measured(&measured);
-            assert_eq!(statistics.speeds()[0].format_median(1), expected);
-            assert_eq!(statistics.speeds()[0].format_median(400), format!("{ns}.000"));
+            assert_eq!(statistics.format_mean(1), expected);
+            assert_eq!(statistics.format_mean(400), format!("{ns}.000"));
         }
+        // A mean is total time over total work: 3000 ns over 400 and 1000
+        // over 400 make 4000 over 800, 5 ns a unit.
+        assert_eq!(summarize_measured(&[Measured::new(3000, 400), Measured::new(1000, 400)]).format_mean(1), "5.000");
     }
 
     #[test]
@@ -7588,21 +7298,20 @@ mod correctness_tests {
     }
 
     /// The samples file reads back into the figures the report prints:
-    /// every cell, one speed and two (read_samples, as `compare` reads it).
+    /// every cell (read_samples, as `compare` reads it).
     #[test]
     fn samples_file_reads_back_into_the_reports_figures() {
         let roster = Roster::new(vec![Algorithm::Blake3ServilSt, Algorithm::Sha256Ring], true,
             Some(vec![point("64 B", UseCase::OneMessage), point("64 B", UseCase::LentMessages), point("16", UseCase::LentBatches)]), Some(20));
-        // Contender 1's lent cells run at two speeds: 3 rounds in 10 twice as slow.
+        // Contender 1's lent cells: 3 rounds in 10 twice as slow.
         let (_, samples) = run(&roster, 20, |a, p, r| if a == 1 && POINTS[p].use_case != UseCase::OneMessage && r % 10 < 3 { 20_000 + r as u64 } else { 10_000 + 7 * r as u64 });
         let tsv = generate_samples_tsv(&roster, &samples, &machine_metadata(), "test");
         let path = std::env::temp_dir().join(format!("bench-hashes-readback-{}.tsv", std::process::id()));
         fs::write(&path, &tsv).unwrap();
         let read = read_samples(path.to_str().unwrap());
         fs::remove_file(&path).unwrap();
-        let figures = |cell: &[Measured]| summarize_measured(cell).speeds().iter().map(|speed| speed.format_median(1)).collect::<Vec<_>>();
+        let figures = |cell: &[Measured]| summarize_measured(cell).format_mean(1);
         let mut checked = 0;
-        let mut two = 0;
         for (a, algorithm) in roster.algorithms.iter().enumerate() {
             for &p in &roster.points {
                 for (scenario, cell) in [("solo", &samples.solo[a][p]), ("shared", &samples.shared[a][p])] {
@@ -7612,13 +7321,11 @@ mod correctness_tests {
                     let key = format!("{}|{scenario}|{:?}|{}", algorithm.key(), POINTS[p].use_case, POINTS[p].label);
                     let (_, back) = read.cells.iter().find(|(k, _)| *k == key).unwrap_or_else(|| panic!("{key} read back"));
                     assert_eq!(figures(back), figures(cell), "{key}");
-                    two += usize::from(figures(cell).len() == 2);
                     checked += 1;
                 }
             }
         }
         assert_eq!(checked, read.cells.len(), "every cell read back, none more");
-        assert!(two >= 2, "two-speed cells among them");
     }
 
     #[test]

@@ -14,10 +14,10 @@ code's own tables and fails when they differ.
 that a number, a verdict, and a picture from later mean what they mean
 now, and people can compare results by eye: how samples are taken (the
 rounds, the sample lengths, the gaps, the contender orders), the
-contenders and their versions, the two-speed rule and medians
-(`clocks::speeds`), the load rule (`clocks::load`), the regression check
-(`bench-hashes regress`: its points, its fast-speed statistic, its margins
-of 3% solo and 10% shared, its control, and its confirmation), and the
+contenders and their versions, the summary rule (each run's mean, pairs
+of runs: `clocks::summary`), the load rule (`clocks::load`), the
+regression check (`bench-hashes regress`: its points, its pairs, its
+margins of 3% solo and 10% shared), and the
 presentation (the graph, the guide, and the report, their layout and
 their words). A change to any of these, a bug fix included, is Zooko's
 decision, recorded here with its date and reason, and it starts a new
@@ -25,7 +25,29 @@ release, so results of different benchmarks are never read as alike. The
 documents that explain the benchmark (README, METHODOLOGY, CONTRIBUTING,
 the notes) may still change, to say it better.
 
-**Changes since 0.10.0** (Zooko, October 2, 2026), for the next release:
+**Changes since 0.11.0** (Zooko, October 2, 2026), for the next release,
+from the regression check's calibration (the fork's NOTES, "The
+regression check, calibrated"):
+- Every summary is a run's mean, the total time of its samples over the
+  total work they did (`clocks::summary`); the two-speed rule, its
+  cut-offs, the graph's second line and its footnote, and the guide's
+  fainter dots go. Results of 0.11.0 and earlier were summarised by
+  medians, speed by speed: compare them only release with release.
+- `regress` judges eight pairs of runs over the lent cells (`lent 64 B`,
+  `lent 64 KiB`, `lent 1 MiB`, `lent pieces 64 MiB`, `lent batch 16`,
+  `lent batch 4096`): a cell is slower when the median of its pairs'
+  ratios exceeds 3% (solo) or 10% (shared) and an exact sign test agrees.
+  The queue's cells, the SHA-256 control, and the confirmation stage go;
+  a shared cell slower holds the change too.
+- A cell's samples are sized after one untimed call of its batch (Devon
+  Jonte's finding: the queue's first calls sized its 64 B samples short),
+  in place of the single-call retiming.
+- `compare` says so beside any run whose load was unmeasured, as well as
+  busy (Devon Jonte's finding).
+- `bench-hashes b3sum` measures builds of b3sum (it was the fork's
+  tools/b3sum-bench), in this samples format.
+
+**Changes in 0.11.0** (Zooko, October 2, 2026):
 - The fork's queue takes a mode and a handler (`Queue::messages(mode,
   handler)`): the fork removed its time-or-energy choice, whose
   complexity outweighed its likely use, and the benchmark called
