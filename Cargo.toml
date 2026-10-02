@@ -5,6 +5,10 @@ edition = "2021"
 rust-version = "1.88"
 build = "build.rs"
 
+[features]
+# probe/summary-calibration: about 2 KiB more code, the same hashing, another layout.
+layout-perturb = []
+
 [dependencies]
 # The one place clocks are read (the fork's clocks/ crate): wall time, and
 # the thread's counts per core kind.

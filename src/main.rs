@@ -1444,6 +1444,11 @@ fn main() {
     if arguments.first().map(String::as_str) == Some("regress") {
         std::process::exit(regress_command(&arguments[1..]));
     }
+    if arguments.first().map(String::as_str) == Some("regress-pairs") {
+        std::process::exit(regress_pairs_command(&arguments[1..]));
+    }
+    #[cfg(feature = "layout-perturb")]
+    black_box(layout_perturbation(arguments.len() as u64));
     let Options { selection, explicit, points, rounds, trace_path, quick } = parse_arguments();
     let mut trace = trace_path.map(ClockTrace::new);
     let mut machine = machine_metadata();
@@ -3981,6 +3986,100 @@ fn regress_command(arguments: &[String]) -> i32 {
     }
     println!("{}", power(&seen));
     code
+}
+
+/*
+ * probe/summary-calibration: the design under calibration (bench-hashes
+ * NEXT-STEPS; Zooko, October 2, 2026). PAIRS runs of each side over the
+ * regress points, A B B A ...; each run's cell summarised by its mean, total
+ * timed ns over total units; each pair's ratio, new mean over old, per
+ * cell. A cell is slower when the median of its ratios exceeds 1 + its
+ * margin (3% solo, 10% shared) and at least K of the PAIRS ratios exceed 1,
+ * K the least count an exact sign test puts at one-sided p <= 5%; faster
+ * alike. No verdict when a run's load was busy or unobserved. Every pair's
+ * ratios go to RATIOS (a TSV) for analysis at other pair counts.
+ */
+fn regress_pairs_command(arguments: &[String]) -> i32 {
+    let usage = "usage: bench-hashes regress-pairs OLD_EXE NEW_EXE PAIRS RATIOS.tsv";
+    let [old_exe, new_exe, pairs, ratios_path] = arguments else { panic!("{usage}") };
+    let pairs: usize = pairs.parse().expect(usage);
+    assert!(pairs >= 2, "{usage}");
+    let points = REGRESS_POINTS.join(",");
+    // Each run: cell -> (total ns, total units).
+    type Means = std::collections::HashMap<String, (u128, u128)>;
+    let mut busy = Vec::new();
+    let mut run = |exe: &str| -> Means {
+        let file = regress_run(exe, &points);
+        if file.load.starts_with("busy") || file.load.starts_with("not measured") {
+            busy.push(file.load.clone());
+        }
+        file.cells.into_iter().map(|(key, samples)| {
+            let ns: u128 = samples.iter().map(|m| u128::from(m.ns)).sum();
+            let units: u128 = samples.iter().map(|m| u128::from(m.units)).sum();
+            (key, (ns, units))
+        }).collect()
+    };
+    let mut ratios: std::collections::BTreeMap<String, Vec<u64>> = std::collections::BTreeMap::new();
+    let mut tsv = String::from("pair\tcell\tratio_permille\n");
+    let began = clocks::now();
+    for pair in 0..pairs {
+        let (old, new) = if pair % 2 == 0 { let o = run(old_exe); (o, run(new_exe)) } else { let n = run(new_exe); (run(old_exe), n) };
+        for (key, &(old_ns, old_units)) in &old {
+            let (new_ns, new_units) = new[key];
+            // (new_ns / new_units) / (old_ns / old_units), in permille, rounded.
+            let (num, den) = (new_ns * old_units, old_ns * new_units);
+            let permille = u64::try_from((num * 1000 + den / 2) / den).unwrap();
+            tsv += &format!("{pair}\t{key}\t{permille}\n");
+            ratios.entry(key.clone()).or_default().push(permille);
+        }
+    }
+    fs::write(ratios_path, tsv).unwrap();
+    let seconds = clocks::since_ns(began) / 1_000_000_000;
+    if !busy.is_empty() {
+        println!("regress-pairs: verdict none (busy or unobserved load in {} runs), {seconds} s", busy.len());
+        return 2;
+    }
+    // The least k with P(X >= k) <= 5% for X ~ Binomial(pairs, 1/2), exactly.
+    let total = 1u128 << pairs;
+    let binomial = |n: usize, k: usize| -> u128 { (0..k).fold(1u128, |c, i| c * (n - i) as u128 / (i + 1) as u128) };
+    let k = (0..=pairs).find(|&k| (k..=pairs).map(|j| binomial(pairs, j)).sum::<u128>() * 20 <= total).unwrap_or(pairs + 1);
+    let mut slower = Vec::new();
+    let mut faster = Vec::new();
+    for (key, values) in &ratios {
+        let mut sorted = values.clone();
+        sorted.sort_unstable();
+        let n = sorted.len();
+        let median = if n % 2 == 1 { sorted[n / 2] } else { (sorted[n / 2 - 1] + sorted[n / 2]).div_ceil(2) };
+        let m = regress_margin_permille(key);
+        let above = values.iter().filter(|&&r| r > 1000).count();
+        let below = values.iter().filter(|&&r| r < 1000).count();
+        if median > 1000 + m && above >= k {
+            slower.push(format!("{key} {median}"));
+        } else if median < 1000 - m && below >= k {
+            faster.push(format!("{key} {median}"));
+        }
+    }
+    let held: Vec<&String> = slower.iter().filter(|c| c.split('|').nth(1) == Some("solo") && !c.starts_with(REGRESS_CONTROL.key())).collect();
+    for cell in &slower {
+        println!("regress-pairs: slower {cell}");
+    }
+    for cell in &faster {
+        println!("regress-pairs: faster {cell}");
+    }
+    println!("regress-pairs: verdict {} (k {k} of {pairs}), {seconds} s", if held.is_empty() { "pass" } else { "held" });
+    if held.is_empty() { 0 } else { 1 }
+}
+
+#[cfg(feature = "layout-perturb")]
+#[inline(never)]
+fn layout_perturbation(x: u64) -> u64 {
+    // About 2 KiB of code the program never runs for a real input: it moves
+    // everything after it in the binary (probe/summary-calibration).
+    let mut v = x;
+    for i in 0..64u64 {
+        v = v.wrapping_mul(6364136223846793005 ^ i).rotate_left((i % 63) as u32).wrapping_add(i);
+    }
+    v
 }
 
 fn generate_samples_tsv(roster: &Roster, samples: &RunSamples, machine: &MachineMetadata, selection_note: &str) -> String {
