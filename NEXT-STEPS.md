@@ -12,6 +12,45 @@ before touching kernels or the pool); this repository's are in `NOTES.md`.
 Every open item, from every block below, is in one list: the fork's
 NOTES "Future work"; the blocks below are history.
 
+## Resume here (October 2, 2026, evening UTC): one summary, one gate, one tool
+
+**State.** Fork `servil` = eb5e0af (promoted; its perf note has the gate):
+`clocks::summary` (each run's mean; pairs of runs; the median of their
+ratios and an exact sign test) replaces `clocks::speeds`; Devon Jonte's
+busy-tail fix; `tools/b3sum-bench` gone into bench-hashes. Fork
+`candidate/api-plan-simple` = servil + docs (PROCEDURES on layout holds,
+NOTES "The regression check, calibrated" with the Mac and VM numbers).
+bench-hashes `candidate/benchmark-plan` f08807a, its lock at servil
+eb5e0af: the mean everywhere (report, graph, guide, checks, compare),
+`regress` as eight pairs over the lent cells solo at 3% (no queue cells,
+no shared, no control, no confirmation; about 30 s), priming, `compare`
+naming unmeasured load, `bench-hashes b3sum`; FROZEN.md "Changes since
+0.11.0"; AGENTS (both): the mean rule, and the gate's cells and margins
+the team's to set. CI green on 27157be (f08807a adds the VM record).
+Devon: #8 merged, #5 and #9 closed as superseded, #4 answered.
+Next runner job 1174.
+
+**For 0.12.0, waiting for Zooko's sign-off:**
+1. A quiet Mac record: four tries (jobs 1170-1173) each met one to
+   fifteen windows just over 1 CPU of other load (0.33-0.44 on average),
+   something waking on the Mac; close what runs and run a `--all`
+   benchmark job on servil eb5e0af with bench f08807a (or its successor),
+   copy it into benchmark-results/AppleM4Max.darwin25/, and run check.js
+   and guide.js on it (both passed on the busy job 1173's files).
+2. Then the release: promote candidate/benchmark-plan to main, `python3
+   tools/gen-ver.py 0.12.0`, push main and the tag, a GitHub Release
+   (FROZEN.md's "Changes since 0.11.0" is its text), Pages.
+
+**The calibration** (the fork's NOTES): the gate as built held a
+layout-only change 1 time in 8 on the Mac (servil st lent 64 B at +3.5%,
+a real effect of where the code landed), none in the VM; it held +3% 4
+of 7 (Mac) and 5 of 8 (VM), +6% every time. PROCEDURES says how a lone
+64 B hold near the margin lands.
+
+**Next work:** the queue's cells stable enough to judge (their means move
+6-60% between processes of identical code; the streaming APIs come
+first); then the rest of the fork's NOTES "Future work".
+
 ## Resume here (October 2, 2026, early afternoon UTC): simpler API, b3sum measured
 
 Zooko set the direction this morning, then slept; John Servil worked on.
