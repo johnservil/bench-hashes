@@ -392,8 +392,8 @@ pub fn command(args: &[String]) {
 
     let directory = output_directory(&machine);
     fs::create_dir_all(&directory).unwrap();
-    let mut tsv = format!("{SAMPLES_VERSION}\n# timestamp: {}\n# cpu type: {}\n# cpu count: {}\n# os type: {}\n# files: {} on {filesystem}\n# rounds: {rounds}\n",
-        machine.timestamp, machine.cpu_type, machine.cpu_count, machine.os_type, files_dir.display());
+    let mut tsv = format!("{SAMPLES_VERSION}\n# timestamp: {}\n# bench-hashes version: {}\n# git commit: {}\n# cpu type: {}\n# cpu count: {}\n# os type: {}\n# files: {} on {filesystem}\n# rounds: {rounds}\n",
+        machine.timestamp, super::BENCH_VERSION, super::GIT_COMMIT, machine.cpu_type, machine.cpu_count, machine.os_type, files_dir.display());
     for c in &specs {
         tsv += &format!("# contender {}: {} {} (blake3 {}; {})\n", c.name, c.program.display(), c.args.join(" "), c.digest, c.version);
     }
@@ -421,11 +421,14 @@ pub fn command(args: &[String]) {
             }
         }
     }
-    fs::write(directory.join("b3sum.samples.tsv"), tsv).unwrap();
+    let samples_path = directory.join("b3sum.samples.tsv");
+    fs::write(&samples_path, tsv).unwrap();
+    let chart = super::chart::from_samples(samples_path.to_str().expect("a path in UTF-8")).expect("a b3sum run draws its chart");
+    fs::write(directory.join("b3sum.chart.svg"), chart).unwrap();
     let report = report(&specs, &inputs, &caches, &cells, &machine, &filesystem, quick, rounds);
     fs::write(directory.join("b3sum.result.txt"), &report).unwrap();
     print!("{report}");
-    eprintln!("bench-hashes b3sum: report and samples in {}", directory.display());
+    eprintln!("bench-hashes b3sum: report, samples, and chart in {}", directory.display());
 }
 
 // ---------- The report ----------
@@ -452,7 +455,7 @@ fn rate(bytes: u64, ns: u128) -> String {
 }
 
 /// Nanoseconds for people: "812 us", "1.23 ms", "2.05 s" (three significant digits).
-fn time(ns: u128) -> String {
+pub(crate) fn time(ns: u128) -> String {
     match ns {
         n if n < 1_000 => format!("{n} ns"),
         n if n < 1_000_000 => format!("{} us", three(n, 1_000)),

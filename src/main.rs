@@ -1412,6 +1412,9 @@ fn main() {
     if arguments.first().map(String::as_str) == Some("b3sum") {
         return b3sum::command(&arguments[1..]);
     }
+    if arguments.first().map(String::as_str) == Some("chart") {
+        return chart::command(&arguments[1..]);
+    }
     let Options { selection, explicit, points, rounds, trace_path, quick } = parse_arguments();
     let mut trace = trace_path.map(ClockTrace::new);
     let mut machine = machine_metadata();
@@ -1495,6 +1498,19 @@ fn main() {
         None => println!("# No graph: plots need at least two consecutive points from each axis’s start (its one point, on an axis of one) and a measured cell for every selected contender."),
     }
     println!("# Samples (TSV) are in \"{}\" .", samples_path.display());
+    let chart_path = directory.join(format!("{stem}.chart.svg"));
+    match chart::from_samples(samples_path.to_str().expect("a path in UTF-8")) {
+        Some(chart) => {
+            fs::write(&chart_path, chart).unwrap_or_else(|error| panic!("failed to write {}: {error}", chart_path.display()));
+            println!("# Speed chart (SVG) is in \"{}\" .", chart_path.display());
+        }
+        None => {
+            // A quick run has no 1 MiB cells: no chart, and none left from an older run.
+            if chart_path.exists() {
+                fs::remove_file(&chart_path).unwrap_or_else(|error| panic!("failed to remove stale {}: {error}", chart_path.display()));
+            }
+        }
+    }
 }
 
 /// Sparse runs replace the report and samples too, so any older full-run
@@ -3610,6 +3626,8 @@ const SAMPLES_COLUMNS: &str = "contender\tscenario\tuse_case\tpoint\tunit\tns/un
 /// "quiet: ..." or "busy: ..."), and each cell's samples as measured,
 /// keyed "contender|scenario|use_case|point", in the file's order.
 struct SamplesFile {
+    /// Its `# key: value` lines, in order.
+    headers: Vec<(String, String)>,
     load: String,
     /// Its `# power:` line.
     power: String,
@@ -3622,6 +3640,7 @@ fn read_samples(path: &str) -> SamplesFile {
     assert_eq!(lines.next(), Some(SAMPLES_VERSION), "{path}: a samples file of this version begins with {SAMPLES_VERSION:?}");
     let mut load = None;
     let mut power = None;
+    let mut headers = Vec::new();
     let mut columns = false;
     let mut cells = Vec::new();
     for line in lines {
@@ -3630,6 +3649,9 @@ fn read_samples(path: &str) -> SamplesFile {
         } else if let Some(rest) = line.strip_prefix("# power: ") {
             power = Some(rest.to_owned());
         } else if line.starts_with('#') || line.is_empty() {
+            if let Some((key, value)) = line.strip_prefix("# ").and_then(|rest| rest.split_once(": ")) {
+                headers.push((key.to_owned(), value.to_owned()));
+            }
         } else if !columns {
             assert_eq!(line, SAMPLES_COLUMNS, "{path}: the column row");
             columns = true;
@@ -3645,7 +3667,7 @@ fn read_samples(path: &str) -> SamplesFile {
             cells.push((key, samples));
         }
     }
-    SamplesFile { load: load.unwrap_or_else(|| panic!("{path}: a load line")), power: power.unwrap_or_else(|| panic!("{path}: a power line")), cells }
+    SamplesFile { headers, load: load.unwrap_or_else(|| panic!("{path}: a load line")), power: power.unwrap_or_else(|| panic!("{path}: a power line")), cells }
 }
 
 /*
@@ -7056,6 +7078,7 @@ fn xml_escape(input: &str) -> String {
 #[cfg(test)]
 mod harness_tests;
 mod b3sum;
+mod chart;
 
 #[cfg(test)]
 mod correctness_tests {
