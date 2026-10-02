@@ -32,30 +32,23 @@ Run `sh /workspace/vm/setup.sh` first.
   question goes to Zooko" (a second mechanism?). One list of open items:
   the fork's NOTES "Future work".
 
-**State.** Fork `candidate/api-plan-simple` 3a84f00 (servil aa3d8d8 +
-the API simplification, b3sum-bench, clocks::child, docs, the qemu test
-fix, CI's perf-regress now checking out bench-hashes'
-candidate/benchmark-plan). `candidate/b3sum-pool` (0d99f9a, on 4153dfb):
-b3sum on the pool. `probe/b3sum-bench-mac`: the Mac launcher. bench-hashes
-`candidate/benchmark-plan` 441ad42 (+ this note): the queue without
-Efficiency, the guide's four questions, kept buffers written. Its lock
-still pins b132f8c, so it builds only through the patch until the pin.
-Next runner job 1143.
-
-**Gate evidence for promoting candidate/api-plan-simple** (not promoted:
-waiting on CI's run of 3a84f00, which runs Miri on the pool's changed
-counting): VM suites pass (lib 92/87/74, doc, api_plan, one_cpu,
-queue_no_alloc, b3sum, clocks); Mac test job 1138 passed (on 0d99f9a,
-a superset); VM regression check by hand across the API change (old fork
-with the old benchmark, new with the new): no regression; Mac A/B jobs
-1139-1142 (old new new old, same split): 16 servil cells faster and 14
-slower beyond both controls (after-gap batch cells, both ways), ring 9
-of 76 cells moved over 10%: no evidence of a change. perf_regress cannot
-compare across the API change; a direct A/B is the procedure's answer.
+**State.** Fork `servil` = `candidate/api-plan-simple` = 44ab752,
+promoted through the gate (`git notes --ref=perf show servil`: suites
+both machines, Miri at 4 and 16 CPUs, the VM's check by hand across the
+API change, the Mac's direct A/B jobs 1139-1142: no evidence of a
+change). `candidate/b3sum-pool` (0d99f9a, on 4153dfb): b3sum on the
+pool, not promoted (item 4). `probe/b3sum-bench-mac`: the Mac launcher.
+bench-hashes **0.11.0 released** (tag v0.11.0+096d6a2, GitHub Release
+with notes, Pages building from main f564f67): its lock pins servil
+44ab752; records Mac job 1145 and the VM, both quiet, graph and guide
+checks pass; CI green on four platforms. gen-ver now rewrites the lock's
+own entry (0.10.0's tag had a lock that --locked refused). CI's
+perf-regress in the fork checks out bench-hashes' candidate/benchmark-
+plan. Next runner job 1146.
 
 **The current to-do list** (Zooko's, October 2; the rest is in Future work):
-1. Promote candidate/api-plan-simple once CI reads green; then pin
-   bench-hashes to it and release (records on both machines, Pages).
+1. Done: promoted and released (above). Read the fork's CI run of
+   44ab752 (its tests workflow was queued) and the Pages site.
 2. **Make good benchmarks of b3sum.** Built: tools/b3sum-bench (fork; its
    README). Mac jobs 1136-1137 (two runs agree within 1-3%), VM runs;
    NOTES "b3sum, measured". Next: a runner job type for it (a restart of
