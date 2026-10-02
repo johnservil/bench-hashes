@@ -68,11 +68,11 @@ plan. Next runner job 1146.
    Done (fork 9450ad2; VM check no verdict twice, the control moving;
    Mac perf_regress job 1147: no regression): the crate docs' "Memory"
    section; initialize_multithreaded starts the queue's delivery thread.
-   Left, for Zooko: the multithreaded calls' list of pieces (48 bytes
-   per 128 KiB of input, at most 200 more per CPU, freed at return) is
-   the one allocation inside hashing; a fixed bound needs a cut with a
-   bounded number of pieces (today at most 128 KiB each), a speed
-   question for a Mac A/B.
+   Decided (Zooko, October 2): the multithreaded calls keep their list of
+   pieces (48 bytes per 128 KiB of input, at most 200 more per CPU, freed
+   at return), documented: a window sliding along the input would bound
+   it at the cost of a second mechanism (refilling the window, merging as
+   it goes), and simplicity of implementation wins here.
 4. candidate/b3sum-pool: warm files 1.5x (Mac) to 2.3x (VM) faster; cold
    files read slower through the pool's mapping (VM 16 MiB 2.0x Rayon's
    time, Mac 1 GiB 1.10x): open, and the reason to try reads into the
