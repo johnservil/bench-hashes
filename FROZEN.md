@@ -25,7 +25,13 @@ release, so results of different benchmarks are never read as alike. The
 documents that explain the benchmark (README, METHODOLOGY, CONTRIBUTING,
 the notes) may still change, to say it better.
 
-**Changes since 0.11.0** (Zooko, October 2, 2026), for the next release,
+**Changes since 0.12.0** (Zooko, October 2, 2026), for the next release:
+- Each run draws a chart from its samples file: `bench-hashes.chart.svg`
+  (one 1 MiB message after other work, as bars) and, for b3sum,
+  `b3sum.chart.svg`; `bench-hashes chart SAMPLES.tsv` draws one again
+  from a stored file. The READMEs show the published records' charts.
+
+**Changes in 0.12.0** (Zooko, October 2, 2026),
 from the regression check's calibration (the fork's NOTES, "The
 regression check, calibrated"):
 - Every summary is a run's mean, the total time of its samples over the

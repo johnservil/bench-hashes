@@ -8,9 +8,12 @@ It depends on your computer, on how long your messages are, and on how
 your program calls the hash. bench-hashes measures them on your
 computer, from 64-byte messages to 128 MiB and in batches of small
 messages, called now and then or nonstop, and draws the answer as an
-interactive graph you open in a web browser.
+interactive graph you open in a web browser. One message of 1 MiB on an
+Apple M4 Max:
 
-Results so far:
+<img src="benchmark-results/AppleM4Max.darwin25/bench-hashes.chart.svg" alt="Hashing one 1 MiB message on an Apple M4 Max: BLAKE3 on every core and on one core beside SHA-256, SHA3-256, and SHA-1, in GB/s" width="720">
+
+Every size, on each machine measured so far:
 
 - [Apple M4 Max, macOS](https://johnservil.github.io/bench-hashes/benchmark-results/AppleM4Max.darwin25/bench-hashes.graph.svg)
 - [A Linux VM on that Mac](https://johnservil.github.io/bench-hashes/benchmark-results/aarch64.linux618520virt/bench-hashes.graph.svg)
@@ -42,6 +45,9 @@ The run writes these files to `benchmark-results/`, in a folder named after
 your CPU and operating system:
 
 - `bench-hashes.graph.svg`: the graph. Open it in a web browser.
+- `bench-hashes.chart.svg`: one 1 MiB message as bars, a picture to share
+  (a full run draws it; `bench-hashes chart` draws it again from a
+  samples file).
 - `bench-hashes.result.txt`: the same numbers as text tables.
 - `bench-hashes.guide.html`: for programmers who want to call BLAKE3
   from their own code (see "Which function to use", below).
@@ -111,9 +117,15 @@ appended); `tools/b3sum-contenders.sh` builds official BLAKE3's `b3sum`
 1.8.2 and the fork's at given commits. The first contender is the one
 the others are compared with. `--files` chooses where the files live:
 put them on the storage you care about (they are made once, 1.4 GiB, and
-kept). `--quick` runs a smaller set in seconds. The report and samples go
-to `benchmark-results/`, as `b3sum.result.txt` and `b3sum.samples.tsv`;
-`bench-hashes compare` reads the samples as it reads the hashes'.
+kept). `--quick` runs a smaller set in seconds. The report, samples, and
+a chart go to `benchmark-results/`, as `b3sum.result.txt`,
+`b3sum.samples.tsv`, and `b3sum.chart.svg`; `bench-hashes compare` reads
+the samples as it reads the hashes'.
+
+Results so far, warm and cold, official b3sum beside the fork's:
+
+- [Apple M4 Max, macOS](https://johnservil.github.io/bench-hashes/benchmark-results/AppleM4Max.darwin25/b3sum.chart.svg)
+- [A Linux VM on that Mac](https://johnservil.github.io/bench-hashes/benchmark-results/aarch64.linux618520virt/b3sum.chart.svg)
 
 ## Share your results
 

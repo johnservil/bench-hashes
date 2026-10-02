@@ -569,13 +569,23 @@ the rounds, of its time against the first contender's in the same round,
 marked slower or faster by the rule `regress` uses (3%, an exact sign
 test over the rounds).
 
+The run writes `b3sum.result.txt` (the report), `b3sum.samples.tsv` (each
+run's time, and its counts as `# counts` lines), and `b3sum.chart.svg`: a
+panel for warm and for cold, a row for each input, a bar for each build
+as long as its speed against the row's fastest, labelled with its mean
+time per run and its `xN`.
+
 ## Output
 
 The run prints the text report on stdout and progress on stderr (the
 phase, a bar over the sample rounds, and the running mean of every
-contender at the largest input size), and writes five files to
+contender at the largest input size), and writes six files to
 `benchmark-results/{CPU}.{OS}/`: `bench-hashes.result.txt` (the
-report), `bench-hashes.graph.svg` (the graph), `bench-hashes.guide.html`
+report), `bench-hashes.graph.svg` (the graph), `bench-hashes.chart.svg`
+(one 1 MiB message after other work as bars: BLAKE3 servil on every core
+and on one, and the fastest measured member of SHA-256, SHA3-256, and
+SHA-1, from each cell's mean; a quick run, which stops below 1 MiB, draws
+none), `bench-hashes.guide.html`
 (the guide for programmers), `bench-hashes.checks.txt` (the consistency
 checks, above), and `bench-hashes.samples.tsv` (every sample of every cell, every scenario,
 in the order taken, each as `ns/units`, and in a last column the
@@ -583,6 +593,11 @@ millisecond each sample started, with the provenance, the CPU's identity,
 and the load windows as `# key: value` lines). `bench-hashes compare` and `bench-hashes regress` read it. `--trace-clocks PATH` also writes each
 sample's thread counts per core kind (cycles, instructions, time), the
 clock each call ran at.
+
+`bench-hashes chart SAMPLES.tsv` draws a samples file's chart again
+beside it: `bench-hashes.chart.svg` from a run's samples, `b3sum.chart.svg`
+from a b3sum run's. Both come from the samples alone, so a stored record
+draws the same chart its run did.
 
 ## Load from other programs
 
