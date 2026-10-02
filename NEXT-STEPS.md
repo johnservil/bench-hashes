@@ -30,16 +30,10 @@ the team's to set. CI green on 27157be (f08807a adds the VM record).
 Devon: #8 merged, #5 and #9 closed as superseded, #4 answered.
 Next runner job 1174.
 
-**For 0.12.0, waiting for Zooko's sign-off:**
-1. A quiet Mac record: four tries (jobs 1170-1173) each met one to
-   fifteen windows just over 1 CPU of other load (0.33-0.44 on average),
-   something waking on the Mac; close what runs and run a `--all`
-   benchmark job on servil eb5e0af with bench f08807a (or its successor),
-   copy it into benchmark-results/AppleM4Max.darwin25/, and run check.js
-   and guide.js on it (both passed on the busy job 1173's files).
-2. Then the release: promote candidate/benchmark-plan to main, `python3
-   tools/gen-ver.py 0.12.0`, push main and the tag, a GitHub Release
-   (FROZEN.md's "Changes since 0.11.0" is its text), Pages.
+**Released: bench-hashes 0.12.0** (tag v0.12.0+0aca113, GitHub Release
+with notes, Pages from main 250f754): records Mac job 1174 and the VM,
+both quiet, graph and guide checks pass, CI green on b3b77fa. Mac jobs
+1170-1173 had met one to fifteen windows just over 1 CPU of other load.
 
 **The calibration** (the fork's NOTES): the gate as built held a
 layout-only change 1 time in 8 on the Mac (servil st lent 64 B at +3.5%,
