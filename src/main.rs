@@ -3134,8 +3134,13 @@ fn calibrate_batch(
         }
 
         if elapsed_ns >= CALIBRATION_PROBE_NS {
+            // probe/queue-sample-length: the queue's cells at BENCH_QUEUE_SAMPLE_MS.
+            let target = match (point.use_case, std::env::var("BENCH_QUEUE_SAMPLE_MS").ok().and_then(|v| v.parse::<u128>().ok())) {
+                (UseCase::ContinuousMessages | UseCase::ContinuousBatches, Some(ms)) => ms * 1_000_000,
+                _ => TARGET_SAMPLE_NS,
+            };
             let scaled = (
-                iterations as u128 * TARGET_SAMPLE_NS
+                iterations as u128 * target
                     + elapsed_ns / 2
             ) / elapsed_ns;
 
