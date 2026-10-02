@@ -119,7 +119,9 @@ fn b3sum_chart(file: &super::SamplesFile) -> String {
     let panel_head = 30.0;
     let top = 92.0;
     let height = top + contenders.len() as f64 * 18.0 - 18.0 + caches.len() as f64 * (panel_head + inputs.len() as f64 * block) + 40.0;
-    let (left, plot) = (190.0, 300.0);
+    // The bars start right of the longest input label (13 px type, about 7 px a character).
+    let left = 30.0 + 7.0 * inputs.iter().map(|i| i.chars().count()).max().unwrap_or(10) as f64;
+    let plot = 300.0;
     let mut svg = String::new();
     writeln!(svg, r#"<svg xmlns="http://www.w3.org/2000/svg" width="{WIDTH}" height="{height}" viewBox="0 0 {WIDTH} {height}" font-family="{FONT}">"#).unwrap();
     writeln!(svg, r##"<rect width="{WIDTH}" height="{height}" fill="#ffffff"/>"##).unwrap();
