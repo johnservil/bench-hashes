@@ -3130,6 +3130,14 @@ fn calibrate_batch(
 ) -> (usize, u128) {
     let fewest = continuous_min_inputs(input, point);
     let mut iterations = fewest;
+    /*
+     * A cell's first calls carry one-time costs (a pool or a queue's
+     * delivery thread starting, a self-test, first-touched buffers), which
+     * would size its samples short: one untimed batch first (Devon Jonte,
+     * bench-hashes#4: the queue's 64 B samples 154-199 us against the 1 ms
+     * target; the Mac's 176 us).
+     */
+    run_batch(algorithm, input, point, fewest);
 
     loop {
         let started = clocks::now();
@@ -3149,21 +3157,6 @@ fn calibrate_batch(
         }
 
         if elapsed_ns >= CALIBRATION_PROBE_NS {
-            /*
-             * A contender's first call may carry one-time costs (a pool
-             * starting, a self-test), which would make one call look long
-             * and leave its cell a single cold call per sample (the fork's
-             * multithreaded 64 KiB: 1 iteration instead of 81, samples 5x
-             * slow). A single call that reaches the probe is timed again,
-             * and the faster time kept.
-             */
-            let elapsed_ns = if iterations == 1 {
-                let started = clocks::now();
-                run_batch(algorithm, input, point, 1);
-                elapsed_ns.min(u128::from(clocks::since_ns(started)))
-            } else {
-                elapsed_ns
-            };
             let scaled = (
                 iterations as u128 * TARGET_SAMPLE_NS
                     + elapsed_ns / 2
