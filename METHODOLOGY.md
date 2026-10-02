@@ -451,13 +451,15 @@ each side (over several runs, the median of their means) and the ratio,
 and says so beside any run whose load was busy or unmeasured.
 `bench-hashes regress OLD_EXE NEW_EXE` judges two builds: eight pairs of
 runs, one of each, back to back in alternating order, over the lent cells
-(a program hands its buffer to a call and waits). Each pair gives each
-cell one ratio, new mean over old; a cell is slower when the median of
-its ratios exceeds its margin (3% alone, 10% beside a second copy) and an
-exact sign test says it was slower in more pairs than chance would give
-(seven of eight). The queue's cells stay out of it: on identical code
-their means move 6-60% between processes, more than a 3% check can
-judge. The check, calibrated on an Apple M4 Max with planted slowdowns
+(a program hands its buffer to a call and waits), one copy alone. Each
+pair gives each cell one ratio, new mean over old; a cell is slower when
+the median of its ratios exceeds 3% and an exact sign test says it was
+slower in more pairs than chance would give (seven of eight). The queue's
+cells and the shared scenario stay out of it: on identical code the
+queue's means move 6-60% between processes, and two copies' 64 B cells
+switch between states 20-30% apart, more than the check can judge. A
+change that only moves the code's layout is held about one time in eight,
+at the 64 B cell by about the margin, a cost of where code lands. The check, calibrated on an Apple M4 Max with planted slowdowns
 and builds of identical code, is in the fork's NOTES ("The regression
 check, calibrated").
 

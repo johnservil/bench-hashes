@@ -3705,13 +3705,14 @@ fn median_u128(values: &[u128]) -> u128 {
  * the two). REGRESS_PAIRS pairs of runs, one of each side, back to back in
  * alternating order (A B, B A, ...), each over REGRESS_POINTS, the lent
  * cells, where a program hands its buffer to a call and waits (the queue's
- * cells move 20-45% between processes of identical code, beyond what a 3%
- * check can judge: bench-hashes NEXT-STEPS). Each pair gives each cell one
+ * cells move 6-60% between processes of identical code, beyond what a 3%
+ * check can judge), solo alone (the shared copies' 64 B cells switch
+ * between states 20-30% apart per process). Each pair gives each cell one
  * ratio, new mean over old; a cell is slower or faster by
- * clocks::summary::verdict, its margin 3% solo and 10% shared. Calibrated
- * on the Mac (fork NOTES, "The regression check, calibrated"). Exit 0: no
- * cell slower; 1: a cell slower; 2: no verdict, when a run's load was busy
- * or unobserved (clocks::load).
+ * clocks::summary::verdict at a 3% margin. Calibrated on the Mac (fork
+ * NOTES, "The regression check, calibrated"). Exit 0: no cell slower; 1: a
+ * cell slower; 2: no verdict, when a run's load was busy or unobserved
+ * (clocks::load).
  */
 const REGRESS_SUBJECTS: [Algorithm; 2] = [Algorithm::Blake3ServilSt, Algorithm::Blake3ServilMt];
 /// The lent cells' code paths: one message short, in the pool's pieces,
@@ -3721,9 +3722,8 @@ const REGRESS_POINTS: [&str; 6] = ["lent 64 B", "lent 64 KiB", "lent 1 MiB", "le
 const REGRESS_ROUNDS: usize = 24;
 const REGRESS_PAIRS: usize = 8;
 
-fn regress_margin_permille(key: &str) -> u64 {
-    if key.split('|').nth(1) == Some("solo") { 30 } else { 100 }
-}
+/// The margin a solo cell's verdict uses.
+const REGRESS_MARGIN_PERMILLE: u64 = 30;
 
 /// One run of `exe` over the regress points: its samples file.
 fn regress_run(exe: &str) -> SamplesFile {
@@ -3785,8 +3785,8 @@ fn regress_command(arguments: &[String]) -> i32 {
         format!("{}{}.{}%", if d < 0 { "-" } else { "+" }, d.abs() / 10, d.abs() % 10)
     };
     let mut slower = 0;
-    for (key, values) in &ratios {
-        let verdict = clocks::summary::verdict(values, regress_margin_permille(key));
+    for (key, values) in ratios.iter().filter(|(key, _)| key.split('|').nth(1) == Some("solo")) {
+        let verdict = clocks::summary::verdict(values, REGRESS_MARGIN_PERMILLE);
         if verdict == clocks::summary::Verdict::Level {
             continue;
         }

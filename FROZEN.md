@@ -17,7 +17,7 @@ rounds, the sample lengths, the gaps, the contender orders), the
 contenders and their versions, the summary rule (each run's mean, pairs
 of runs: `clocks::summary`), the load rule (`clocks::load`), the
 regression check (`bench-hashes regress`: its points, its pairs, its
-margins of 3% solo and 10% shared), and the
+margin of 3%), and the
 presentation (the graph, the guide, and the report, their layout and
 their words). A change to any of these, a bug fix included, is Zooko's
 decision, recorded here with its date and reason, and it starts a new
@@ -35,10 +35,10 @@ regression check, calibrated"):
   medians, speed by speed: compare them only release with release.
 - `regress` judges eight pairs of runs over the lent cells (`lent 64 B`,
   `lent 64 KiB`, `lent 1 MiB`, `lent pieces 64 MiB`, `lent batch 16`,
-  `lent batch 4096`): a cell is slower when the median of its pairs'
-  ratios exceeds 3% (solo) or 10% (shared) and an exact sign test agrees.
-  The queue's cells, the SHA-256 control, and the confirmation stage go;
-  a shared cell slower holds the change too.
+  `lent batch 4096`), solo: a cell is slower when the median of its
+  pairs' ratios exceeds 3% and an exact sign test agrees. The queue's
+  cells, the shared scenario, the SHA-256 control, and the confirmation
+  stage go.
 - A cell's samples are sized after one untimed call of its batch (Devon
   Jonte's finding: the queue's first calls sized its 64 B samples short),
   in place of the single-call retiming.
