@@ -129,6 +129,6 @@ fn regress_measures_the_nonstop_use_cases_by_their_points_names() {
         let point = POINTS[point_named(name)];
         assert!(!point.use_case.after_gap(), "{name}: regress measures nonstop cells alone (layout luck after a gap)");
     }
-    assert_eq!(regress_margin_permille("blake3-servil-st|solo|LentMessages|64 B"), 30);
-    assert_eq!(regress_margin_permille("blake3-servil-st|shared|LentMessages|64 B"), 100);
+    assert!(REGRESS_POINTS.iter().all(|name| matches!(POINTS[point_named(name)].use_case, UseCase::LentMessages | UseCase::LentPieces | UseCase::LentBatches)), "regress judges the lent cells alone");
+    assert_eq!(REGRESS_MARGIN_PERMILLE, 30);
 }
