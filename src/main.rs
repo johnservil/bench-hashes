@@ -1758,7 +1758,7 @@ fn measure_all(roster: &Roster, mut trace: Option<&mut ClockTrace>) -> (Results,
 /*
  * Live progress on stderr, so stdout stays a clean report. Shows the phase,
  * a bar over the sample rounds, the elapsed and estimated remaining time,
- * and the running median for every contender at the largest input size.
+ * and the running mean for every contender at the largest input size.
  * The line redraws in place on a terminal; elsewhere each update is its
  * own line, so a log still shows the run advancing.
  */
@@ -1861,7 +1861,7 @@ fn tenths_of_seconds(duration: std::time::Duration) -> String {
 
 fn running_medians(roster: &Roster, samples: &Samples, size_index: usize) -> String {
     if samples.iter().all(|contender| contender[size_index].is_empty()) {
-        return format!("medians at {} pending", POINTS[size_index].label);
+        return format!("means at {} pending", POINTS[size_index].label);
     }
 
     /* Contenders that take no part in this point's use case have no samples there. */
@@ -3881,7 +3881,7 @@ fn generate_samples_tsv(roster: &Roster, samples: &RunSamples, machine: &Machine
 
 /*
  * The text report: results first, one table per scenario and use case,
- * the median alone in each cell (both where a cell ran at two speeds);
+ * each cell's mean;
  * then which code path each contender ran, and where the numbers came
  * from, for whoever needs to trust or reproduce them. The consistency
  * checks go to a file of their own (consistency).
@@ -3892,7 +3892,7 @@ fn generate_text(roster: &Roster, results: &Results, machine: &MachineMetadata, 
     writeln!(output, "Hash speed on {} ({}, {} CPUs), {}", machine.cpu_type, machine.os_type, machine.cpu_count, machine.timestamp).unwrap();
     writeln!(
         output,
-        "{} run: {} rounds{}. Each cell is the median time per unit, lower is better; a|b: the cell ran at two speeds, both medians given, faster first.",
+        "{} run: {} rounds{}. Each cell is the mean time per unit (total time over total work), lower is better.",
         if roster.points.iter().all(|&index| POINTS[index].quick()) { "Quick" } else { "Full" },
         roster.rounds,
         if roster.points.iter().all(|&index| POINTS[index].quick()) { "; a full run confirms and adds the largest inputs and batches" } else { "" },
@@ -3976,7 +3976,7 @@ fn slower_by(slow: Statistics, fast: Statistics) -> Option<u64> {
 
 /// The consistency checks' report: one line per broken relation.
 fn consistency(roster: &Roster, results: &Results) -> String {
-    let fast = |a: usize, p: usize, scenario: Scenario| cell(results, a, p).get(scenario);
+    let stats = |a: usize, p: usize, scenario: Scenario| cell(results, a, p).get(scenario);
     let point = |use_case: UseCase, label: &str| use_case.points().find(|&p| POINTS[p].label == label && roster.measures(p));
     let mut broken: Vec<String> = Vec::new();
     let mut note = |check: &str, a: usize, what: String, permille: u64| {
@@ -3986,7 +3986,7 @@ fn consistency(roster: &Roster, results: &Results) -> String {
         /* 1. Nonstop is no slower than after other work for small messages (its read of the input included). */
         for label in ["64 B", "256 B", "1 KiB", "4 KiB"] {
             if let (Some(n), Some(b)) = (point(UseCase::LentMessages, label), point(UseCase::OneMessage, label)) {
-                let (fnon, fb) = (fast(a, n, Scenario::Solo), fast(a, b, Scenario::Solo));
+                let (fnon, fb) = (stats(a, n, Scenario::Solo), stats(a, b, Scenario::Solo));
                 if let Some(r) = slower_by(fnon, fb) {
                     note("nonstop slower than after other work", a, format!("{label}, {} against {} ns/B", fnon.mean.format_ns(), fb.mean.format_ns()), r);
                 }
@@ -3997,7 +3997,7 @@ fn consistency(roster: &Roster, results: &Results) -> String {
             /* 2 and 3: two programs at once, for the use cases measured both ways. */
             if Scenario::Shared.measures(use_case) {
                 for &p in &points {
-                    let (solo, shared) = (fast(a, p, Scenario::Solo), fast(a, p, Scenario::Shared));
+                    let (solo, shared) = (stats(a, p, Scenario::Solo), stats(a, p, Scenario::Shared));
                     if let Some(r) = slower_by(solo, shared) {
                         note("shared faster than solo", a, format!("{}, {}: solo {} against shared {} {}", use_case.short(), POINTS[p].label, solo.mean.format_ns(), shared.mean.format_ns(), use_case.time_unit()), r);
                     }
@@ -4012,8 +4012,7 @@ fn consistency(roster: &Roster, results: &Results) -> String {
              * 4. Twice the work takes at most twice the time: no slower per
              * unit than a size that divides it, for work that stays in the
              * first-level cache (up to CACHED_BYTES) and outside the idle
-             * use cases (whose cells' fast speeds may be different clock
-             * states).
+             * use cases (whose cells may meet different clock states).
              */
             let size = |p: usize| if use_case.batch() { POINTS[p].messages } else { POINTS[p].bytes };
             let cached: Vec<usize> = points.iter().copied().filter(|&p| POINTS[p].bytes <= CACHED_BYTES && !use_case.idle()).collect();
@@ -4021,7 +4020,7 @@ fn consistency(roster: &Roster, results: &Results) -> String {
             for &large in &points {
                 for &small in points.iter().filter(|&&small| size(small) < size(large) && size(large) % size(small) == 0) {
                     for scenario in Scenario::ALL.into_iter().filter(|&scenario| scenario.measures(use_case)) {
-                        let (l, m) = (fast(a, large, scenario), fast(a, small, scenario));
+                        let (l, m) = (stats(a, large, scenario), stats(a, small, scenario));
                         if let Some(r) = slower_by(l, m) {
                             note("more work, slower per unit", a, format!("{} ({}), {} against {}: {} against {} {}", use_case.short(), scenario.key(), POINTS[large].label, POINTS[small].label, l.mean.format_ns(), m.mean.format_ns(), use_case.time_unit()), r);
                         }
@@ -4031,7 +4030,7 @@ fn consistency(roster: &Roster, results: &Results) -> String {
         }
     }
     let mut out = format!(
-        "# bench-hashes consistency checks (for maintainers): relations that hold for every contender when the benchmark measures what it means to, judged on fast speeds, over {}% apart.\n\
+        "# bench-hashes consistency checks (for maintainers): relations that hold for every contender when the benchmark measures what it means to, judged on means, over {}% apart.\n\
          # 1. Nonstop no slower than after other work, 64 B-4 KiB. 2. Shared no faster than solo. 3. A hash on the cores alone no slower shared. 4. No slower per unit than a size that divides the work, up to 32 KiB, outside the idle use cases.\n",
         CONSISTENCY_PERMILLE / 10,
     );
@@ -4955,7 +4954,7 @@ fn generate_svg(
      * A panel under the header, over the plots, shown by the door's click.
      */
     let mut howto = vec![
-        format!("Each line is one hash. Each dot is the median of up to {} timings at that size.", 2 * roster.rounds),
+        format!("Each line is one hash. Each dot is the mean of up to {} timings at that size.", 2 * roster.rounds),
         "A dot's shape marks the method the hash used at that size. The section \"Code paths\" at the bottom names each method.".to_owned(),
         "Rate counts bytes or messages per second, time the nanoseconds per byte or message; the switch at right changes every plot.".to_owned(),
         "The strip at the top narrows every plot to part of its inputs: drag an end of its band, or use the arrows at its ends.".to_owned(),
