@@ -60,7 +60,11 @@ plan. Next runner job 1146.
    easy. The queue allocates nothing once warm (tests/queue_no_alloc.rs);
    the pool's workers' stacks, the task list's growth, the batch digest
    buffers, and the multithreaded calls' Vecs of pieces are to measure
-   and state.
+   and state (the fork's NOTES, "Memory: what each call allocates").
+   Zooko (October 2): the docs point to `initialize()` and
+   `initialize_multithreaded()` as the way to make every once-per-process
+   allocation at start-up, and the design moves every lazy allocation it
+   can out of hashing and into them.
 4. candidate/b3sum-pool: warm files 1.5x (Mac) to 2.3x (VM) faster; cold
    files read slower through the pool's mapping (VM 16 MiB 2.0x Rayon's
    time, Mac 1 GiB 1.10x): open, and the reason to try reads into the
