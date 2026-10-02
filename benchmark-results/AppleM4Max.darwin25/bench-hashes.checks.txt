@@ -1,10 +1,6 @@
 # bench-hashes consistency checks (for maintainers): relations that hold for every contender when the benchmark measures what it means to, judged on fast speeds, over 10% apart.
 # 1. Nonstop no slower than after other work, 64 B-4 KiB. 2. Shared no faster than solo. 3. A hash on the cores alone no slower shared. 4. No slower per unit than a size that divides the work, up to 32 KiB, outside the idle use cases.
-more work, slower per unit: BLAKE3 servil st, one buffer, after other work (solo), 2 KiB against 1 KiB: 1.104 against 0.976 ns/B: x1.130
-more work, slower per unit: BLAKE3 servil st, one buffer, after other work (solo), 4 KiB against 1 KiB: 1.150 against 0.976 ns/B: x1.177
-more work, slower per unit: BLAKE3 servil st, a batch, after other work (solo), 4 against 2: 377.625 against 268.125 ns/msg: x1.408
-more work, slower per unit: BLAKE3 servil st, batches, lent buffers (shared), 64 against 16: 19.018 against 14.121 ns/msg: x1.347
-more work, slower per unit: BLAKE3 servil mt, one buffer, after other work (solo), 2 KiB against 1 KiB: 1.200 against 0.946 ns/B: x1.269
-more work, slower per unit: BLAKE3 servil mt, one buffer, after other work (solo), 4 KiB against 1 KiB: 1.099 against 0.946 ns/B: x1.162
-more work, slower per unit: BLAKE3 servil mt, a batch, after other work (solo), 4 against 2: 333.313 against 250.063 ns/msg: x1.333
-more work, slower per unit: BLAKE3 servil mt, batches, lent buffers (shared), 64 against 16: 19.034 against 14.387 ns/msg: x1.323
+more work, slower per unit: BLAKE3 servil st, a batch, after other work (solo), 4 against 2: 359.375 against 284.667 ns/msg: x1.262
+more work, slower per unit: BLAKE3 servil st, batches, lent buffers (shared), 64 against 16: 18.996 against 11.689 ns/msg: x1.625
+more work, slower per unit: BLAKE3 servil mt, batches, lent buffers (shared), 64 against 16: 19.033 against 11.320 ns/msg: x1.681
+more work, slower per unit: BLAKE3 servil mt, batches, lent buffers (shared), 256 against 16: 17.282 against 11.320 ns/msg: x1.527
