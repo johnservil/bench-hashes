@@ -107,33 +107,27 @@ const PIECE_LEN: usize = 64 * 1024;
 /*
  * Many messages at once (UseCase::Interleaved; Zooko, October 3, 2026): a
  * server receiving many messages from its connections at once, each in
- * pieces, interleaved. `open` messages are open at once; each piece goes
- * to one of them, picked at random, and its length is drawn from an even
- * spread over the octaves from `piece_min` to `piece_max` bytes (an
- * octave, then a length within it; integers alone), cut at the message's
- * end. Each message's length is drawn the same way from `message_min` to
- * `message_max`; when one ends, its hash is used and a new message opens
- * in its place. The generator is SplitMix64 from `seed`, its state kept
- * from sample to sample with the open messages, so samples see the steady
- * state. A sample's unit of work is `chunk` bytes of pieces.
+ * pieces, interleaved. `open` messages are open at once and piece k goes
+ * to open message k mod `open`; piece k's length is `pieces[k mod len]`,
+ * cut at its message's end, and the n-th message opened has length
+ * `messages[n mod len]`. When a message ends, its hash is used and the
+ * next opens in its place. The pieces: mostly one TCP segment's payload
+ * (1448 B), with a page-sized read (4 KiB) and a TLS record (16 KiB); the
+ * messages: many short, a few long. The schedule carries over from sample
+ * to sample, so samples see the steady state. A sample's unit of work is
+ * `chunk` bytes of pieces.
  */
 struct InterleavedSpec {
     open: usize,
-    piece_min: usize,
-    piece_max: usize,
-    message_min: usize,
-    message_max: usize,
-    seed: u64,
+    pieces: &'static [usize],
+    messages: &'static [usize],
     chunk: usize,
 }
 
 const INTERLEAVED: InterleavedSpec = InterleavedSpec {
     open: 256,
-    piece_min: 1024,
-    piece_max: 16 * 1024,
-    message_min: 64,
-    message_max: 16 * 1024 * 1024,
-    seed: 0x6a09_e667_f3bc_c908,
+    pieces: &[1448, 1448, 4096, 1448, 16 * 1024],
+    messages: &[64, 1000, 4470, 16 * 1024, 100_000, 1024 * 1024, 16 * 1024 * 1024],
     chunk: 1024 * 1024,
 };
 /// Every message in the batches is one BLAKE3 block of 64 bytes, the size
@@ -2222,29 +2216,12 @@ fn hash_interleaved(algorithm: Algorithm, input: &[u8], iterations: usize, consu
     }
 }
 
-/// SplitMix64: the next value of the generator at `state`.
-fn splitmix64(state: &mut u64) -> u64 {
-    *state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
-    let mut z = *state;
-    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-    z ^ (z >> 31)
-}
-
-/// A length spread evenly over the octaves from `min` up to `max`, both
-/// powers of two: an octave, then a length within it.
-fn octave_draw(state: &mut u64, min: usize, max: usize) -> usize {
-    assert!(min.is_power_of_two() && max.is_power_of_two() && min < max, "octaves between powers of two");
-    let (lo, hi) = (min.trailing_zeros(), max.trailing_zeros());
-    let octave = lo + (splitmix64(state) % u64::from(hi - lo)) as u32;
-    (1usize << octave) + (splitmix64(state) % (1u64 << octave)) as usize
-}
-
-/// The open messages and the generator of many messages at once, kept from
-/// sample to sample on each thread, one schedule per contender.
+/// The open messages of many messages at once and where the schedule
+/// stands, kept from sample to sample on each thread, one per contender.
 struct Schedule<S> {
-    rng: u64,
     open: Vec<(S, usize)>,
+    piece: usize,
+    opened: usize,
     source: usize,
 }
 
@@ -2262,28 +2239,26 @@ fn each_interleaved<S: 'static, D: AsRef<[u8]>>(
     mut consume: impl FnMut(&[u8]),
 ) {
     let spec = &INTERLEAVED;
-    assert!(input.len() >= spec.chunk && input.len() > spec.piece_max, "the pieces come from a source longer than a piece");
+    let longest = spec.pieces.iter().copied().max().unwrap();
+    assert!(input.len() >= spec.chunk && input.len() > longest, "the pieces come from a source longer than a piece");
     let kept = SCHEDULES.with(|all| {
         let mut all = all.borrow_mut();
         all.iter().position(|(k, _)| *k == key).map(|i| all.swap_remove(i).1)
     });
     let mut schedule: Schedule<S> = match kept {
         Some(any) => *any.downcast().expect("one schedule type per contender"),
-        None => {
-            let mut rng = spec.seed;
-            let open = (0..spec.open).map(|_| (new(), octave_draw(&mut rng, spec.message_min, spec.message_max))).collect();
-            Schedule { rng, open, source: 0 }
-        }
+        None => Schedule { open: (0..spec.open).map(|n| (new(), spec.messages[n % spec.messages.len()])).collect(), piece: 0, opened: spec.open, source: 0 },
     };
     let mut buffer = STREAM_BUFFER.with(|kept| std::mem::take(&mut *kept.borrow_mut()));
-    if buffer.len() < spec.piece_max {
-        buffer = written(PIECE_LEN.max(spec.piece_max), 1u8);
+    if buffer.len() < longest {
+        buffer = written(PIECE_LEN.max(longest), 1u8);
     }
     for _ in 0..iterations {
         let mut budget = spec.chunk;
         while budget > 0 {
-            let slot = (splitmix64(&mut schedule.rng) % spec.open as u64) as usize;
-            let len = octave_draw(&mut schedule.rng, spec.piece_min, spec.piece_max).min(schedule.open[slot].1).min(budget);
+            let slot = schedule.piece % spec.open;
+            let len = spec.pieces[schedule.piece % spec.pieces.len()].min(schedule.open[slot].1).min(budget);
+            schedule.piece += 1;
             if schedule.source + len > input.len() {
                 schedule.source = 0;
             }
@@ -2293,7 +2268,8 @@ fn each_interleaved<S: 'static, D: AsRef<[u8]>>(
             schedule.open[slot].1 -= len;
             budget -= len;
             if schedule.open[slot].1 == 0 {
-                let next = (new(), octave_draw(&mut schedule.rng, spec.message_min, spec.message_max));
+                let next = (new(), spec.messages[schedule.opened % spec.messages.len()]);
+                schedule.opened += 1;
                 let (done, _) = std::mem::replace(&mut schedule.open[slot], next);
                 consume(finish(done).as_ref());
             }
@@ -3686,7 +3662,7 @@ fn detect_kernels(algorithm: Algorithm, use_case: UseCase) -> Kernels {
         UseCase::IdleOneMessage | UseCase::IdleManyMessages => detect_kernels(algorithm, use_case.call()),
         UseCase::OneMessage | UseCase::LentMessages => one_message,
         /* Pieces run the one-message kernels, so those that start past the longest piece never run. */
-        UseCase::Interleaved => one_message.up_to(INTERLEAVED.piece_max),
+        UseCase::Interleaved => one_message.up_to(16 * 1024),
         /* A message of up to PIECE_LEN is one call's input; a longer one arrives in pieces. */
         UseCase::ContinuousMessages => one_message.up_to(PIECE_LEN),
         UseCase::ContinuousBatches | UseCase::LentBatches => detect_kernels(algorithm, UseCase::ManyMessages),

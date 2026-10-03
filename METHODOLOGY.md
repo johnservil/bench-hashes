@@ -85,14 +85,14 @@ feel it.
 
 A server receives many messages from its connections at once, each in
 pieces, and hashes each as its pieces arrive. This use case measures
-that: 256 messages open at once, each piece going to one of them picked
-at random. A piece's length is drawn from an even spread over the
-octaves from 1 KiB to 16 KiB (an octave, then a length within it), cut at
-its message's end, and a message's length from the octaves from 64 B to
-16 MiB; when a message ends, its hash is used and a new one opens in its
-place. The draws come from SplitMix64 with a seed fixed in the code
-(`INTERLEAVED`), so every run sees the same traffic, and the open
-messages carry over from sample to sample, so samples see the steady
+that on a fixed schedule (`INTERLEAVED`), the same in every run: 256
+messages open at once, the pieces dealt to them in turn. Most pieces are
+one TCP segment's payload (1448 B), with a page-sized read (4 KiB) and a
+TLS record (16 KiB) among them, in a fixed cycle; each is cut at its
+message's end. Message lengths cycle through 64 B, 1000 B, 4470 B, 16
+KiB, 100,000 B, 1 MiB, and 16 MiB: many short, a few long. When a
+message ends, its hash is used and the next opens in its place, and the
+schedule carries over from sample to sample, so samples see the steady
 state. Each piece is read, timed, as a memory copy into a buffer of the
 program's, then handed to its message's incremental hasher
 (`Hasher::update` in crates.io BLAKE3 and in BLAKE3 servil,

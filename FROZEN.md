@@ -28,15 +28,16 @@ the notes) may still change, to say it better.
 **Changes since 0.13.0** (Zooko, October 3, 2026), for the next release:
 - **Many messages at once replaces a message in pieces.** A server
   receiving many messages from its connections at once, each in pieces,
-  interleaved: 256 messages open, each piece going to one picked at
-  random, piece lengths spread evenly over the octaves from 1 KiB to 16
-  KiB, message lengths over the octaves from 64 B to 16 MiB, a new message
-  opening as each ends, from SplitMix64 with a recorded seed
-  (`INTERLEAVED`); each contender keeps one incremental hasher per open
-  message, each piece read into a kept buffer, then fed to its message.
-  No other cell had messages open at once, and a program serving many
-  connections meets it. One long message in 64 KiB pieces goes: with no
-  thread lingering between updates (the fork's candidate/no-linger),
+  interleaved, on a fixed schedule (`INTERLEAVED`): 256 messages open,
+  piece k going to open message k mod 256; piece lengths cycling through
+  1448 B (a TCP segment's payload), 1448, 4 KiB (a page-sized read),
+  1448, and 16 KiB (a TLS record); message lengths cycling through 64 B,
+  1000 B, 4470 B, 16 KiB, 100,000 B, 1 MiB, and 16 MiB, a new message
+  opening as each ends. Each contender keeps one incremental hasher per
+  open message, each piece read into a kept buffer, then fed to its
+  message. No other cell had messages open at once, and a program serving
+  many connections meets it. One long message in 64 KiB pieces goes: with
+  no thread lingering between updates (the fork's candidate/no-linger),
   pieces lent to an incremental call hash as one message of their length
   does, which the one-message cells show; the guide shows those for
   `update_multithreaded`. The regression check drops its "lent pieces
