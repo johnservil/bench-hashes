@@ -13,10 +13,6 @@ and the list of ways it can still lie.
 
 ## What is settled
 
-Read this section before deciding anything it covers; a question settled
-here is decided again only with new evidence, and the new decision
-replaces the old one here.
-
 **The bytes hashed** (settled several times over, last October 3, 2026,
 written down so it stays settled). In memory, any bytes the program has
 written: their values do not change any contender's speed. Never memory
@@ -31,12 +27,9 @@ b3sum`) hold BLAKE3's extended output of their names (`contents`): a
 filesystem or a drive that compresses would read zeros or counters from
 storage almost for free.
 
-**The benchmark checks no contender's outputs, and neither do its
-tests** (Zooko, September 26, 2026, and again October 3, 2026). Each
-contender's own tests hold its correctness. The benchmark's tests check
-the benchmark: that each result reaches `consume` (so nothing is
-optimised away), how many, the points and the schedule. A test comparing
-digests between contenders, or against a reference, does not belong here.
+**The benchmark checks no contender's outputs, nor do its tests**
+(Zooko, September 26 and October 3, 2026): correctness is each
+contender's own tests' business (the fork's `QUALITY.md`).
 
 **Sizes.** Twenty-seven: 64 B to 128 MiB by powers of two but 16 MiB,
 plus 3 KiB and 3 MiB, plus four sizes of real data between 2 and 8 KiB,
