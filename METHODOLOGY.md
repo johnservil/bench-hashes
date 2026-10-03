@@ -81,28 +81,29 @@ time on the platform's hardware counter (`CLOCK_UPTIME_RAW` on Darwin,
 clock, a busy SME unit, or a GPU's latency counts as the user would
 feel it.
 
-## A message in pieces
+## Many messages at once
 
-A program that reads a file or a socket hands a hash its input piece by
-piece, so the hash never learns the total size in advance. This use case
-measures that on 64 MiB messages, one after another, in pieces of 64 KiB
-(a common read buffer). One length is enough. A message of up to 64 KiB
-is a single piece, so it costs what the one-message call costs on it.
-On one thread, a long message's pieces each cost about what the
-one-message call costs at 64 KiB. A multithreaded incremental API can
-spread a long message's pieces over threads, a rate no one-message
-size predicts; one long message shows it. Each piece is read, timed, as
-a memory copy from the input, the cheapest read there is (a read from
-the operating system's page cache adds a system call per piece), and
-every contender pays it once per byte.
+A server receives many messages from its connections at once, each in
+pieces, and hashes each as its pieces arrive. This use case measures
+that: 256 messages open at once, each piece going to one of them picked
+at random. A piece's length is drawn from an even spread over the
+octaves from 1 KiB to 16 KiB (an octave, then a length within it), cut at
+its message's end, and a message's length from the octaves from 64 B to
+16 MiB; when a message ends, its hash is used and a new one opens in its
+place. The draws come from SplitMix64 with a seed fixed in the code
+(`INTERLEAVED`), so every run sees the same traffic, and the open
+messages carry over from sample to sample, so samples see the steady
+state. Each piece is read, timed, as a memory copy into a buffer of the
+program's, then handed to its message's incremental hasher
+(`Hasher::update` in crates.io BLAKE3 and in BLAKE3 servil,
+`update_rayon` for BLAKE3 official mt, `update_multithreaded` for
+BLAKE3 servil mt, `Digest::update` in sha2, sha1-checked, and sha3,
+ring's `Context::update`, CommonCrypto's `CC_SHA256_Update`). The time
+is per byte of pieces.
 
-Each piece is read into a 64 KiB buffer of the program's, kept from one
-message to the next, and then handed to the contender's incremental API,
-so reading and hashing take turns (`Hasher::update` in crates.io BLAKE3
-and in both BLAKE3 servil contenders, `update_rayon` for BLAKE3 official mt, `Digest::update` in sha2 and
-sha1-checked, ring's `Context::update`, CommonCrypto's
-`CC_SHA256_Update`), and the message is finalized; the next message
-follows at once. BLAKE3 servil mt calls `Hasher::update_multithreaded`.
+A single long message arriving in pieces is not measured: each piece
+lent to an incremental call costs about what one message of the piece's
+length costs, which the one-message cells show.
 
 ## One input after another
 
@@ -673,5 +674,6 @@ longer ones. For a message arriving in pieces now and then, the guide
 shows `hash`'s cells, labelled by piece length: each piece costs about
 what `hash` costs on a buffer that long. A run that lacks the
 recommended cells says so. The chips keep the recommended call: on
-several threads, nonstop pieces show `update_multithreaded`, and pieces
-now and then show `update`, with `hash`'s cells standing in.
+several threads, nonstop pieces show `update_multithreaded`, with
+`hash_multithreaded`'s cells standing in, and pieces now and then show
+`update`, with `hash`'s cells standing in.

@@ -15,7 +15,7 @@ const path = require('path');
   const after = { message: ['hash', 'hash_multithreaded', 'OneMessage'], pieces: ['update', 'update', 'OneMessage'], batch: ['hash_many', 'hash_many_multithreaded', 'ManyMessages'] };  // after other work, the default for a program that keeps up
   const continuous = {
     message: ['hash', 'hash_multithreaded', 'Queue::messages', 'LentMessages', 'ContinuousMessages'],
-    pieces: ['update', 'update_multithreaded', 'Queue::pieces', 'LentPieces', 'ContinuousMessages'],
+    pieces: ['update', 'update_multithreaded', 'Queue::pieces', 'LentMessages', 'ContinuousMessages'],
     batch: ['hash_many', 'hash_many_multithreaded', 'Queue::fixed', 'LentBatches', 'ContinuousBatches'],
   };
   let routes = 0;
@@ -56,7 +56,7 @@ const path = require('path');
       assert(/Faster|Slower|As fast as|trade places|measured alone/.test(state.summary), state.summary);
       if (state.call.startsWith('Queue::')) assert(!state.standIn, 'queue measurements are actual queue calls');
       if (shape === 1 && threads === 0 && !state.call.startsWith('Queue::')) {
-        assert.deepEqual(state.uses, state.call === 'update_multithreaded' ? [null, null, 'LentPieces'] : ['IdleOneMessage', 'OneMessage', null],
+        assert.deepEqual(state.uses, state.call === 'update_multithreaded' ? [null, null, 'LentMessages'] : ['IdleOneMessage', 'OneMessage', null],
           'piece patterns keep the measured API');
       }
       /* The chips: the pattern (three for a plain function), alone or beside another program. */
@@ -71,7 +71,7 @@ const path = require('path');
         await page.locator('#how button', { hasText: 'alone' }).click();
       }
       if (!state.call.startsWith('Queue::')) {
-        // Quick runs omit LentPieces; some calls have only one measured
+        // Some calls have only one measured
         // pattern. Drive only the buttons actually offered to the reader.
         for (const other of patterns.filter(l => state.chips.some(([label]) => label === l) && !pressed.includes(l))) {
           await page.locator('#how button', { hasText: other }).click();

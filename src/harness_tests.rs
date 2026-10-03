@@ -8,7 +8,7 @@ use super::*;
 fn asynchronous_labels_describe_the_measured_api() {
     for (use_case, api) in [
         (UseCase::ContinuousBatches, "Queue::fixed"),
-        (UseCase::LentPieces, "Hasher::update_multithreaded"),
+        (UseCase::Interleaved, "Hasher::update_multithreaded"),
     ] {
         let kernels = detect_kernels(Algorithm::Blake3ServilMt, use_case);
         assert_eq!(kernels.platform, "API (kernel unreported)");
@@ -68,7 +68,7 @@ fn sparse_runs_remove_previous_visualizations() {
 
 #[test]
 fn guide_means_match_the_exact_report_rounding() {
-    let point = UseCase::LentPieces.points().start;
+    let point = UseCase::Interleaved.points().start;
     let roster = Roster::new(vec![Algorithm::Blake3ServilSt, Algorithm::Sha256Ring], false, Some(vec![point]), Some(2));
     let statistics = summarize_measured(&[Measured::new(2135, 400), Measured::new(2135, 400)]);
     let mut results = vec![vec![None; POINT_COUNT]; roster.len()];
@@ -129,6 +129,6 @@ fn regress_measures_the_nonstop_use_cases_by_their_points_names() {
         let point = POINTS[point_named(name)];
         assert!(!point.use_case.after_gap(), "{name}: regress measures nonstop cells alone (layout luck after a gap)");
     }
-    assert!(REGRESS_POINTS.iter().all(|name| matches!(POINTS[point_named(name)].use_case, UseCase::LentMessages | UseCase::LentPieces | UseCase::LentBatches)), "regress judges the lent cells alone");
+    assert!(REGRESS_POINTS.iter().all(|name| matches!(POINTS[point_named(name)].use_case, UseCase::LentMessages | UseCase::Interleaved | UseCase::LentBatches)), "regress judges the lent cells alone");
     assert_eq!(REGRESS_MARGIN_PERMILLE, 30);
 }

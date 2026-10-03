@@ -100,7 +100,7 @@ function steps(a) {
 
 /* The decision table (the crate's docs, "Which call to use"). */
 /* A message in pieces now and then: each piece costs about what hash costs on a buffer that long, so its plots are hash's. */
-const PATTERNS = { message: ["IdleOneMessage", "OneMessage", "LentMessages"], pieces: ["IdleOneMessage", "OneMessage", "LentPieces"], batch: ["IdleManyMessages", "ManyMessages", "LentBatches"] };
+const PATTERNS = { message: ["IdleOneMessage", "OneMessage", "LentMessages"], pieces: ["IdleOneMessage", "OneMessage", "LentMessages"], batch: ["IdleManyMessages", "ManyMessages", "LentBatches"] };
 function recommendation(a) {
   const many = a.threads === "many", nonstop = a.keepsUp === "no", s = a.shape;
   if (many && nonstop && a.buffer === "owned") {
@@ -116,7 +116,7 @@ function recommendation(a) {
   // A pattern toggle keeps the actual API. Multithreaded pieces use
   // update after a gap and update_multithreaded nonstop: separate calls.
   const uses = s === "pieces" && many
-    ? (mt ? [null, null, "LentPieces"] : ["IdleOneMessage", "OneMessage", null])
+    ? (mt ? [null, null, "LentMessages"] : ["IdleOneMessage", "OneMessage", null])
     : PATTERNS[s];
   return { call, contender: mt ? "blake3-servil-mt" : "blake3-servil-st", uses, useIndex: nonstop ? 2 : 1, shape: s,
     summary: s === "batch" ? `One call hashes every message in the buffer${mt ? ", spread over your spare cores" : ""}: how a Merkle tree hashes a layer.`
@@ -222,9 +222,9 @@ function drawSpeed() {
   const mine = DATA.contenders.find(c => c.key === r.contender), theirs = DATA.contenders.find(c => c.key === other);
   const series = [[mine, plot.series[r.contender]]].concat(theirs ? [[theirs, plot.series[other]]] : []);
   /* hash's plot standing in for update's pieces now and then: its x is each piece's length. */
-  const standIn = r.shape === "pieces" && !r.call.startsWith("Queue::") && plot.use !== "LentPieces";
+  const standIn = r.shape === "pieces" && !r.call.startsWith("Queue::");
   el("stand-in").hidden = !standIn;
-  el("stand-in").textContent = standIn ? "Each piece costs about what hash costs on one buffer of the piece's length: these are hash's measurements, and a message of up to 64 KiB is a single piece." : "";
+  el("stand-in").textContent = standIn ? `Each piece costs about what ${r.call === "update_multithreaded" ? "hash_multithreaded" : "hash"} costs on one buffer of the piece's length: these are its measurements.` : "";
   const xLabel = plot.batch ? "Messages per batch" : standIn ? "Length of each piece" : "Message length";
   const unit = plot.batch ? " messages" : "";
 
@@ -235,7 +235,7 @@ function drawSpeed() {
     const behind = points.map(k => +plot.series[r.contender].mean[k] > +plot.series[other].mean[k]);
     let from = ahead.length;
     while (from > 0 && ahead[from - 1]) from--;
-    if (points.length === 1) text = `${ahead[0] ? "Faster than" : behind[0] ? "Slower than" : "As fast as"} ${theirs.name} on a ${plot.labels[points[0]]} message${plot.use === "LentPieces" || r.call === "Queue::pieces" ? " in 64 KiB pieces" : ""}.`;
+    if (points.length === 1) text = `${ahead[0] ? "Faster than" : behind[0] ? "Slower than" : "As fast as"} ${theirs.name} on a ${plot.labels[points[0]]} message${r.call === "Queue::pieces" ? " in 64 KiB pieces" : ""}.`;
     else if (from === 0) text = `Faster than ${theirs.name} at every size measured.`;
     else if (behind.every(Boolean)) text = `Slower than ${theirs.name} at every size measured.`;
     else if (from === ahead.length) text = ahead.some(Boolean) ? "The two trade places across the sizes measured." : `As fast as ${theirs.name} or slower at every size measured.`;
@@ -300,7 +300,7 @@ function methodText(plot) {
   if (use === "ContinuousMessages" || use === "ContinuousBatches")
     return `Measured ${where}, ${sc}. The program read each input into one of its own buffers (a memory copy, the cheapest read) and handed it to the queue, keeping about 1 MiB or 1024 buffers in flight; the time runs from the first read to the last digest, so reading and hashing overlap. SHA-256 ran the same producer with a plain call per input.`;
   if (use.startsWith("Lent"))
-    return `Measured ${where}, ${sc}. The program read each input${use === "LentPieces" ? ", 64 KiB at a time," : ""} into a buffer (a memory copy) and called the function, one input after another with nothing between; the read is inside the time. Every contender ran the same loop.`;
+    return `Measured ${where}, ${sc}. The program read each input into a buffer (a memory copy) and called the function, one input after another with nothing between; the read is inside the time. Every contender ran the same loop.`;
   if (use.startsWith("Idle"))
     return `Measured ${where}, ${sc}. The program called the function, slept a millisecond, as a server waits for its next request, wrote the next input, and called again; the function found helper threads asleep and a core that may have slowed or powered down. The second call alone is timed.`;
   return `Measured ${where}, ${sc}. The program called the function, then ran a fixed other program (about 1 MiB of code) and read 128 MiB of data, at least a millisecond in all, wrote the next input, and called again: the function found its code and data out of the caches and its helper threads asleep, as in a program that hashes between its other tasks. The second call alone is timed.`;

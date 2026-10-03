@@ -60,8 +60,9 @@ The graph has a plot for each way a program hashes. A message in one
 buffer, and a batch of 64-byte messages (a Merkle tree's nodes), each
 called now and then: *after other work*, as a program hashes between its
 other tasks, and *after idling*, as a server waits for its next request.
-Messages, batches, and long messages in pieces, hashed *nonstop*, one
-after another, by one program and by two at once. In every plot, higher
+Messages and batches hashed *nonstop*, one after another, and many
+messages at once, each arriving in pieces, by one program and by two at
+once. In every plot, higher
 is faster. Hover over a dot, or tap it, to compare the hashes there; the
 chips at the top right choose the plots, and "How to read this graph"
 under the title explains the rest.

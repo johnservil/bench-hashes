@@ -40,8 +40,9 @@ every place, and the compiler names any match you miss.
 3. Give it three calls, each the plain entry point your users call: one
    message (`one_message_call`), a batch of 64-byte messages
    (`hash_batch`; a loop over its one-message call when it has no batch
-   entry point), and its incremental API for a message in pieces
-   (`hash_stream`).
+   entry point), and its incremental API, for long messages read in
+   pieces (`hash_stream`) and for many messages at once
+   (`hash_interleaved`).
 4. Describe its code paths for the graph's marks (`detect_kernels`); one
    path at every size is a fine start.
 
@@ -80,7 +81,7 @@ benchmark.
 
 - **Contenders are black boxes.** The benchmark lists a contender, calls
   its plain entry point (single-threaded, multithreaded, a batch call, or
-  its incremental API for a message in pieces; for the fork's multithreaded
+  its incremental API for messages in pieces; for the fork's multithreaded
   contender, its queue for inputs one after another) with no pool, cap,
   or wrapper of its own, and asks the fork for its
   `kernel_report()`. A contender without a batch entry point hashes a

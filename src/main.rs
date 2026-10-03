@@ -97,12 +97,45 @@ const BATCH_COUNT: usize = 24;
 /// Points on the continuous axes: message lengths, and messages per batch.
 const CONTINUOUS_MESSAGE_COUNT: usize = 11;
 const CONTINUOUS_BATCH_COUNT: usize = 7;
-/// A message in pieces is measured at one length, a long message (FROZEN.md).
-const LENT_PIECES_COUNT: usize = 1;
-const POINT_COUNT: usize = 2 * (INPUT_COUNT + BATCH_COUNT) + 2 * CONTINUOUS_MESSAGE_COUNT + LENT_PIECES_COUNT + 2 * CONTINUOUS_BATCH_COUNT;
-/// A message in pieces reaches each contender's incremental API in pieces
-/// of this many bytes (a typical read buffer), the last one shorter.
+/// Many messages at once is measured at one point (FROZEN.md).
+const INTERLEAVED_COUNT: usize = 1;
+const POINT_COUNT: usize = 2 * (INPUT_COUNT + BATCH_COUNT) + 2 * CONTINUOUS_MESSAGE_COUNT + INTERLEAVED_COUNT + 2 * CONTINUOUS_BATCH_COUNT;
+/// A long message reaches a contender in pieces of this many bytes (a
+/// typical read buffer), the last one shorter.
 const PIECE_LEN: usize = 64 * 1024;
+
+/*
+ * Many messages at once (UseCase::Interleaved; Zooko, October 3, 2026): a
+ * server receiving many messages from its connections at once, each in
+ * pieces, interleaved. `open` messages are open at once; each piece goes
+ * to one of them, picked at random, and its length is drawn from an even
+ * spread over the octaves from `piece_min` to `piece_max` bytes (an
+ * octave, then a length within it; integers alone), cut at the message's
+ * end. Each message's length is drawn the same way from `message_min` to
+ * `message_max`; when one ends, its hash is used and a new message opens
+ * in its place. The generator is SplitMix64 from `seed`, its state kept
+ * from sample to sample with the open messages, so samples see the steady
+ * state. A sample's unit of work is `chunk` bytes of pieces.
+ */
+struct InterleavedSpec {
+    open: usize,
+    piece_min: usize,
+    piece_max: usize,
+    message_min: usize,
+    message_max: usize,
+    seed: u64,
+    chunk: usize,
+}
+
+const INTERLEAVED: InterleavedSpec = InterleavedSpec {
+    open: 256,
+    piece_min: 1024,
+    piece_max: 16 * 1024,
+    message_min: 64,
+    message_max: 16 * 1024 * 1024,
+    seed: 0x6a09_e667_f3bc_c908,
+    chunk: 1024 * 1024,
+};
 /// Every message in the batches is one BLAKE3 block of 64 bytes, the size
 /// of a Merkle tree's inner node (two 32-byte children).
 const MESSAGE_LEN: usize = 64;
@@ -147,13 +180,11 @@ const BLAKE3_SERVIL_SOURCE_INFO: &str = env!("BLAKE3_SERVIL_SOURCE_INFO");
  * and dropped: interpolated from 8 and 32 MiB, every contender's median
  * fell within the difference between two runs, on both machines.
  *
- * A message in pieces is measured nonstop at one length, 64 MiB: each
- * PIECE_LEN piece copied as a read would copy it and fed to the
- * contender's incremental API (then finalized), so the implementation
- * never sees the total up front. A message up to PIECE_LEN is one piece,
- * the one-message call's work; a long one shows the rate a contender
- * sustains piece after piece, which for a multithreaded incremental API
- * no one-message size predicts (Zooko, October 1, 2026; FROZEN.md).
+ * Many messages at once is measured at one point, 256 messages open
+ * (INTERLEAVED). It replaced one long message in pieces (Zooko, October 3,
+ * 2026): with no thread lingering between updates, a piece lent to an
+ * incremental call hashes as one message of its length does, which the
+ * one-message cells show.
  *
  * The continuous messages axis takes a length every factor of four from
  * 64 B to 64 MiB: a program hashing messages of that length one after
@@ -304,7 +335,7 @@ const POINTS: [Point; POINT_COUNT] = [
     Point::lent("4 MiB", 4 * 1024 * 1024),
     Point::lent("16 MiB", 16 * 1024 * 1024),
     Point::lent("64 MiB", 64 * 1024 * 1024),
-    Point::lent_pieces("64 MiB", 64 * 1024 * 1024),
+    Point::interleaved("256 open", INTERLEAVED.chunk),
     Point::lent_batch("16", 16),
     Point::lent_batch("64", 64),
     Point::lent_batch("256", 256),
@@ -339,8 +370,8 @@ struct RunSamples {
  * see hash_batch, every other one loops its plain entry point over it).
  * Five nonstop ones, a program hashing one input after another as fast
  * as it can: messages and batches through buffers the program owns (the
- * queue), and messages, long messages in pieces, and batches through
- * buffers it lends to a synchronous call, each read into a buffer of the
+ * queue), and messages, many messages at once in pieces, and batches
+ * through buffers it lends to a synchronous call, each read into a buffer of the
  * program's first.
  */
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -361,16 +392,18 @@ enum UseCase {
     /// Continuous synchronous calls: the producer lends each buffer until
     /// the call returns, so producing and hashing take turns.
     LentMessages,
-    /// One long message after another, each produced in PIECE_LEN pieces,
-    /// each copied as a read would, through the incremental API.
-    LentPieces,
+    /// Many messages open at once, each arriving in pieces, interleaved
+    /// (INTERLEAVED): a server receiving many messages from its
+    /// connections, each piece copied as a receive would, then fed to that
+    /// message's incremental API.
+    Interleaved,
     LentBatches,
 }
 
 impl UseCase {
     const ALL: [UseCase; 9] = [UseCase::OneMessage, UseCase::ManyMessages, UseCase::IdleOneMessage,
         UseCase::IdleManyMessages, UseCase::ContinuousMessages, UseCase::ContinuousBatches,
-        UseCase::LentMessages, UseCase::LentPieces, UseCase::LentBatches];
+        UseCase::LentMessages, UseCase::Interleaved, UseCase::LentBatches];
 
     /// Whether each call comes after a gap (the synchronous use cases:
     /// after other work, or after idling), or one follows another (the
@@ -389,7 +422,7 @@ impl UseCase {
         match self.call() {
             Self::OneMessage | Self::ContinuousMessages | Self::LentMessages => "messages",
             Self::ManyMessages | Self::ContinuousBatches | Self::LentBatches => "batches",
-            Self::LentPieces => "pieces",
+            Self::Interleaved => "pieces",
             Self::IdleOneMessage | Self::IdleManyMessages => unreachable!("call() names the call after other work"),
         }
     }
@@ -400,7 +433,7 @@ impl UseCase {
     fn buffers_key(self) -> Option<&'static str> {
         match self {
             Self::ContinuousMessages | Self::ContinuousBatches => Some("owned"),
-            Self::LentMessages | Self::LentPieces | Self::LentBatches => Some("lent"),
+            Self::LentMessages | Self::Interleaved | Self::LentBatches => Some("lent"),
             Self::OneMessage | Self::ManyMessages | Self::IdleOneMessage | Self::IdleManyMessages => None,
         }
     }
@@ -429,7 +462,7 @@ impl UseCase {
     fn message_len(self) -> usize {
         match self {
             Self::ManyMessages | Self::IdleManyMessages | Self::ContinuousBatches | Self::LentBatches => MESSAGE_LEN,
-            Self::OneMessage | Self::IdleOneMessage | Self::ContinuousMessages | Self::LentMessages | Self::LentPieces => panic!("{self:?} hashes one message of the point's size"),
+            Self::OneMessage | Self::IdleOneMessage | Self::ContinuousMessages | Self::LentMessages | Self::Interleaved => panic!("{self:?} hashes one message of the point's size"),
         }
     }
 
@@ -444,7 +477,8 @@ impl UseCase {
     /// What the x axis counts.
     fn x_axis(self) -> &'static str {
         match self {
-            Self::OneMessage | Self::IdleOneMessage | Self::LentMessages | Self::LentPieces => "Message length (logarithmic spacing)",
+            Self::OneMessage | Self::IdleOneMessage | Self::LentMessages => "Message length (logarithmic spacing)",
+            Self::Interleaved => "Messages open at once",
             Self::ManyMessages | Self::IdleManyMessages | Self::ContinuousBatches | Self::LentBatches => "Messages per batch, 64 B each (logarithmic spacing)",
             Self::ContinuousMessages => "Length of each message (logarithmic spacing)",
         }
@@ -459,7 +493,7 @@ impl UseCase {
             Self::ContinuousMessages => "Messages one after another, buffers owned",
             Self::ContinuousBatches => "Batches one after another, buffers owned",
             Self::LentMessages => "Messages one after another, buffers lent",
-            Self::LentPieces => "64 MiB messages in 64 KiB pieces, one after another, buffers lent",
+            Self::Interleaved => "Many messages at once, each arriving in pieces, buffers lent",
             Self::LentBatches => "Batches one after another, buffers lent",
         }
     }
@@ -474,7 +508,7 @@ impl UseCase {
             Self::ContinuousMessages => "messages, owned buffers",
             Self::ContinuousBatches => "batches, owned buffers",
             Self::LentMessages => "messages, lent buffers",
-            Self::LentPieces => "pieces, lent buffers",
+            Self::Interleaved => "many at once, lent buffers",
             Self::LentBatches => "batches, lent buffers",
         }
     }
@@ -482,7 +516,7 @@ impl UseCase {
     /// The x column's header in the text report.
     fn column(self) -> &'static str {
         match self {
-            Self::OneMessage | Self::IdleOneMessage | Self::ContinuousMessages | Self::LentMessages | Self::LentPieces => "size",
+            Self::OneMessage | Self::IdleOneMessage | Self::ContinuousMessages | Self::LentMessages | Self::Interleaved => "size",
             Self::ManyMessages | Self::IdleManyMessages | Self::ContinuousBatches | Self::LentBatches => "messages",
         }
     }
@@ -495,7 +529,7 @@ impl UseCase {
      */
     fn units(self, point: Point, iterations: usize) -> u64 {
         match self {
-            Self::OneMessage | Self::IdleOneMessage | Self::ContinuousMessages | Self::LentMessages | Self::LentPieces => point.bytes as u64 * iterations as u64,
+            Self::OneMessage | Self::IdleOneMessage | Self::ContinuousMessages | Self::LentMessages | Self::Interleaved => point.bytes as u64 * iterations as u64,
             Self::ManyMessages | Self::IdleManyMessages | Self::ContinuousBatches | Self::LentBatches => point.messages as u64 * iterations as u64,
         }
     }
@@ -536,7 +570,7 @@ impl UseCase {
     }
 
     /// The prefix that names this use case's points on the command line
-    /// ("lent pieces 64 MiB"), empty for the first two.
+    /// ("interleaved 256 open"), empty for the first two.
     fn label_prefix(self) -> &'static str {
         match self {
             Self::OneMessage | Self::ManyMessages => "",
@@ -544,7 +578,7 @@ impl UseCase {
             Self::ContinuousMessages => "continuous ",
             Self::ContinuousBatches => "continuous batch ",
             Self::LentMessages => "lent ",
-            Self::LentPieces => "lent pieces ",
+            Self::Interleaved => "interleaved ",
             Self::LentBatches => "lent batch ",
         }
     }
@@ -591,8 +625,8 @@ impl Point {
         Self { label, bytes, messages: 1, use_case: UseCase::LentMessages }
     }
 
-    const fn lent_pieces(label: &'static str, bytes: usize) -> Self {
-        Self { label, bytes, messages: 1, use_case: UseCase::LentPieces }
+    const fn interleaved(label: &'static str, bytes: usize) -> Self {
+        Self { label, bytes, messages: 1, use_case: UseCase::Interleaved }
     }
 
     const fn lent_batch(label: &'static str, messages: usize) -> Self {
@@ -687,7 +721,7 @@ impl Algorithm {
             UseCase::ManyMessages | UseCase::IdleManyMessages | UseCase::LentBatches => !matches!(self, Self::Blake3Rayon),
             UseCase::ContinuousBatches => !matches!(self, Self::Blake3Rayon | Self::Blake3ServilSt),
             UseCase::ContinuousMessages => !matches!(self, Self::Blake3ServilSt),
-            UseCase::OneMessage | UseCase::IdleOneMessage | UseCase::LentMessages | UseCase::LentPieces => true,
+            UseCase::OneMessage | UseCase::IdleOneMessage | UseCase::LentMessages | UseCase::Interleaved => true,
         }
     }
 
@@ -791,9 +825,9 @@ impl Algorithm {
             | Self::Sha256CommonCrypto
             | Self::Sha256Ring
             | Self::Sha3_256 => "single-threaded",
-            Self::Blake3ServilSt => "single-threaded; blake3_servil::hash for one message, blake3_servil::hash_many for a batch, Hasher::update per piece for a message in pieces",
+            Self::Blake3ServilSt => "single-threaded; blake3_servil::hash for one message, blake3_servil::hash_many for a batch, Hasher::update per piece for many messages at once",
             Self::Blake3Rayon => "multithreaded; Hasher::update_rayon (per piece, for a stream) on Rayon's global pool, the crate's own multithreading as a program gets it by default: the tree splits recursively over the pool, and inputs under a few chunks stay on the caller's thread",
-            Self::Blake3ServilMt => "multithreaded; blake3_servil::hash_multithreaded for one message, hash_many_multithreaded for a batch, Hasher::update_multithreaded per piece for a message in pieces; for continuous loads its queue: Queue::messages for messages of up to 64 KiB, Queue::pieces for longer ones, Queue::fixed for batches: the fork chooses when to wake its worker threads; the kernel tables below show the one-shot calls' thresholds",
+            Self::Blake3ServilMt => "multithreaded; blake3_servil::hash_multithreaded for one message, hash_many_multithreaded for a batch, Hasher::update_multithreaded per piece for many messages at once; for continuous loads its queue: Queue::messages for messages of up to 64 KiB, Queue::pieces for longer ones, Queue::fixed for batches: the fork chooses when to wake its worker threads; the kernel tables below show the one-shot calls' thresholds",
         }
     }
 
@@ -1258,7 +1292,7 @@ cell sampled in a share of them.
                                    --all
   --points LABEL,...               measure only these points (labels as in the
                                    report: \"64 B\", \"8 MiB\", \"1024\" messages,
-                                   \"lent pieces 64 MiB\", \"continuous 64 KiB\",
+                                   \"interleaved 256 open\", \"continuous 64 KiB\",
                                    \"continuous batch 1024\"); with
                                    --contenders only
   --rounds N                       exactly N sample rounds, every cell sampled in each
@@ -1342,7 +1376,7 @@ fn parse_arguments() -> Options {
 
 /*
  * The point a `--points` name names: a label's prefix names its use cases
- * ("lent pieces 64 MiB", "idle 16", "continuous batch 1024"), the longest
+ * ("interleaved 256 open", "idle 16", "continuous batch 1024"), the longest
  * prefix that matches, the plain label the calls after other work.
  */
 fn point_named(name: &str) -> usize {
@@ -2039,7 +2073,7 @@ fn hash_batch(
     assert!(algorithm.takes_part(point.use_case), "{} takes no part in {:?}", algorithm.key(), point.use_case);
 
     match point.use_case {
-        UseCase::LentPieces => return hash_stream(algorithm, input, iterations, consume),
+        UseCase::Interleaved => return hash_interleaved(algorithm, input, iterations, consume),
         UseCase::ContinuousMessages => return hash_continuous_messages(algorithm, input, iterations, consume),
         UseCase::ContinuousBatches => return hash_continuous_batches(algorithm, input, point, iterations, consume),
         UseCase::LentMessages | UseCase::LentBatches => return hash_lent(algorithm, input, point, iterations, consume),
@@ -2095,7 +2129,7 @@ fn hash_in_memory(algorithm: Algorithm, input: &[u8], point: Point, iterations: 
 }
 
 /*
- * A message in pieces (LentPieces): one message produced in PIECE_LEN pieces, each
+ * A long message in pieces: one message produced in PIECE_LEN pieces, each
  * copied from `input` as a read would (one copy when the message is
  * shorter, none when empty), then finalized; one digest per pass into
  * `consume`. The copy stands for a read, the cheapest one there is. Every
@@ -2154,6 +2188,119 @@ fn hash_stream(algorithm: Algorithm, input: &[u8], iterations: usize, consume: i
             digest
         }, consume),
     }
+}
+
+/*
+ * Many messages at once (INTERLEAVED): `iterations` units of
+ * INTERLEAVED.chunk bytes of pieces, each piece copied from `input` into
+ * the program's piece buffer (as a receive writes it), then fed to its
+ * message's incremental API; each message's hash, when it ends, goes to
+ * `consume`.
+ */
+fn hash_interleaved(algorithm: Algorithm, input: &[u8], iterations: usize, consume: impl FnMut(&[u8])) {
+    use sha2::Digest as _;
+    use sha1_checked::digest::Update as _;
+    let key = algorithm.key();
+    match algorithm {
+        Algorithm::Blake3 => each_interleaved(key, input, iterations, blake3::Hasher::new, |h, p| { h.update(p); }, |h| *h.finalize().as_bytes(), consume),
+        Algorithm::Blake3Rayon => each_interleaved(key, input, iterations, blake3::Hasher::new, |h, p| { h.update_rayon(p); }, |h| *h.finalize().as_bytes(), consume),
+        Algorithm::Blake3ServilSt => each_interleaved(key, input, iterations, blake3_servil::Hasher::new, |h, p| { h.update(p); }, |h| *h.finalize().as_bytes(), consume),
+        Algorithm::Blake3ServilMt => each_interleaved(key, input, iterations, blake3_servil::Hasher::new, |h, p| { h.update_multithreaded(p); }, |h| *h.finalize().as_bytes(), consume),
+        Algorithm::Sha256 => each_interleaved(key, input, iterations, Sha256::new, |h, p| sha2::Digest::update(h, p), |h| -> [u8; 32] { h.finalize().into() }, consume),
+        Algorithm::Sha256Ring => each_interleaved(key, input, iterations, || ring::digest::Context::new(&ring::digest::SHA256), |h, p| h.update(p), |h| {
+            let mut digest = [0u8; 32];
+            digest.copy_from_slice(h.finish().as_ref());
+            digest
+        }, consume),
+        Algorithm::Sha256CommonCrypto => each_interleaved(key, input, iterations, common_crypto::Sha256State::new, |h, p| h.update(p), |h| h.finish(), consume),
+        Algorithm::Sha1Dc => each_interleaved(key, input, iterations, sha1_checked::Sha1::new, |h, p| h.update(p), |h| {
+            let mut digest = [0u8; 20];
+            digest.copy_from_slice(h.try_finalize().hash());
+            digest
+        }, consume),
+        Algorithm::Sha3_256 => each_interleaved(key, input, iterations, sha3::Sha3_256::new, |h, p| sha3::Digest::update(h, p), |h| -> [u8; 32] { h.finalize().into() }, consume),
+    }
+}
+
+/// SplitMix64: the next value of the generator at `state`.
+fn splitmix64(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
+}
+
+/// A length spread evenly over the octaves from `min` up to `max`, both
+/// powers of two: an octave, then a length within it.
+fn octave_draw(state: &mut u64, min: usize, max: usize) -> usize {
+    assert!(min.is_power_of_two() && max.is_power_of_two() && min < max, "octaves between powers of two");
+    let (lo, hi) = (min.trailing_zeros(), max.trailing_zeros());
+    let octave = lo + (splitmix64(state) % u64::from(hi - lo)) as u32;
+    (1usize << octave) + (splitmix64(state) % (1u64 << octave)) as usize
+}
+
+/// The open messages and the generator of many messages at once, kept from
+/// sample to sample on each thread, one schedule per contender.
+struct Schedule<S> {
+    rng: u64,
+    open: Vec<(S, usize)>,
+    source: usize,
+}
+
+thread_local! {
+    static SCHEDULES: std::cell::RefCell<Vec<(&'static str, Box<dyn std::any::Any>)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn each_interleaved<S: 'static, D: AsRef<[u8]>>(
+    key: &'static str,
+    input: &[u8],
+    iterations: usize,
+    new: impl Fn() -> S,
+    update: impl Fn(&mut S, &[u8]),
+    finish: impl Fn(S) -> D,
+    mut consume: impl FnMut(&[u8]),
+) {
+    let spec = &INTERLEAVED;
+    assert!(input.len() >= spec.chunk && input.len() > spec.piece_max, "the pieces come from a source longer than a piece");
+    let kept = SCHEDULES.with(|all| {
+        let mut all = all.borrow_mut();
+        all.iter().position(|(k, _)| *k == key).map(|i| all.swap_remove(i).1)
+    });
+    let mut schedule: Schedule<S> = match kept {
+        Some(any) => *any.downcast().expect("one schedule type per contender"),
+        None => {
+            let mut rng = spec.seed;
+            let open = (0..spec.open).map(|_| (new(), octave_draw(&mut rng, spec.message_min, spec.message_max))).collect();
+            Schedule { rng, open, source: 0 }
+        }
+    };
+    let mut buffer = STREAM_BUFFER.with(|kept| std::mem::take(&mut *kept.borrow_mut()));
+    if buffer.len() < spec.piece_max {
+        buffer = written(PIECE_LEN.max(spec.piece_max), 1u8);
+    }
+    for _ in 0..iterations {
+        let mut budget = spec.chunk;
+        while budget > 0 {
+            let slot = (splitmix64(&mut schedule.rng) % spec.open as u64) as usize;
+            let len = octave_draw(&mut schedule.rng, spec.piece_min, spec.piece_max).min(schedule.open[slot].1).min(budget);
+            if schedule.source + len > input.len() {
+                schedule.source = 0;
+            }
+            buffer[..len].copy_from_slice(&black_box(input)[schedule.source..schedule.source + len]);
+            schedule.source += len;
+            update(&mut schedule.open[slot].0, black_box(&buffer[..len]));
+            schedule.open[slot].1 -= len;
+            budget -= len;
+            if schedule.open[slot].1 == 0 {
+                let next = (new(), octave_draw(&mut schedule.rng, spec.message_min, spec.message_max));
+                let (done, _) = std::mem::replace(&mut schedule.open[slot], next);
+                consume(finish(done).as_ref());
+            }
+        }
+    }
+    STREAM_BUFFER.with(|kept| *kept.borrow_mut() = buffer);
+    SCHEDULES.with(|all| all.borrow_mut().push((key, Box::new(schedule))));
 }
 
 /*
@@ -2533,10 +2680,10 @@ const SERVIL_CALLS: [(Algorithm, UseCase, &str); 16] = [
     (Algorithm::Blake3ServilMt, UseCase::ContinuousMessages, "Queue::messages(Mode::Hash) for messages of up to 64 KiB, Queue::pieces(Mode::Hash) in 64 KiB pieces for longer ones, one message after another, each read into free buffers of the program's, about 1 MiB or 1024 buffers in flight, whichever is fewer, cycled through the handler and a bounded channel with room for all of them (std::sync::mpsc::sync_channel, allocated when made), the queue and the channel made once and kept"),
     (Algorithm::Blake3ServilMt, UseCase::ContinuousBatches, "Queue::fixed(64, Mode::Hash), one batch after another, each read into a free buffer of the program's, submitted with its digests' space, about 1 MiB or 1024 buffers in flight, whichever is fewer, cycled through the handler and a bounded channel with room for all of them (std::sync::mpsc::sync_channel, allocated when made), the queue and the channel made once and kept"),
     (Algorithm::Blake3ServilSt, UseCase::LentMessages, "hash(input), one message after another, each read into a kept buffer and lent until the call returns"),
-    (Algorithm::Blake3ServilSt, UseCase::LentPieces, "Hasher::update per 64 KiB piece, then finalize, messages one after another, each piece read into a kept buffer and lent until the update returns"),
+    (Algorithm::Blake3ServilSt, UseCase::Interleaved, "a Hasher per open message, Hasher::update per piece, then finalize, 256 messages open at once, each piece read into a kept buffer and lent until the update returns"),
     (Algorithm::Blake3ServilSt, UseCase::LentBatches, "hash_many(batch, 64, out), the padded batch contract, batches one after another, each read into a kept buffer and lent with kept digests until the call returns"),
     (Algorithm::Blake3ServilMt, UseCase::LentMessages, "hash_multithreaded(input), one message after another, each read into a kept buffer and lent until the call returns"),
-    (Algorithm::Blake3ServilMt, UseCase::LentPieces, "Hasher::update_multithreaded per 64 KiB piece, then finalize, messages one after another, each piece read into a kept buffer and lent until the update returns"),
+    (Algorithm::Blake3ServilMt, UseCase::Interleaved, "a Hasher per open message, Hasher::update_multithreaded per piece, then finalize, 256 messages open at once, each piece read into a kept buffer and lent until the update returns"),
     (Algorithm::Blake3ServilMt, UseCase::LentBatches, "hash_many_multithreaded(batch, 64, out), the padded batch contract, batches one after another, each read into a kept buffer and lent with kept digests until the call returns"),
     (Algorithm::Blake3ServilSt, UseCase::IdleOneMessage, "hash(input), each call after idling"),
     (Algorithm::Blake3ServilSt, UseCase::IdleManyMessages, "hash_many(batch, 64, out), the padded batch contract, each call after idling"),
@@ -2873,6 +3020,31 @@ mod common_crypto {
         sha256_pieces(&mut |each: &mut dyn FnMut(&[u8])| each(input))
     }
 
+    /// A SHA-256 in progress, for many messages at once.
+    pub struct Sha256State(Context);
+
+    impl Sha256State {
+        pub fn new() -> Self {
+            let mut context = Context { count: [0; 2], hash: [0; 8], wbuf: [0; 16] };
+            // Safe: `context` is a valid CC_SHA256_CTX.
+            assert_eq!(unsafe { CC_SHA256_Init(&mut context) }, 1, "CC_SHA256_Init failed");
+            Sha256State(context)
+        }
+
+        pub fn update(&mut self, piece: &[u8]) {
+            let len = u32::try_from(piece.len()).expect("CC_SHA256_Update takes a 32-bit length");
+            // Safe: the context is valid and `piece` holds `len` bytes.
+            assert_eq!(unsafe { CC_SHA256_Update(&mut self.0, piece.as_ptr(), len) }, 1, "CC_SHA256_Update failed");
+        }
+
+        pub fn finish(mut self) -> [u8; DIGEST_LEN] {
+            let mut digest = [0u8; DIGEST_LEN];
+            // Safe: Final writes exactly 32 bytes to `digest`.
+            assert_eq!(unsafe { CC_SHA256_Final(digest.as_mut_ptr(), &mut self.0) }, 1, "CC_SHA256_Final failed");
+            digest
+        }
+    }
+
     /// One Update per piece, in order.
     pub fn sha256_pieces(pieces: super::Pieces) -> [u8; DIGEST_LEN] {
         let mut context = Context { count: [0; 2], hash: [0; 8], wbuf: [0; 16] };
@@ -2901,6 +3073,20 @@ mod common_crypto {
 
     pub fn sha256_pieces(_pieces: super::Pieces) -> [u8; 32] {
         unreachable!("CommonCrypto SHA-256 is an Apple-only contender")
+    }
+
+    pub struct Sha256State;
+
+    impl Sha256State {
+        pub fn new() -> Self {
+            unreachable!("CommonCrypto SHA-256 is an Apple-only contender")
+        }
+
+        pub fn update(&mut self, _piece: &[u8]) {}
+
+        pub fn finish(self) -> [u8; 32] {
+            unreachable!()
+        }
     }
 }
 
@@ -3096,7 +3282,7 @@ fn continuous_min_inputs(input: &[u8], point: Point) -> usize {
             2 * in_flight(input.len().min(PIECE_LEN)).div_ceil(pieces)
         }
         UseCase::ContinuousBatches => 2 * in_flight(input.len()),
-        UseCase::OneMessage | UseCase::IdleOneMessage | UseCase::ManyMessages | UseCase::IdleManyMessages | UseCase::LentMessages | UseCase::LentPieces | UseCase::LentBatches => 1,
+        UseCase::OneMessage | UseCase::IdleOneMessage | UseCase::ManyMessages | UseCase::IdleManyMessages | UseCase::LentMessages | UseCase::Interleaved | UseCase::LentBatches => 1,
     }
 }
 
@@ -3477,7 +3663,7 @@ fn detect_kernels(algorithm: Algorithm, use_case: UseCase) -> Kernels {
         let kernels = match use_case {
             UseCase::ContinuousMessages => Some(vec![kernel(0, "Queue::messages"), kernel(PIECE_LEN + 1, "Queue::pieces")]),
             UseCase::ContinuousBatches => Some(vec![kernel(0, "Queue::fixed")]),
-            UseCase::LentPieces => Some(vec![kernel(0, "Hasher::update_multithreaded")]),
+            UseCase::Interleaved => Some(vec![kernel(0, "Hasher::update_multithreaded")]),
             _ => None,
         };
         if let Some(kernels) = kernels {
@@ -3499,8 +3685,8 @@ fn detect_kernels(algorithm: Algorithm, use_case: UseCase) -> Kernels {
         /* An idle use case makes its twin's call. */
         UseCase::IdleOneMessage | UseCase::IdleManyMessages => detect_kernels(algorithm, use_case.call()),
         UseCase::OneMessage | UseCase::LentMessages => one_message,
-        /* A stream runs the one-message kernels piece by piece, so those that start past PIECE_LEN never run. */
-        UseCase::LentPieces => one_message.up_to(PIECE_LEN),
+        /* Pieces run the one-message kernels, so those that start past the longest piece never run. */
+        UseCase::Interleaved => one_message.up_to(INTERLEAVED.piece_max),
         /* A message of up to PIECE_LEN is one call's input; a longer one arrives in pieces. */
         UseCase::ContinuousMessages => one_message.up_to(PIECE_LEN),
         UseCase::ContinuousBatches | UseCase::LentBatches => detect_kernels(algorithm, UseCase::ManyMessages),
@@ -3738,9 +3924,8 @@ fn median_u128(values: &[u128]) -> u128 {
  */
 const REGRESS_SUBJECTS: [Algorithm; 2] = [Algorithm::Blake3ServilSt, Algorithm::Blake3ServilMt];
 /// The lent cells' code paths: one message short, in the pool's pieces,
-/// bulk on one thread; a long message in pieces; batches as members and as
-/// tasks of their own.
-const REGRESS_POINTS: [&str; 6] = ["lent 64 B", "lent 64 KiB", "lent 1 MiB", "lent pieces 64 MiB", "lent batch 16", "lent batch 4096"];
+/// bulk on one thread; batches as members and as tasks of their own.
+const REGRESS_POINTS: [&str; 5] = ["lent 64 B", "lent 64 KiB", "lent 1 MiB", "lent batch 16", "lent batch 4096"];
 const REGRESS_ROUNDS: usize = 24;
 const REGRESS_PAIRS: usize = 8;
 
@@ -4916,7 +5101,7 @@ fn generate_svg(
     line_of("what", false, vec![
         (("messages", "Messages", "Show or hide the plots of messages: one in one buffer now and then, or one after another"), has(&|p| p.use_case.what_key() == "messages")),
         (("batches", "Batches", "Show or hide the plots of batches of 64-byte messages"), has(&|p| p.use_case.what_key() == "batches")),
-        (("pieces", "Pieces", "Show or hide the plots of long messages arriving in 64 KiB pieces"), has(&|p| p.use_case.what_key() == "pieces")),
+        (("pieces", "Many at once", "Show or hide the plots of many messages at once, each arriving in pieces"), has(&|p| p.use_case.what_key() == "pieces")),
     ]);
     line_of("pattern", false, vec![
         (("idle", "After idling", "Show or hide the plots of calls each made after the program slept 1 ms, as a server waiting for its next request"), has(&|p| p.use_case.pattern_key() == "idle")),
@@ -4988,7 +5173,7 @@ fn generate_svg(
         howto.push("After idling: the program calls the hash, sleeps 1 ms, writes the input, and calls again; the second call is timed. So a server works that waits for its next request.".to_owned());
     }
     if plots.iter().any(|plot| !plot.use_case.after_gap()) {
-        howto.push("Nonstop, each input (each 64 KiB piece of a message in pieces) is first read into memory, a memory copy, the cheapest read, inside the time.".to_owned());
+        howto.push("Nonstop, each input (each piece, for many messages at once) is first read into memory, a memory copy, the cheapest read, inside the time.".to_owned());
         howto.push("Owned buffers: the program hands each buffer over and fills the next while it is hashed. Lent buffers: the program waits for each call to return before refilling its buffer.".to_owned());
     }
     let howto_height = 16.0 + howto.len() as f64 * 16.0;
@@ -5164,7 +5349,7 @@ fn write_plot(svg: &mut String, plot: &Plot, roster: &Roster, results: &Results,
         UseCase::OneMessage | UseCase::IdleOneMessage => lead.to_owned(),
         UseCase::ManyMessages | UseCase::IdleManyMessages => format!("{lead} · each hash takes the whole batch where it can, else one message at a time"),
         UseCase::ContinuousMessages | UseCase::ContinuousBatches => format!("{} · owned: the program hands each buffer over and fills the next while it is hashed", plot.scenario.subtitle()),
-        UseCase::LentMessages | UseCase::LentPieces | UseCase::LentBatches => format!("{} · lent: the program waits for each call to return before refilling its buffer", plot.scenario.subtitle()),
+        UseCase::LentMessages | UseCase::Interleaved | UseCase::LentBatches => format!("{} · lent: the program waits for each call to return before refilling its buffer", plot.scenario.subtitle()),
     };
     writeln!(
         svg,
@@ -5922,7 +6107,7 @@ fn contender_provenance_lines(
             kernels.kernels[0].name,
         )],
         Algorithm::Blake3ServilSt => vec![
-            format!("{name}: {} · hash, hash_many for a batch, Hasher::update for a message in pieces", short_git_source(BLAKE3_SERVIL_SOURCE_INFO)),
+            format!("{name}: {} · hash, hash_many for a batch, Hasher::update for many messages at once", short_git_source(BLAKE3_SERVIL_SOURCE_INFO)),
             format!("{name}: single-threaded · platform {platform}"),
         ],
         Algorithm::Sha256CommonCrypto => vec![format!("{name}: {} · {}", algorithm.mode(), kernels.kernels[0].name)],
@@ -5940,7 +6125,7 @@ fn contender_provenance_lines(
             format!("{name}: {}", algorithm.thread_resources().expect("BLAKE3 mt runs on Rayon's pool")),
         ],
         Algorithm::Blake3ServilMt => vec![
-            format!("{name}: {} · hash_multithreaded, hash_many_multithreaded for a batch, Hasher::update_multithreaded for a message in pieces; Queue::messages, Queue::pieces, and Queue::fixed for inputs one after another", short_git_source(BLAKE3_SERVIL_SOURCE_INFO)),
+            format!("{name}: {} · hash_multithreaded, hash_many_multithreaded for a batch, Hasher::update_multithreaded for many messages at once; Queue::messages, Queue::pieces, and Queue::fixed for inputs one after another", short_git_source(BLAKE3_SERVIL_SOURCE_INFO)),
             format!("{name}: multithreaded on the fork's own threads · platform {platform}"),
         ],
     }
@@ -7381,16 +7566,16 @@ mod correctness_tests {
         assert_eq!(UseCase::ContinuousBatches.points(), continuous + CONTINUOUS_MESSAGE_COUNT..continuous + CONTINUOUS_MESSAGE_COUNT + CONTINUOUS_BATCH_COUNT);
         let lent = continuous + CONTINUOUS_MESSAGE_COUNT + CONTINUOUS_BATCH_COUNT;
         assert_eq!(UseCase::LentMessages.points(), lent..lent + CONTINUOUS_MESSAGE_COUNT);
-        let pieces = lent + CONTINUOUS_MESSAGE_COUNT;
-        assert_eq!(UseCase::LentPieces.points(), pieces..pieces + LENT_PIECES_COUNT);
-        assert_eq!(UseCase::LentBatches.points(), pieces + LENT_PIECES_COUNT..POINT_COUNT);
+        let interleaved = lent + CONTINUOUS_MESSAGE_COUNT;
+        assert_eq!(UseCase::Interleaved.points(), interleaved..interleaved + INTERLEAVED_COUNT);
+        assert_eq!(UseCase::LentBatches.points(), interleaved + INTERLEAVED_COUNT..POINT_COUNT);
         let covered: Vec<_> = UseCase::ALL.into_iter().flat_map(UseCase::points).collect();
         assert_eq!(covered, (0..POINT_COUNT).collect::<Vec<_>>());
         for (owned, lent) in POINTS[UseCase::ContinuousMessages.points()].iter().zip(&POINTS[UseCase::LentMessages.points()]) {
             assert_eq!((owned.label, owned.bytes), (lent.label, lent.bytes));
         }
-        let long = POINTS[UseCase::LentPieces.points()][0];
-        assert!(long.bytes == 64 << 20 && long.label == "64 MiB", "a message in pieces is one long message, 64 MiB");
+        let many = POINTS[UseCase::Interleaved.points()][0];
+        assert!(many.bytes == INTERLEAVED.chunk && many.label == "256 open" && INTERLEAVED.open == 256, "many messages at once: 256 open, a unit of INTERLEAVED.chunk bytes");
         for (k, point) in POINTS[UseCase::ContinuousMessages.points()].iter().enumerate() {
             assert_eq!(point.bytes, 64 << (2 * k), "the continuous messages go up by factors of four from 64 B");
         }
@@ -7433,7 +7618,6 @@ mod correctness_tests {
         let cases = [
             (Point::lent("", 1000), make_input(1000)),
             (Point::lent("", long.len()), long.clone()),
-            (Point::lent_pieces("", long.len()), long.clone()),
             (Point::lent_batch("", 16), batch.clone()),
             (Point::continuous("", 1000), make_input(1000)),
             (Point::continuous("", long.len()), long),
@@ -7456,6 +7640,44 @@ mod correctness_tests {
                     assert!(seen.chunks(expected.len()).all(|each| each == expected), "{} {:?}", algorithm.key(), point.use_case);
                 }
             }
+        }
+    }
+
+    /// Many messages at once: every contender of one hash, each starting
+    /// from the same seed on a thread of its own, hands `consume` the same
+    /// digests in the same order, and short messages finish within a few
+    /// units; the traffic matches INTERLEAVED's spread.
+    #[test]
+    fn interleaved_contenders_of_one_hash_agree() {
+        let point = POINTS[UseCase::Interleaved.points()][0];
+        let input = make_input(point.bytes);
+        let run = |algorithm: Algorithm| {
+            let input = input.clone();
+            std::thread::spawn(move || {
+                let mut seen = Vec::new();
+                hash_batch(algorithm, &input, point, 3, |digest| seen.push(digest.to_vec()));
+                seen
+            })
+            .join()
+            .unwrap()
+        };
+        for family in [
+            &[Algorithm::Blake3, Algorithm::Blake3Rayon, Algorithm::Blake3ServilSt, Algorithm::Blake3ServilMt][..],
+            &[Algorithm::Sha256, Algorithm::Sha256Ring, Algorithm::Sha256CommonCrypto][..],
+        ] {
+            let runs: Vec<_> = family.iter().filter(|a| a.availability().is_ok() && a.takes_part(UseCase::Interleaved)).map(|&a| (a, run(a))).collect();
+            let (first, digests) = &runs[0];
+            assert!(digests.len() >= 10, "{}: only {} messages ended in 3 MiB of pieces", first.key(), digests.len());
+            for (other, theirs) in &runs[1..] {
+                assert_eq!(theirs, digests, "{} against {}", other.key(), first.key());
+            }
+        }
+        let mut rng = INTERLEAVED.seed;
+        let draws: Vec<usize> = (0..10_000).map(|_| octave_draw(&mut rng, INTERLEAVED.piece_min, INTERLEAVED.piece_max)).collect();
+        assert!(draws.iter().all(|&d| (INTERLEAVED.piece_min..INTERLEAVED.piece_max).contains(&d)));
+        for octave in 10..14 {
+            let n = draws.iter().filter(|&&d| d >> octave == 1).count();
+            assert!((2000..3000).contains(&n), "octave {octave}: {n} of 10000");
         }
     }
 
