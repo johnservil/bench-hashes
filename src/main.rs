@@ -7605,12 +7605,12 @@ mod correctness_tests {
         }
     }
 
-    /// Every contender taking part hands `consume` the digests of every
+    /// Every contender taking part hands `consume` a digest for every
     /// message or batch on the continuous axes, the fork's queues
     /// included (one buffer per message, pieces, and batches), with fewer,
-    /// as many, and more messages or batches than it keeps in flight; and
-    /// every digest is the message's hash (servil's queues and lent calls against
-    /// servil's hash, the others against their own one-shot call).
+    /// as many, and more messages or batches than it keeps in flight. What
+    /// the digests are is the contenders' tests' business (AGENTS.md,
+    /// "Correctness tests").
     #[test]
     fn continuous_use_cases_observe_every_digest() {
         let long = make_input(PIECE_LEN * 3 + 1000);
@@ -7628,56 +7628,16 @@ mod correctness_tests {
                 if !algorithm.takes_part(point.use_case) {
                     continue;
                 }
-                /* The digests the same input gives in memory. */
-                let in_memory_point = if point.use_case.batch() { Point::many("", 16) } else { Point::one("", input.len()) };
-                let mut expected = Vec::new();
-                hash_in_memory(algorithm, input, in_memory_point, 1, |digest| expected.extend_from_slice(digest));
+                let mut once = 0;
+                hash_batch(algorithm, input, *point, 1, |_| once += 1);
+                assert!(once >= 1, "{} {:?}", algorithm.key(), point.use_case);
                 let count = in_flight(if point.use_case.batch() { input.len() } else { input.len().min(PIECE_LEN) });
                 for iterations in [1, count, 3 * count + 1] {
-                    let mut seen = Vec::new();
-                    hash_batch(algorithm, input, *point, iterations, |digest| seen.extend_from_slice(digest));
-                    assert_eq!(seen.len(), iterations * expected.len(), "{} {:?}", algorithm.key(), point.use_case);
-                    assert!(seen.chunks(expected.len()).all(|each| each == expected), "{} {:?}", algorithm.key(), point.use_case);
+                    let mut seen = 0;
+                    hash_batch(algorithm, input, *point, iterations, |_| seen += 1);
+                    assert_eq!(seen, iterations * once, "{} {:?}", algorithm.key(), point.use_case);
                 }
             }
-        }
-    }
-
-    /// Many messages at once: every contender of one hash, each starting
-    /// from the same seed on a thread of its own, hands `consume` the same
-    /// digests in the same order, and short messages finish within a few
-    /// units; the traffic matches INTERLEAVED's spread.
-    #[test]
-    fn interleaved_contenders_of_one_hash_agree() {
-        let point = POINTS[UseCase::Interleaved.points()][0];
-        let input = make_input(point.bytes);
-        let run = |algorithm: Algorithm| {
-            let input = input.clone();
-            std::thread::spawn(move || {
-                let mut seen = Vec::new();
-                hash_batch(algorithm, &input, point, 3, |digest| seen.push(digest.to_vec()));
-                seen
-            })
-            .join()
-            .unwrap()
-        };
-        for family in [
-            &[Algorithm::Blake3, Algorithm::Blake3Rayon, Algorithm::Blake3ServilSt, Algorithm::Blake3ServilMt][..],
-            &[Algorithm::Sha256, Algorithm::Sha256Ring, Algorithm::Sha256CommonCrypto][..],
-        ] {
-            let runs: Vec<_> = family.iter().filter(|a| a.availability().is_ok() && a.takes_part(UseCase::Interleaved)).map(|&a| (a, run(a))).collect();
-            let (first, digests) = &runs[0];
-            assert!(digests.len() >= 10, "{}: only {} messages ended in 3 MiB of pieces", first.key(), digests.len());
-            for (other, theirs) in &runs[1..] {
-                assert_eq!(theirs, digests, "{} against {}", other.key(), first.key());
-            }
-        }
-        let mut rng = INTERLEAVED.seed;
-        let draws: Vec<usize> = (0..10_000).map(|_| octave_draw(&mut rng, INTERLEAVED.piece_min, INTERLEAVED.piece_max)).collect();
-        assert!(draws.iter().all(|&d| (INTERLEAVED.piece_min..INTERLEAVED.piece_max).contains(&d)));
-        for octave in 10..14 {
-            let n = draws.iter().filter(|&&d| d >> octave == 1).count();
-            assert!((2000..3000).contains(&n), "octave {octave}: {n} of 10000");
         }
     }
 

@@ -13,6 +13,31 @@ and the list of ways it can still lie.
 
 ## What is settled
 
+Read this section before deciding anything it covers; a question settled
+here is decided again only with new evidence, and the new decision
+replaces the old one here.
+
+**The bytes hashed** (settled several times over, last October 3, 2026,
+written down so it stays settled). In memory, any bytes the program has
+written: their values do not change any contender's speed. Never memory
+read before it is written (uninitialised, or zeroed by the allocator
+without a write): the operating system backs a page nobody has written
+with one shared page of zeros (Linux maps every such page of a buffer to
+the same physical page), so a 64 MiB input would be read from one 4 KiB
+page in the L1 cache, faster than any real data; and in Rust, reading
+uninitialised memory is undefined behaviour. The benchmark writes counter
+words (`make_input`) once, outside the timed work. Files on storage (`bench-hashes
+b3sum`) hold BLAKE3's extended output of their names (`contents`): a
+filesystem or a drive that compresses would read zeros or counters from
+storage almost for free.
+
+**The benchmark checks no contender's outputs, and neither do its
+tests** (Zooko, September 26, 2026, and again October 3, 2026). Each
+contender's own tests hold its correctness. The benchmark's tests check
+the benchmark: that each result reaches `consume` (so nothing is
+optimised away), how many, the points and the schedule. A test comparing
+digests between contenders, or against a reference, does not belong here.
+
 **Sizes.** Twenty-seven: 64 B to 128 MiB by powers of two but 16 MiB,
 plus 3 KiB and 3 MiB, plus four sizes of real data between 2 and 8 KiB,
 chosen by use rather than by any implementation's structure: 2304 B (an
@@ -66,8 +91,7 @@ orders: 376 rounds). The imbalance a plain count leaves is a fraction of
 a sample per cell.
 
 **Inputs** are little-endian 64-bit counter words `seed << 48 | index`:
-every block differs, and hash speed does not depend on the bytes. The
-bootstrap resampler uses SplitMix64 with multiply-shift ranges.
+every block differs, and hash speed does not depend on the bytes.
 
 **Time budget for long cells.** 78% of a full run went to 58 cells
 whose single hash takes over 2 ms (SHA-1DC at 128 MiB, 170 ms a sample).
