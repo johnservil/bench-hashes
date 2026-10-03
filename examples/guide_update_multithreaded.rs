@@ -5,13 +5,13 @@ use std::io::Read;
 fn main() -> std::io::Result<()> {
     blake3_servil::initialize_multithreaded();
     let mut file = std::fs::File::open("Cargo.toml")?;
-    let mut buffer = vec![0u8; 64 * 1024];
+    let mut buffer = vec![0u8; 1 << 20];
     let mut hasher = blake3_servil::Hasher::new();
     loop {
         let n = file.read(&mut buffer)?;
         if n == 0 { break; }
-        // Helper threads share each piece; between pieces they stay ready
-        // for a short while, so a quick succession of pieces flows.
+        // Helper threads share each piece of 512 KiB or more; shorter
+        // pieces hash on this thread.
         hasher.update_multithreaded(&buffer[..n]);
     }
     println!("{}", hasher.finalize().to_hex());
