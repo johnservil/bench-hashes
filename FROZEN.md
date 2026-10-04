@@ -34,6 +34,10 @@ the notes) may still change, to say it better.
   (`COLLECTIONS`): git/git's objects (422,404 at c46c1e3) and the files
   under 1 MiB of 1000 nixos-25.05 store paths (192,213 files); within an
   octave every item has one length, one and a half times its lower bound.
+  BLAKE3 servil on one thread hashes the whole collection in one call of
+  `hash_each_with` (the fork's call for this use case, short items side by
+  side in the SIMD lanes); every other contender calls its one-message
+  call once per item.
   No cell hashed many small items of different lengths, the main work of
   these programs (docs/api-design.md, "The measurements that settle
   them", 2).
@@ -194,7 +198,7 @@ blake3-servil-mt ContinuousMessages: Queue::messages(Mode::Hash) for messages of
 blake3-servil-mt ContinuousBatches: Queue::fixed(64, Mode::Hash), one batch after another, each read into a free buffer of the program's, submitted with its digests' space, about 1 MiB or 1024 buffers in flight, whichever is fewer, cycled through the handler and a bounded channel with room for all of them (std::sync::mpsc::sync_channel, allocated when made), the queue and the channel made once and kept
 blake3-servil-st LentMessages: hash(input), one message after another, each read into a kept buffer and lent until the call returns
 blake3-servil-st Interleaved: a Hasher per open message, Hasher::update per piece, then finalize, 256 messages open at once, each piece read into a kept buffer and lent until the update returns
-blake3-servil-st Collection: hash(item) for each item of the collection, one after another, in memory
+blake3-servil-st Collection: hash_each_with(Mode::Hash, items, out), every item of the collection in one call, in memory
 blake3-servil-st LentBatches: hash_many(batch, 64, out), the padded batch contract, batches one after another, each read into a kept buffer and lent with kept digests until the call returns
 blake3-servil-mt LentMessages: hash_multithreaded(input), one message after another, each read into a kept buffer and lent until the call returns
 blake3-servil-mt Interleaved: a Hasher per open message, Hasher::update_multithreaded per piece, then finalize, 256 messages open at once, each piece read into a kept buffer and lent until the update returns

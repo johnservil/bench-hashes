@@ -2207,6 +2207,18 @@ fn hash_collection(algorithm: Algorithm, input: &[u8], point: Point, iterations:
     let index = COLLECTIONS.iter().position(|(label, _)| *label == point.label).expect("a collection's point");
     let items = ITEMS[index].get_or_init(|| collection_items(COLLECTIONS[index].1));
     assert_eq!(input.len(), point.bytes, "the collection's items fill its input");
+    if algorithm == Algorithm::Blake3ServilSt {
+        // The fork's call for a collection: every item in one call.
+        let slices: Vec<&[u8]> = items.iter().map(|&(offset, len)| &input[offset..offset + len]).collect();
+        let mut digests = vec![[0u8; 32]; slices.len()];
+        for _ in 0..iterations {
+            blake3_servil::hash_each_with(blake3_servil::Mode::Hash, black_box(&slices), &mut digests);
+            for digest in &digests {
+                consume(digest);
+            }
+        }
+        return;
+    }
     for _ in 0..iterations {
         for &(offset, len) in items {
             hash_in_memory(algorithm, &input[offset..offset + len], Point::one("", len), 1, &mut consume);
@@ -2749,7 +2761,7 @@ const SERVIL_CALLS: [(Algorithm, UseCase, &str); 18] = [
     (Algorithm::Blake3ServilMt, UseCase::ContinuousBatches, "Queue::fixed(64, Mode::Hash), one batch after another, each read into a free buffer of the program's, submitted with its digests' space, about 1 MiB or 1024 buffers in flight, whichever is fewer, cycled through the handler and a bounded channel with room for all of them (std::sync::mpsc::sync_channel, allocated when made), the queue and the channel made once and kept"),
     (Algorithm::Blake3ServilSt, UseCase::LentMessages, "hash(input), one message after another, each read into a kept buffer and lent until the call returns"),
     (Algorithm::Blake3ServilSt, UseCase::Interleaved, "a Hasher per open message, Hasher::update per piece, then finalize, 256 messages open at once, each piece read into a kept buffer and lent until the update returns"),
-    (Algorithm::Blake3ServilSt, UseCase::Collection, "hash(item) for each item of the collection, one after another, in memory"),
+    (Algorithm::Blake3ServilSt, UseCase::Collection, "hash_each_with(Mode::Hash, items, out), every item of the collection in one call, in memory"),
     (Algorithm::Blake3ServilSt, UseCase::LentBatches, "hash_many(batch, 64, out), the padded batch contract, batches one after another, each read into a kept buffer and lent with kept digests until the call returns"),
     (Algorithm::Blake3ServilMt, UseCase::LentMessages, "hash_multithreaded(input), one message after another, each read into a kept buffer and lent until the call returns"),
     (Algorithm::Blake3ServilMt, UseCase::Interleaved, "a Hasher per open message, Hasher::update_multithreaded per piece, then finalize, 256 messages open at once, each piece read into a kept buffer and lent until the update returns"),
@@ -3727,6 +3739,10 @@ fn detect_kernels(algorithm: Algorithm, use_case: UseCase) -> Kernels {
     // Queue and incremental MT APIs have no kernel-report entry point.
     // Their known API boundaries remain useful; their schedules stay
     // explicitly unreported instead of inheriting one-shot thresholds.
+    if algorithm == Algorithm::Blake3ServilSt && use_case == UseCase::Collection {
+        let why = "The contender leaves this API's kernel schedule unreported.";
+        return Kernels::new("API (kernel unreported)", vec![Kernel { first: 0, name: "hash_each_with".to_owned(), why: why.to_owned(), mark: Mark::Circle }]);
+    }
     if algorithm == Algorithm::Blake3ServilMt {
         let why = "The contender leaves this API's kernel schedule unreported.";
         let kernel = |first, api: &str| Kernel { first, name: api.to_owned(), why: why.to_owned(), mark: Mark::Circle };
