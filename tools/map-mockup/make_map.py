@@ -23,6 +23,12 @@ PLACE = {"OneMessage": ("one", "busy"), "IdleOneMessage": ("one", "idle"), "Lent
 CALL = {"OneMessage": "hash_multithreaded", "IdleOneMessage": "hash_multithreaded", "LentMessages": "hash_multithreaded", "ContinuousMessages": "Queue::messages",
         "ManyMessages": "hash_many_multithreaded", "IdleManyMessages": "hash_many_multithreaded", "LentBatches": "hash_many_multithreaded", "ContinuousBatches": "Queue::fixed",
         "Interleaved": "update_multithreaded per piece", "Collection": "hash_multithreaded per item", "Outboard": "outboard_multithreaded_with"}
+# Each call's documentation, the door behind its name.
+DOCS_ROOT = "https://johnservil.github.io/BLAKE3/blake3_servil/"
+DOC = {"OneMessage": "fn.hash_multithreaded.html", "IdleOneMessage": "fn.hash_multithreaded.html", "LentMessages": "fn.hash_multithreaded.html",
+       "ContinuousMessages": "struct.Queue.html#method.messages", "ManyMessages": "fn.hash_many_multithreaded.html",
+       "IdleManyMessages": "fn.hash_many_multithreaded.html", "LentBatches": "fn.hash_many_multithreaded.html", "ContinuousBatches": "struct.Queue.html#method.fixed",
+       "Interleaved": "struct.Hasher.html#method.update_multithreaded", "Collection": "fn.hash_multithreaded.html", "Outboard": "fn.outboard_multithreaded_with.html"}
 # Cells whose points are separate cases, drawn as dots.
 CASES = {"Interleaved", "Collection"}
 cells = {}
@@ -31,7 +37,7 @@ for p in d["plots"]:
         continue
     row, col = PLACE[p["use"]]
     per = p["bytes"] if p["rateUnit"] == "GB/s" else p["x"]
-    cells[f'{p["scenario"]}|{row}|{col}'] = {"sizes": p["sizes"], "unit": p["rateUnit"], "call": CALL[p["use"]], "cases": p["use"] in CASES,
+    cells[f'{p["scenario"]}|{row}|{col}'] = {"sizes": p["sizes"], "unit": p["rateUnit"], "call": CALL[p["use"]], "doc": DOCS_ROOT + DOC[p["use"]], "cases": p["use"] in CASES,
         "per": per, "what": "a message" if p["rateUnit"] == "GB/s" else "a batch",
         "series": [None if s is None else [float(v) for v in s["med"]] for s in p["series"]]}
 hashing = {
@@ -72,7 +78,7 @@ b3cells = {}
 for cache, col in [("warm", "cached"), ("cold", "storage")]:
     for row, points in [("file", FILES), ("tree", TREES)]:
         if cache in labels:
-            b3cells[f"solo|{row}|{col}"] = {"sizes": points, "unit": "GB/s", "call": "b3sum", "cases": row == "tree",
+            b3cells[f"solo|{row}|{col}"] = {"sizes": points, "unit": "GB/s", "call": "b3sum", "doc": "https://github.com/johnservil/BLAKE3/tree/servil/b3sum", "cases": row == "tree",
                 "per": [units_of[p] for p in points], "what": "a run",
                 "series": [[means[(c, cache, p)] for p in points] for c in names]}
 b3 = {
