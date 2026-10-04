@@ -1,0 +1,55 @@
+{
+  "schema_version":1,
+  "revision":"external-binary",
+  "binary_origin":"override",
+  "control_binary_origin":"not-needed",
+  "control_build_elapsed_ms":0,
+  "build_elapsed_ms":0,
+  "runs":5,
+  "warmup_runs":1,
+  "fixture_scale":{"files":5000,"history_commits":1000,"refs":10000},
+  "object_format":"blake3",
+  "platform":"Darwin 25.6.0 arm64",
+  "scenarios":[
+    {
+      "scenario":"status_clean",
+      "command":"status --short",
+      "samples":5,
+      "elapsed_ms":{"min":412.790,"median":414.111,"mean":414.261,"max":415.572},
+      "max_rss_bytes":{"min":39059456,"median":39108608.000,"mean":39259340.800,"max":39845888}
+    }
+,
+    {
+      "scenario":"status_dirty",
+      "command":"status --short",
+      "samples":5,
+      "elapsed_ms":{"min":417.338,"median":421.012,"mean":420.768,"max":423.611},
+      "max_rss_bytes":{"min":38993920,"median":39075840.000,"mean":39259340.800,"max":40026112}
+    }
+,
+    {
+      "scenario":"log_history",
+      "command":"log --oneline",
+      "samples":5,
+      "elapsed_ms":{"min":115.651,"median":117.945,"mean":117.511,"max":119.124},
+      "max_rss_bytes":{"min":33652736,"median":33751040.000,"mean":33764147.200,"max":33964032}
+    }
+,
+    {
+      "scenario":"fsck_history",
+      "command":"fsck",
+      "samples":5,
+      "elapsed_ms":{"min":5467.002,"median":5505.858,"mean":5502.664,"max":5533.930},
+      "max_rss_bytes":{"min":40468480,"median":40992768.000,"mean":40838758.400,"max":41041920}
+    }
+,
+    {
+      "scenario":"add_all",
+      "command":"add .",
+      "samples":5,
+      "elapsed_ms":{"min":9670.589,"median":9699.725,"mean":9699.351,"max":9724.681},
+      "max_rss_bytes":{"min":57802752,"median":58425344.000,"mean":58333593.600,"max":58867712}
+    }
+
+  ]
+}
