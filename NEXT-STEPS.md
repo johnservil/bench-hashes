@@ -12,6 +12,50 @@ before touching kernels or the pool); this repository's are in `NOTES.md`.
 Every open item, from every block below, is in one list: the fork's
 NOTES "Future work"; the blocks below are history.
 
+## Resume here (October 4, 2026): use cases first, no lingering, Libra
+
+**State.** Fork `servil` = a64d495. Fork `candidate/no-linger` = servil +
+no lingering anywhere (0ba5a45; the queue's cells slowed 1.3-2.7x, Mac jobs
+1186-1189, and the queue is to be replaced) + docs (api-design.md holds the
+use-case catalogue, the APIs kept and considered, and the measurements that
+settle them, with results so far). bench-hashes `main` = 0.13.0 (released);
+`candidate/no-linger` = 0.13.0 + many messages at once (replaces the pieces
+row) + a collection cell (git and Nix sizes) + `bench-hashes b3sum`'s one
+process per file + `apps/libra-bench` (712b305). FROZEN "Changes since
+0.13.0" lists them; the write and the use of each hash, charged in every
+cell (api-design decisions 1 and 5), are decided and not yet built.
+
+**Found.** The stream does not pay in b3sum on the Mac (jobs 1197-1198:
+today's reader thread and update_multithreaded beat it; mapping wins for
+cached files); it stays until the same is measured on native Linux with
+io_uring (fork NOTES, Future work). Several streams at once: the stream
+1.31x with one, level at four (job 1199). Many messages at once: SHA-256
+1.6x faster than BLAKE3 (job 1201). In Libra, hashing is a small share:
+johnservil/libra `faster-add` makes `add` 9.75 -> 7.37 s and `fsck` 5.57 ->
+5.20 s by removing copies and batching object-index updates (jobs 1202-1203).
+
+**Posted.** libra-tools/libra#611 (the report and the branch);
+libra-tools/git-internal#183 (the refresh bug, header-free BLAKE3 IDs via
+derive-key contexts, and a follow-up with the measurements). Watch both
+for replies. Branches: johnservil/libra `faster-add`,
+johnservil/git-internal `in-place-ids`, fork `probe/hash-each`
+(`hash_each_with`, tested, never measured).
+
+**Next.**
+1. Measure `hash_each_with` in the collection cell against one call per
+   item (Mac), and in Libra (`apps/libra-bench` L4 patches, unbuilt).
+2. Build the write and the use of each hash charged in every cell, then
+   release 0.14.0.
+3. The Bao cells (api-design, measurement 3).
+4. The map of small plots for the graph (tmp/map-mockup; Zooko's notes:
+   one layout for small and full plots, zoom only, greying by header,
+   batch glyph three stacked squares, tooltips and contender toggles back).
+5. VM environment: run `sh /workspace/vm/setup.sh` after every restart; set
+   `TMPDIR=/var/tmp/libra-bench-tmp` for builds (the inherited TMPDIR is the
+   host's macOS path); Libra builds need `-j4` and `/var/tmp` space.
+
+The next runner job number is 1204.
+
 ## Resume here (October 2, 2026, evening UTC): one summary, one gate, one tool
 
 **State.** Fork `servil` = eb5e0af (promoted; its perf note has the gate):
