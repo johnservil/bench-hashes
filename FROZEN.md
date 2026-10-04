@@ -25,7 +25,7 @@ release, so results of different benchmarks are never read as alike. The
 documents that explain the benchmark (README, METHODOLOGY, CONTRIBUTING,
 the notes) may still change, to say it better.
 
-**Changes since 0.13.0** (Zooko, October 3, 2026), for the next release:
+**Changes in 0.14.0** (Zooko, October 3-5, 2026):
 - **The map replaces the graph, the guide's chart, and b3sum's bar chart**
   (Zooko, October 5, 2026): `bench-hashes.map.html`, every cell a small
   chart placed by what the program hashes and how it calls, opening in
