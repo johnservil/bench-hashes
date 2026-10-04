@@ -7,16 +7,16 @@ Written by GPT-5.6 Sol, Claude Fable 5, and Claude Opus 5.5 to my (Zooko's) spec
 It depends on your computer, on how long your messages are, and on how
 your program calls the hash. bench-hashes measures them on your
 computer, from 64-byte messages to 128 MiB and in batches of small
-messages, called now and then or nonstop, and draws the answer as an
-interactive graph you open in a web browser. One message of 1 MiB on an
-Apple M4 Max:
+messages, called now and then or nonstop, and draws the answer as a
+map you open in a web browser: a small chart for each way a program
+hashes. One message of 1 MiB on an Apple M4 Max:
 
 <img src="benchmark-results/AppleM4Max.darwin25/bench-hashes.chart.svg" alt="Hashing one 1 MiB message on an Apple M4 Max: BLAKE3 on every core and on one core beside SHA-256, SHA3-256, and SHA-1, in GB/s" width="720">
 
 Every size, on each machine measured so far:
 
-- [Apple M4 Max, macOS](https://johnservil.github.io/bench-hashes/benchmark-results/AppleM4Max.darwin25/bench-hashes.graph.svg)
-- [A Linux VM on that Mac](https://johnservil.github.io/bench-hashes/benchmark-results/aarch64.linux618520virt/bench-hashes.graph.svg)
+- [Apple M4 Max, macOS](https://johnservil.github.io/bench-hashes/benchmark-results/AppleM4Max.darwin25/bench-hashes.map.html)
+- [A Linux VM on that Mac](https://johnservil.github.io/bench-hashes/benchmark-results/aarch64.linux618520virt/bench-hashes.map.html)
 
 ## Run it on your computer
 
@@ -44,7 +44,7 @@ accurate when nothing else busy runs on the computer meanwhile.
 The run writes these files to `benchmark-results/`, in a folder named after
 your CPU and operating system:
 
-- `bench-hashes.graph.svg`: the graph. Open it in a web browser.
+- `bench-hashes.map.html`: the map. Open it in a web browser.
 - `bench-hashes.chart.svg`: one 1 MiB message as bars, a picture to share
   (a full run draws it; `bench-hashes chart` draws it again from a
   samples file).
@@ -56,21 +56,21 @@ your CPU and operating system:
 - `bench-hashes.checks.txt`: consistency checks, for people who
   maintain the benchmark or a hash.
 
-The graph has a plot for each way a program hashes. A message in one
-buffer, and a batch of 64-byte messages (a Merkle tree's nodes), each
-called now and then: *after other work*, as a program hashes between its
-other tasks, and *after idling*, as a server waits for its next request.
-Messages and batches hashed *nonstop*, one after another, and many
-messages at once, each arriving in pieces, by one program and by two at
-once. In every plot, higher
-is faster. Hover over a dot, or tap it, to compare the hashes there; the
-chips at the top right choose the plots, and "How to read this graph"
-under the title explains the rest.
+The map has a small chart for each way a program hashes. Its rows say
+what the program hashes: one message, a batch of 64-byte messages (a
+Merkle tree's nodes), many messages at once arriving in pieces (a
+server's uploads), a collection of items of every size (a repository's
+objects, a store's files), and a message with its outboard, for verified
+streaming. Its columns say how the program calls: now and then, *between
+other work* or *after a pause*, and nonstop, *waiting for each call* or
+*pipelined*. Higher lines are faster. Click a chart to open it, with the
+exact values under the pointer; click a row, a column, or a hash's name
+to set it aside; each call's name links to its documentation.
 
-Under the title the graph also says when other programs were busy or the
-computer ran on battery during the run. If it does, run again quieter
-and plugged in: busy programs slow the results, and battery power changes
-which cores run them.
+Under each section's title the map says when the run was made, and
+whether other programs were busy or the computer ran on battery. If they
+were, run again quieter and plugged in: busy programs slow the results,
+and battery power changes which cores run them.
 
 The contenders:
 
@@ -91,8 +91,9 @@ Programmers who want this speed in their own program open
 `bench-hashes.guide.html`. It asks a few questions about how the program
 receives its data (one thread or several; one message, pieces, or a
 batch; whether the thread keeps up; whose buffer the data lands in) and
-answers with one call from the servil crate, a complete Rust example, and
-that call's measured speed on your computer beside SHA-256. Every
+answers with one call from the servil crate, a complete Rust example, how
+that call's measured speed on your computer compares with SHA-256's, and
+a link to its chart on the map. Every
 question has an "I'm not sure" answer that leads to a safe choice.
 
 `cargo run --release -- --all` adds every other hash the benchmark knows
@@ -118,21 +119,21 @@ appended); `tools/b3sum-contenders.sh` builds official BLAKE3's `b3sum`
 1.8.2 and the fork's at given commits. The first contender is the one
 the others are compared with. `--files` chooses where the files live:
 put them on the storage you care about (they are made once, 1.4 GiB, and
-kept). `--quick` runs a smaller set in seconds. The report, samples, and
-a chart go to `benchmark-results/`, as `b3sum.result.txt`,
-`b3sum.samples.tsv`, and `b3sum.chart.svg`; `bench-hashes compare` reads
-the samples as it reads the hashes'.
+kept). `--quick` runs a smaller set in seconds. The report and samples go
+to `benchmark-results/`, as `b3sum.result.txt` and `b3sum.samples.tsv`,
+and the map there gains a b3sum section: a file or a tree of files, in
+the page cache or read from storage. `bench-hashes compare` reads the
+samples as it reads the hashes'; `bench-hashes map FOLDER` draws a
+folder's map again from its samples files.
 
-Results so far, warm and cold, official b3sum beside the fork's:
-
-- [Apple M4 Max, macOS](https://johnservil.github.io/bench-hashes/benchmark-results/AppleM4Max.darwin25/b3sum.chart.svg)
-- [A Linux VM on that Mac](https://johnservil.github.io/bench-hashes/benchmark-results/aarch64.linux618520virt/b3sum.chart.svg)
+The maps above hold b3sum's results too: official b3sum beside the
+fork's.
 
 ## Share your results
 
-Your graph is one self-contained file. Post it and `bench-hashes.result.txt`
+Your map is one self-contained file. Post it and `bench-hashes.result.txt`
 anywhere people can download them: an issue, a gist, a forum. Anyone who
-opens the graph in a browser sees it just as you do.
+opens the map in a browser sees it just as you do.
 
 Or publish them on the web from your own copy of this repository, as the
 results above are:
@@ -149,8 +150,8 @@ results above are:
 3. On GitHub, in your fork's Settings, under Pages, choose "Deploy from a
    branch", the branch `main`, and the folder `/ (root)`.
 
-A minute later your graph is at
-`https://YOU.github.io/bench-hashes/benchmark-results/FOLDER/bench-hashes.graph.svg`,
+A minute later your map is at
+`https://YOU.github.io/bench-hashes/benchmark-results/FOLDER/bench-hashes.map.html`,
 where FOLDER is the folder the run created.
 
 We would be glad to add your results to ours: once they are pushed to

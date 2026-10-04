@@ -18,7 +18,7 @@ contenders and their versions, the summary rule (each run's mean, pairs
 of runs: `clocks::summary`), the load rule (`clocks::load`), the
 regression check (`bench-hashes regress`: its points, its pairs, its
 margin of 3%), and the
-presentation (the graph, the guide, and the report, their layout and
+presentation (the map, the guide, and the report, their layout and
 their words). A change to any of these, a bug fix included, is Zooko's
 decision, recorded here with its date and reason, and it starts a new
 release, so results of different benchmarks are never read as alike. The
@@ -26,6 +26,15 @@ documents that explain the benchmark (README, METHODOLOGY, CONTRIBUTING,
 the notes) may still change, to say it better.
 
 **Changes since 0.13.0** (Zooko, October 3, 2026), for the next release:
+- **The map replaces the graph, the guide's chart, and b3sum's bar chart**
+  (Zooko, October 5, 2026): `bench-hashes.map.html`, every cell a small
+  chart placed by what the program hashes and how it calls, opening in
+  place with its values under the pointer, each call's name a link to its
+  documentation (johnservil.github.io/BLAKE3), b3sum's results a section
+  in the same form. Every run, and every b3sum run, draws it from the
+  samples files in its folder; `bench-hashes map FOLDER` draws it again.
+  The guide's answers link to their charts on the map. The README's 1 MiB
+  bar chart stays.
 - **Every cell charges the program's write and the use of each hash**
   (docs/api-design.md, decisions 1 and 5): after a gap, the write of the
   input is part of the sample, as it is in every nonstop cell; and every
@@ -190,8 +199,8 @@ their users seldom make):
   to themselves, and a pessimistic estimate of what users see; measured
   and reported, not optimised for directly. After a gap a copy met the
   code its twin had just run in a cache the gap left warm, and read
-  faster than one program alone (NOTES, "Shared after a gap"). The graph
-  plots solo and shared.
+  faster than one program alone (NOTES, "Shared after a gap"). The map
+  draws solo and shared.
 - **Planned, to add under this contract**: keyed and derive-key spot
   checks in perf_regress.
 

@@ -25,7 +25,7 @@ contender's incremental API.
 Each nonstop use case runs in two scenarios: **solo**, one copy of the
 contender, and **shared**, two copies at once. The calls after a gap run
 solo. The report shows each use case once per scenario, solo first; the
-graph shows both.
+map shows both.
 
 ## Contenders
 
@@ -370,12 +370,7 @@ where).
 
 The text report lists the kernel at each point for every contender in
 each use case (one line for a contender with a single kernel) and marks
-where a new one begins. In the graph, dot shape carries the same information: a circle
-for a contender's first kernel, a diamond for its second, a square for
-its third, a triangle for a fourth. Hovering any dot names its kernel,
-and hovering the first dot of a new kernel adds a sentence on why the
-kernel changes there. A legend under the plot
-explains the shapes. Colour stays with the contender, so a line keeps
+where a new one begins. Colour stays with the contender, so a line keeps
 one colour while its dots change shape.
 
 These inferences follow BLAKE3 v1.8.7's `src/platform.rs` and the
@@ -466,75 +461,28 @@ at the 64 B cell by about the margin, a cost of where code lands. The check, cal
 and builds of identical code, is in the fork's NOTES ("The regression
 check, calibrated").
 
-## The graph
+## The map
 
-The SVG shows a plot for each use case and scenario the run has (the
-calls after a gap solo, the nonstop ones solo and then shared), each with
-lines through the means on a log-log grid.
-
-A switch at the header's left, above the y axes' titles, flips every plot between rate (the
-default; higher is better: GB/s above, million messages per second
-below) and time (lower is better: ns/B above, ns per message below).
-Rate is the reciprocal of time, so on the log axis each plot mirrors
-through its middle: the switch animates each point along a straight
-line to its mirrored position over 0.7 s while the axes cross-fade, and
-every label, value, and hover figure follows the chosen unit. Ratios
-between contenders are unitless and stay put.
-
-Hovering a dot opens a panel for that point: the hovered
-contender's mean, range, and method (its code path), then every visible contender
-of that plot ranked fastest first with its time, rate, and speed
-relative to the hovered one ("▲ 1.35× faster" in green, "about the same" in grey, "▼ 3.22×
-slower" in red; contender colours stay away from those two hues).
-Hidden contenders stay out of the ranking. On a touch screen, tapping a
-dot pins the panel; tapping it again or the background clears it. Name
-highlighting follows the mouse, since a finger has no way to leave.
-
-The strip at the top narrows every plot, in lock step, to a range of
-inputs. It has a tick for every input the plots have (a batch counts its
-messages' bytes) on the plots' logarithmic spacing; its band marks the
-range shown. The strip spans the plots' own x range, so at the full range
-each tick stands over its input in the plots. The strip holds
-no numbers, since the plots' axes name their inputs in bytes or messages.
-Dragging either end of the band moves that end of the range, and
-dragging the band moves both, from tick to tick and never past each
-other. A slowly moving pointer moves the band's end at a third of its
-travel, so a slow hand can settle on one of several close ticks, and an
-end leaves its tick only once the pointer aims 3 px nearer another; the
-ticks under the ends light up while dragging. "All", shown whenever the
-range is narrowed, restores every input. The chips at the header's right
-show and hide plots, in groups that follow the measurements: what is
-hashed (messages, batches, pieces); how the program calls (after idling,
-after other work, nonstop); and, joined under Nonstop, the two choices
-only nonstop plots have (owned or lent buffers; solo or shared). A plot
-shows when every chip that applies to it is pressed; the plots shown
-close ranks. A chip whose press would change nothing, as the others
-stand, is dimmed, and a press that would leave no plot is refused. The header (title, strip, chips, and rate/time
-switch) sits at the top of the page.
-
-The page is written for three readers at once: a newcomer who holds only
-the page, a regular who knows the benchmark, and a maintainer. The header
-says what the page shows and on which computer; "How to read this graph"
-opens a panel on the lines and dot shapes; "About this run" at
-the bottom opens section by section onto the machine, the run, the
-sources, the method behind each dot shape, and each hash's version. A
-hash of the run that takes no part in a plot (BLAKE3 official mt has no batch
-function over threads) is
-listed under that plot's legend in pale type, "not measured here", with
-the reason as a tooltip; each name's tooltip says what the hash is. A
-comment at the top of the SVG source points maintainers to the code and
-data behind it.
-
-The names at the right edge of each plot are toggles. Clicking one
-hides that contender in every plot: its marks fade out, each y axis
-rescales to the contenders still showing, and its provenance line drops
-out of the block below. The name stays in
-place, greyed with a hollow swatch and a "hidden · click to show" hint,
-anchored toward where its line would sit on the current axis. Resting
-the mouse on a name underlines it and fades the other contenders' marks;
-the names themselves keep their look, so they always show which
-contenders are hidden. A viewer
-without script support shows every contender, laid out identically.
+`bench-hashes.map.html` draws every cell the run's samples file holds as
+a small chart, its lines through each contender's means on log scales,
+higher faster. The charts sit in a grid: its rows are what the program
+hashes (one message; a batch of 64-byte messages; many messages at once,
+in pieces; a collection of items; a message with its outboard), its
+columns how the program calls (now and then, between other work or after
+a pause; nonstop, waiting for each call or pipelined), first for one
+program and then for two at once. A cell the run did not measure stays
+empty, in its place. Clicking a chart opens it over the cells, its row's
+and column's headers lit, with its axes and, under the pointer, each
+contender's rate and time per message (or batch, or run) at that point;
+clicking again puts it back. A row's or column's header greys its charts,
+and a hash's name in the legend hides or shows its lines in every chart.
+Each chart names the call BLAKE3 servil mt makes there, a link to that
+call's documentation. A link to `bench-hashes.map.html#solo|one|lent`
+opens that chart; the guide links its answers so. When the folder also
+holds a b3sum run's samples, the map adds a section for it in the same
+form: a file or a tree of files, in the page cache or read from storage.
+The map comes from the samples files alone (`bench-hashes map FOLDER`
+draws it again), so a stored record draws the same map its run did.
 
 ## b3sum
 
@@ -574,11 +522,9 @@ the rounds, of its time against the first contender's in the same round,
 marked slower or faster by the rule `regress` uses (3%, an exact sign
 test over the rounds).
 
-The run writes `b3sum.result.txt` (the report), `b3sum.samples.tsv` (each
-run's time, and its counts as `# counts` lines), and `b3sum.chart.svg`: a
-panel for warm and for cold, a row for each input, a bar for each build
-as long as its speed against the row's fastest, labelled with its mean
-time per run and its `xN`.
+The run writes `b3sum.result.txt` (the report) and `b3sum.samples.tsv`
+(each run's time, and its counts as `# counts` lines), and draws the
+folder's map again, with a b3sum section (above, "The map").
 
 ## Output
 
@@ -586,7 +532,7 @@ The run prints the text report on stdout and progress on stderr (the
 phase, a bar over the sample rounds, and the running mean of every
 contender at the largest input size), and writes six files to
 `benchmark-results/{CPU}.{OS}/`: `bench-hashes.result.txt` (the
-report), `bench-hashes.graph.svg` (the graph), `bench-hashes.chart.svg`
+report), `bench-hashes.map.html` (the map), `bench-hashes.chart.svg`
 (one 1 MiB message after other work as bars: BLAKE3 servil on every core
 and on one, and the fastest measured member of SHA-256, SHA3-256, and
 SHA-1, from each cell's mean; a quick run, which stops below 1 MiB, draws
@@ -600,9 +546,8 @@ sample's thread counts per core kind (cycles, instructions, time), the
 clock each call ran at.
 
 `bench-hashes chart SAMPLES.tsv` draws a samples file's chart again
-beside it: `bench-hashes.chart.svg` from a run's samples, `b3sum.chart.svg`
-from a b3sum run's. Both come from the samples alone, so a stored record
-draws the same chart its run did.
+beside it, and `bench-hashes map FOLDER` a folder's map; both come from
+the samples alone, so a stored record draws what its run did.
 
 ## Load from other programs
 
@@ -613,8 +558,8 @@ hypervisor withheld from a virtual machine's CPUs for other work on the
 host. The OS counts both in 10 ms ticks, so the run sums them over
 windows of about a second, read between samples (a reading takes about
 9 µs, once a second, outside every timed interval); on 16 CPUs a window
-reads within 0.16 CPUs. The report, the samples file, and the graph's
-"About this run" section give the run's average and its busiest window, in
+reads within 0.16 CPUs. The report, the samples file, and the line under
+each of the map's titles give the run's average and its busiest window, in
 CPUs kept busy, and call the run busy when a window reached a whole CPU
 (other programs or steal), naming the busy windows. The samples file
 lists every window and when each sample started, so a sample's window
@@ -634,9 +579,8 @@ The run reads the machine's power state when it starts and when it
 finishes measuring: whether it draws from a battery (and the charge),
 and any power mode that trades speed for energy (macOS's Low Power Mode
 and High Power mode, through `pmset`; Linux's ACPI platform profile).
-The report, the samples file, and the graph's "About this run" section
-give it, and the graph's header says so when the run drew on a battery
-or saved power. On battery an Apple M4 Max ran more of the calls that
+The report, the samples file, and the line under each of the map's
+titles give it. On battery an Apple M4 Max ran more of the calls that
 follow a pause on its efficiency cores (233 of 400 calls after 1 ms of
 sleep, against 32 of 400 on mains power). A virtual machine sees no
 power supply, and its report says the OS reports none.
@@ -650,8 +594,8 @@ path from the CPU it finds at run time (the kernel tables say which).
 
 The build script reads `Cargo.lock` and embeds each contender crate's
 resolved version, registry checksum or git commit, and source, and this
-repository's own commit and whether its tree was clean. The report, the
-samples file, and the graph's "About this run" section carry them, so a result
+repository's own commit and whether its tree was clean. The report and
+the samples file carry them, so a result
 names the exact code it measured. `Cargo.lock` is checked in, so every
 build of one commit measures the same code.
 

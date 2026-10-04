@@ -2,29 +2,27 @@
 
 For the servil team: how things are done in this repository. The principles are in `AGENTS.md`; the fork's procedures (the regression check, branches and promotion, the Mac runner, probes) are in its `PROCEDURES.md`.
 
-# Records, runs, and graphs
+# Records, runs, and maps
 
 - **Records** measure the pinned fork commit: after a promotion,
   `cargo update -p blake3-servil` here and commit the lock; the VM's with
   `cargo run --release -- --all` from this directory (unpatched; writes
   `benchmark-results/` here); the Mac's as a runner job naming that fork
   commit, flags `["--all"]`, its files copied into
-  `benchmark-results/AppleM4Max.darwin25/`. Run the graph check on both
-  graphs before committing.
+  `benchmark-results/AppleM4Max.darwin25/`. Run the map check on both
+  maps before committing.
 - **Exploratory runs** go in a scratch directory with the built
   executable (`cd /tmp/qr && /tmp/target/release/bench-hashes --quick
   ...`, or `$(pypy3 /workspace/tools/perf_regress.py build)` for the
   fork's working tree): a run from this directory overwrites the records.
-- **Looking at a graph**: `rsvg-convert -w 1300 GRAPH.svg -o
-  /tmp/g.png`, crop with `convert`, copy into `/workspace/tmp/`, and read
-  it by its host path
+- **Looking at the map**: a screenshot with Playwright and Chromium
+  (`tools/graph-check/map.js` opens it the same way), crop with `convert`,
+  copy into `/workspace/tmp/`, and read it by its host path
   (`/Users/donaldturnworth/piplayground/blake3-servil/tmp/...`); the
   host sees a new file after a moment.
 - **VM setup** after a restart: `sh /workspace/vm/setup.sh` (git and cargo
-  for every shell, clang-19, pypy3, rsvg, the guest's pre-commit hook). The graph check needs Node
-  and jsdom: `apt-get install -y nodejs npm`, then `npm install jsdom@22`
-  in `/tmp/gc` and `NODE_PATH=/tmp/gc/node_modules node
-  tools/graph-check/check.js GRAPH.svg`.
+  for every shell, clang-19, pypy3, rsvg, Node, Chromium, the guest's pre-commit hook). The checks
+  run as `NODE_PATH=/workspace/tmp/node_modules node tools/graph-check/map.js MAP.html /usr/bin/chromium`.
 
 # The fork's performance-regression check runs this benchmark
 
@@ -51,7 +49,7 @@ Before a change or a question goes on Zooko's decision list, ask whether it adds
 - After `vm/setup.sh`, every `git` and `cargo` command runs as it is, with no prefix: it points the guest's system git config at `vm/home/.gitconfig` (its `safe.directory` covers the mount's uid 501 files; the guest runs as uid 0) and sets cargo's target directory and `CC=clang-19` in `$CARGO_HOME/config.toml`. `/tmp/target` is a tmpfs build cache; `CARGO_HOME=/usr/local/cargo`. The toolchain is rustc 1.98.1 without the `rustfmt` component, so there is no formatting check in the guest.
 - The contender set is a runtime `Roster` (see `--list`, `--all`, `--contenders`). CommonCrypto SHA-256 reports itself unavailable off Apple; its FFI module compiles only under `target_vendor = "apple"`. `rustup target add aarch64-apple-darwin` lets `cargo check --target aarch64-apple-darwin` type-check that path; the full crate fails to *build* for that target in this VM because the fork's C files need Apple headers.
 - Every clock read goes through the fork's `clocks/` crate (a git dependency, like the fork): wall time for samples, the thread's counts per core kind for `--trace-clocks PATH` (one line per sample interval; `tools/analyze-clock-trace.py` reads it: core placement, frequency, windows off the median frequency), and the process's CPU time for the load report. Its documentation says which clocks and why. github.com/johnservil/measure-clocks3 (needs `cargo +nightly`; clone it under `/workspace/tmp` if needed again) has `--pitfall` and `CPU-TIME-CLOCKS-AND-FREQUENCY.md`.
-- `rsvg-convert` renders an SVG to PNG to eyeball it: `rsvg-convert -w 1300 file.svg -o out.png`; `tools/graph-check/README.md` drives the graph's script.
+- `rsvg-convert` renders an SVG to PNG to eyeball it: `rsvg-convert -w 1300 file.svg -o out.png`; `tools/graph-check/README.md` drives the map and the guide.
 - Commands for the user go on one line, with no `\` continuations.
 - Never `sleep` in commands.
 - Run long commands (builds, benchmark runs, package installs) without a timeout and let their output stream, so the user can watch progress and interrupt when they choose.

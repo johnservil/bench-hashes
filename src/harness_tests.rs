@@ -21,7 +21,6 @@ fn asynchronous_labels_describe_the_measured_api() {
     assert_eq!(messages.kernels.len(), 2);
     assert_eq!(messages.kernels[messages.kernel_index_for(PIECE_LEN)].name, "Queue::messages");
     assert_eq!(messages.kernels[messages.kernel_index_for(PIECE_LEN + 1)].name, "Queue::pieces");
-    assert!(messages.kernels.iter().all(|kernel| kernel.why.contains("unreported")));
 }
 
 #[test]
@@ -52,17 +51,16 @@ fn official_batch_wrapper_hashes_each_message_with_plain_api_flags() {
 }
 
 #[test]
-fn sparse_runs_remove_previous_visualizations() {
+fn sparse_runs_remove_a_previous_guide() {
     let directory = std::env::temp_dir().join(format!("bench-hashes-audit-output-{}", std::process::id()));
     fs::create_dir_all(&directory).unwrap();
-    for name in ["bench-hashes.graph.svg", "bench-hashes.guide.html", "bench-hashes.result.txt"] {
+    for name in ["bench-hashes.guide.html", "bench-hashes.result.txt"] {
         fs::write(directory.join(name), "previous run").unwrap();
     }
-    remove_visualizations(&directory);
-    assert!(!directory.join("bench-hashes.graph.svg").exists());
+    remove_guide(&directory);
     assert!(!directory.join("bench-hashes.guide.html").exists());
     assert!(directory.join("bench-hashes.result.txt").exists());
-    remove_visualizations(&directory); // First sparse run has neither file.
+    remove_guide(&directory); // First sparse run has no guide.
     fs::remove_dir_all(directory).unwrap();
 }
 

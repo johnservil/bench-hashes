@@ -36,9 +36,6 @@ svg { width: 100%; height: auto; display: block; }
 details { margin: 1.2rem 0; }
 summary { cursor: pointer; color: #226a90; }
 details > *:not(summary) { margin-left: 0; }
-ul.paths { list-style: none; padding: 0; margin: .4rem 0; font-size: .95rem; }
-ul.paths li { margin: .2rem 0; }
-ul.paths svg { display: inline; width: 14px; height: 14px; vertical-align: -2px; margin-right: .4rem; }
 [hidden] { display: none !important; }
 </style>
 </head>
@@ -73,8 +70,7 @@ ul.paths svg { display: inline; width: 14px; height: 14px; vertical-align: -2px;
 </details>
 <details><summary>How this was measured</summary>
 <p id="method"></p>
-<p>Each dot is the mean of that cell's samples: their total time over the work they did, what a program pays on average. Hover over a dot for the time of one call, the throughput, and the code path that ran.</p>
-<ul class="paths" id="paths"></ul>
+<p>Each comparison is of the cells' means: their samples' total time over the work they did, what a program pays on average.</p>
 </details>
 </section>
 
@@ -127,22 +123,6 @@ function recommendation(a) {
     mind: mt ? "Call initialize_multithreaded() once at startup, so the first call finds its threads ready. The digest equals the single-threaded function's." : "Runs on your thread alone: right for a machine whose other cores are busy." };
 }
 
-/* Times and rates for people: three significant digits. */
-const sig = v => v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v.toFixed(2);
-function humanTime(ns) {
-  for (const [scale, unit] of [[1e9, "s"], [1e6, "ms"], [1e3, "µs"]]) if (ns >= scale) return `${sig(ns / scale)} ${unit}`;
-  return `${sig(ns)} ns`;
-}
-const humanRate = (nsPerUnit, batch) => batch ? `${sig(1000 / nsPerUnit)} million messages/s` : `${sig(1 / nsPerUnit)} GB/s`;
-
-const MARK = {
-  circle: r => `<circle r="${r}"/>`,
-  diamond: r => `<path d="M0 ${-1.25 * r} L${1.25 * r} 0 L0 ${1.25 * r} L${-1.25 * r} 0Z"/>`,
-  square: r => `<rect x="${-0.9 * r}" y="${-0.9 * r}" width="${1.8 * r}" height="${1.8 * r}"/>`,
-  triangle: r => `<path d="M0 ${-1.3 * r} L${1.2 * r} ${0.9 * r} L${-1.2 * r} ${0.9 * r}Z"/>`,
-  "downward triangle": r => `<path d="M0 ${1.3 * r} L${1.2 * r} ${-0.9 * r} L${-1.2 * r} ${-0.9 * r}Z"/>`,
-};
-const mark = (kind, r, x, y, color, extra = "") => `<g transform="translate(${x} ${y})" fill="${color}" ${extra}>${(MARK[kind] || MARK.circle)(r)}</g>`;
 
 const el = id => document.getElementById(id);
 let answers = {}, history = [], current = null, scenario = "solo", useIndex = 0;
@@ -217,15 +197,13 @@ function drawSpeed() {
   const measured = plot && points.length > 0;
   el("unmeasured").hidden = measured;
   el("chart").hidden = el("speed-summary").hidden = !measured;
-  if (!measured) { el("paths").replaceChildren(); el("method").textContent = ""; el("stand-in").hidden = true; return; }
+  if (!measured) { el("method").textContent = ""; el("stand-in").hidden = true; return; }
   const other = rival(plot);
   const mine = DATA.contenders.find(c => c.key === r.contender), theirs = DATA.contenders.find(c => c.key === other);
-  const series = [[mine, plot.series[r.contender]]].concat(theirs ? [[theirs, plot.series[other]]] : []);
   /* hash's plot standing in for update's pieces now and then: its x is each piece's length. */
   const standIn = r.shape === "pieces" && !r.call.startsWith("Queue::");
   el("stand-in").hidden = !standIn;
   el("stand-in").textContent = standIn ? `Each piece costs about what ${r.call === "update_multithreaded" ? "hash_multithreaded" : "hash"} costs on one buffer of the piece's length: these are its measurements.` : "";
-  const xLabel = plot.batch ? "Messages per batch" : standIn ? "Length of each piece" : "Message length";
   const unit = plot.batch ? " messages" : "";
 
   /* The sentence, from the same numbers as the dots: the size from which the lead holds to the largest. */
@@ -243,53 +221,8 @@ function drawSpeed() {
   }
   el("speed-summary").textContent = text;
 
-  /* The chart: throughput on log scales, so every size gets the same room. */
-  const W = 640, H = 300, L = 56, R = 150, T = 16, B = 44;
-  const logs = points.map(k => Math.log2(plot.units[k]));
-  const [x0, x1] = [Math.min(...logs), Math.max(...logs)];
-  const xs = logs.map(v => L + (x1 === x0 ? 0.5 : (v - x0) / (x1 - x0)) * (W - L - R));
-  const placed = [];
-  for (const i of points.map((_, i) => i).sort((a, b) => (Number.isInteger(logs[b]) - Number.isInteger(logs[a])) || a - b)) if (placed.every(j => Math.abs(xs[i] - xs[j]) >= 58)) placed.push(i);
-  const rate = ns => (plot.batch ? 1000 : 1) / ns;
-  const vals = series.flatMap(([, s]) => points.map(k => +s.mean[k]));
-  /* The range reaches out to a gridline (1, 2, or 5 times a power of ten) at each end, so every chart has numbers on its axis. */
-  const nice = (v, up) => { const e = 10 ** Math.floor(Math.log10(v)); const ms = up ? [1, 2, 5, 10] : [10, 5, 2, 1]; return e * ms.find(m => up ? e * m >= v : e * m <= v); };
-  const lo = nice(Math.min(...vals.map(rate)) / 1.15, false), hi = nice(Math.max(...vals.map(rate)) * 1.15, true);
-  const y = v => T + (Math.log(hi) - Math.log(v)) / (Math.log(hi) - Math.log(lo)) * (H - T - B);
-  let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${xLabel} against throughput, higher is better">`;
-  for (let e = Math.floor(Math.log10(lo)); e <= Math.ceil(Math.log10(hi)); e++) for (const m of [1, 2, 5]) {
-    const v = m * 10 ** e;
-    if (v >= lo && v <= hi) svg += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="#e6eaec"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end" font-size="11" fill="#5b6a72">${v >= 1 ? v : v.toPrecision(1)}</text>`;
-  }
-  svg += `<text transform="translate(14 ${(T + H - B) / 2}) rotate(-90)" text-anchor="middle" font-size="11" fill="#5b6a72">${plot.batch ? "Million messages per second" : "Gigabytes per second"} · higher is better</text>`;
-  points.forEach((k, i) => {
-    svg += `<line x1="${xs[i]}" x2="${xs[i]}" y1="${H - B}" y2="${H - B + (placed.includes(i) ? 6 : 3)}" stroke="#b6c4cb"/>`;
-    if (placed.includes(i)) svg += `<text x="${xs[i]}" y="${H - B + 19}" text-anchor="middle" font-size="11" fill="#5b6a72">${plot.labels[k]}</text>`;
-  });
-  svg += `<text x="${(L + W - R) / 2}" y="${H - 6}" text-anchor="middle" font-size="11" fill="#5b6a72">${xLabel}</text>`;
-  const labelYs = [];
-  const kernelAt = (s, k) => { let name = ""; let kind = "circle"; for (const kernel of s.kernels) if (plot.bytes[k] >= kernel.from) { name = kernel.name; kind = kernel.mark; } return { name, kind }; };
-  const usedMarks = new Map();
-  for (const [c, s] of series) {
-    svg += `<polyline points="${points.map((k, i) => `${xs[i]},${y(rate(+s.mean[k]))}`).join(" ")}" fill="none" stroke="${c.color}" stroke-width="2.2"/>`;
-    points.forEach((k, i) => {
-      const { name, kind } = kernelAt(s, k);
-      usedMarks.set(`${c.key}|${name}`, [c, kind, name]);
-      svg += mark(kind, 4, xs[i], y(rate(+s.mean[k])), c.color, `stroke="#fdfdfc" stroke-width="1.2"`).replace("<g ", `<g class="dot" `).replace("</g>", `<title>${escapeXml(`${c.name}, ${plot.labels[k]}${unit}: ${humanTime(+s.lat[k])} per ${plot.batch ? "batch" : "call"} · ${humanRate(+s.mean[k], plot.batch)}${name ? ` · ${name}` : ""}`)}</title></g>`);
-    });
-    let ly = y(rate(+s.mean[points.at(-1)]));
-    for (const o of labelYs) if (Math.abs(ly - o) < 16) ly = o + 16;
-    labelYs.push(ly);
-    svg += `<text x="${W - R + 8}" y="${ly + 4}" font-size="12" font-weight="600" fill="${c.color}">${c.name}</text>`;
-  }
-  el("chart").innerHTML = svg + "</svg>";
-
-  /* Behind the door: the code paths, one line per mark. */
-  el("paths").replaceChildren(...[...usedMarks.values()].filter(([, , name]) => name).map(([c, kind, name]) => {
-    const li = document.createElement("li");
-    li.innerHTML = `<svg viewBox="-7 -7 14 14">${mark(kind, 4, 0, 0, c.color)}</svg>${escapeXml(c.name)}: ${escapeXml(name)}`;
-    return li;
-  }));
+  /* The door to the measurement: the same chart on the map, opened. */
+  el("chart").innerHTML = `<a href="bench-hashes.map.html#${encodeURIComponent(plot.map)}">See it on the map, with every hash measured beside it ›</a>`;
   el("method").textContent = methodText(plot);
 }
 function escapeXml(t) { return t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }

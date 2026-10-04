@@ -6,13 +6,14 @@ it measures, and keep your results comparable with ours.
 
 ## Layout
 
-- `src/main.rs`: the whole benchmark (contenders, timing, statistics, the
-  text report, the SVG and its script).
-- `src/guide.html`: the offline API decision guide, generated with the run’s SVG.
+- `src/main.rs`: the benchmark (contenders, timing, statistics, the text
+  report); `src/map.rs` and `src/map.html`, the map; `src/b3sum.rs`,
+  `bench-hashes b3sum`.
+- `src/guide.html`: the offline API decision guide, generated with a full run.
 - `build.rs`: embeds the provenance (this repository's commit and state,
   and each contender crate's version and source).
-- `tools/graph-check/`: drives the graph's script in jsdom and checks its
-  layout; `guide.js` exercises the HTML guide in Chromium (its README says how).
+- `tools/graph-check/`: `map.js` drives the map in Chromium, and `guide.js`
+  the guide (its README says how).
 - `bench-hashes compare OLD.tsv... -- NEW.tsv...`: compares runs'
   samples files, each side's pooled, cell by cell, speed with speed and
   share with share.
@@ -22,7 +23,7 @@ it measures, and keep your results comparable with ours.
 ```sh
 cargo test --release
 cargo run --release -- --quick     # seconds; a full run takes minutes
-node tools/graph-check/check.js benchmark-results/FOLDER/bench-hashes.graph.svg
+node tools/graph-check/map.js benchmark-results/FOLDER/bench-hashes.map.html
 node tools/graph-check/guide-summary.js # the guide's sentences (Playwright)
 ```
 
@@ -43,13 +44,13 @@ every place, and the compiler names any match you miss.
    entry point), and its incremental API, for long messages read in
    pieces (`hash_stream`) and for many messages at once
    (`hash_interleaved`).
-4. Describe its code paths for the graph's marks (`detect_kernels`); one
-   path at every size is a fine start.
+4. Describe its code paths for the report's kernel tables
+   (`detect_kernels`); one path at every size is a fine start.
 
 Then `cargo test --release` and
 `cargo run --release -- --contenders yours,sha256-ring,blake3-servil-mt`.
 The harness does the rest: interleaving, the use cases and scenarios,
-statistics, the report, the graph, and the guide.
+statistics, the report, the map, and the guide.
 
 ## Working on the fork alongside
 
@@ -110,16 +111,17 @@ Pull requests that add a machine's results are welcome: one folder under
 of this repository. A second machine of a kind we already have gets a
 folder name of its own.
 
-## Text in the graph and the report
+## Text in the map and the report
 
-The graph and the report are read by newcomers holding only the page as
+The map and the report are read by newcomers holding only the page as
 well as by regulars: text in them uses words a newcomer knows or the page
 introduces, describes the page as it is, and is computed from the run's
 own data (it names only contenders the run has). Details go behind the
-page's doors (tooltips, "How to read this graph", "About this run").
+page's doors (an opened chart, its values under the pointer, the links to
+the documentation).
 `AGENTS.md`, "Presentation: write each page for a reader who holds only
 the page", has the whole practice. Check a change with
-`node tools/graph-check/check.js` and by looking at a render.
+`node tools/graph-check/map.js` and by looking at the page.
 
 ## Maintainers' notes
 

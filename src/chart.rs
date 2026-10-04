@@ -1,10 +1,8 @@
-//! The charts drawn from a samples file: for the hashes
-//! (`bench-hashes.chart.svg`), one 1 MiB message, BLAKE3 servil on every
-//! core and on one, beside the fastest of each other family the run
-//! measured, as bars in GB/s; for b3sum (`b3sum.chart.svg`), each input's
-//! time per run for every build, warm and cold. Every run draws its chart
-//! from the samples file it writes; `bench-hashes chart SAMPLES.tsv` draws
-//! one from a stored file. The READMEs show the published records'.
+//! The chart drawn from a samples file (`bench-hashes.chart.svg`): one
+//! 1 MiB message, BLAKE3 servil on every core and on one, beside the
+//! fastest of each other family the run measured, as bars in GB/s. Every
+//! full run draws it; `bench-hashes chart SAMPLES.tsv` draws it from a
+//! stored file. The READMEs show the published records'.
 
 use super::{read_samples, ExactMean};
 use std::fmt::Write as _;
@@ -26,14 +24,10 @@ const GAP: f64 = 10.0;
 const PLOT: f64 = WIDTH - LEFT - 60.0;
 const FONT: &str = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif";
 
-/// The chart from a samples file: b3sum's for a b3sum run; else the
-/// hashes', or `None` when the file lacks BLAKE3 servil's two 1 MiB cells
-/// (a quick run stops below 1 MiB).
+/// The chart from a samples file, or `None` when the file lacks BLAKE3
+/// servil's two 1 MiB cells (a quick run stops below 1 MiB).
 pub fn from_samples(path: &str) -> Option<String> {
     let file = read_samples(path);
-    if file.cells.iter().any(|(key, _)| key.split('|').nth(2) == Some("b3sum")) {
-        return Some(b3sum_chart(&file));
-    }
     let header = |key: &str| file.headers.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str()).unwrap_or("?");
     // Hundredths of GB/s from a cell's mean (ns per byte, Q64.64), rounded once.
     let centi = |key: &str| -> Option<u128> {
@@ -86,99 +80,8 @@ pub fn from_samples(path: &str) -> Option<String> {
     Some(svg)
 }
 
-/// Contender colours for b3sum's chart, in the order the run named them.
-const PALETTE: [&str; 6] = ["#6b7280", "#7c3aed", "#0f766e", "#c2410c", "#2563eb", "#db2777"];
-
-/// b3sum's chart: a panel for each page-cache state, a row for each input,
-/// and in each row a bar for each build, as long as its speed against the
-/// row's fastest, with its mean time per run and its time against the
-/// first build's (the median of the rounds' ratios, marked slower or
-/// faster by clocks::summary::verdict, as the report does).
-fn b3sum_chart(file: &super::SamplesFile) -> String {
-    let header = |key: &str| file.headers.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str()).unwrap_or("?");
-    let parts = |key: &str| -> (String, String, String) {
-        let f: Vec<&str> = key.split('|').collect();
-        (f[0].to_owned(), f[1].to_owned(), f[3].to_owned())
-    };
-    let mut contenders: Vec<String> = Vec::new();
-    let mut caches: Vec<String> = Vec::new();
-    let mut inputs: Vec<String> = Vec::new();
-    for (key, _) in &file.cells {
-        let (c, cache, input) = parts(key);
-        for (list, item) in [(&mut contenders, c), (&mut caches, cache), (&mut inputs, input)] {
-            if !list.contains(&item) {
-                list.push(item);
-            }
-        }
-    }
-    let cell = |c: &str, cache: &str, input: &str| -> &[super::Measured] {
-        &file.cells.iter().find(|(k, _)| *k == format!("{c}|{cache}|b3sum|{input}")).expect("every cell measured").1
-    };
-    let row_h = 15.0;
-    let block = contenders.len() as f64 * row_h + 10.0;
-    let panel_head = 30.0;
-    let top = 92.0;
-    let height = top + contenders.len() as f64 * 18.0 - 18.0 + caches.len() as f64 * (panel_head + inputs.len() as f64 * block) + 40.0;
-    // The bars start right of the longest input label (13 px type, about 7 px a character).
-    let left = 30.0 + 7.0 * inputs.iter().map(|i| i.chars().count()).max().unwrap_or(10) as f64;
-    let plot = 300.0;
-    let mut svg = String::new();
-    writeln!(svg, r#"<svg xmlns="http://www.w3.org/2000/svg" width="{WIDTH}" height="{height}" viewBox="0 0 {WIDTH} {height}" font-family="{FONT}">"#).unwrap();
-    writeln!(svg, r##"<rect width="{WIDTH}" height="{height}" fill="#ffffff"/>"##).unwrap();
-    writeln!(svg, r##"<text x="20" y="28" font-size="17" font-weight="600" fill="#111827">How fast b3sum hashes files, from its start to its exit</text>"##).unwrap();
-    let subtitle = format!("{}, {} CPUs, {} · files on {}", header("cpu type"), header("cpu count"), header("os type"), header("files").split_once(" on ").map_or("?", |(_, fs)| fs));
-    writeln!(svg, r##"<text x="20" y="48" font-size="13" fill="#4b5563">{}</text>"##, super::xml_escape(&subtitle)).unwrap();
-    // The legend: each build's name and its own --version line.
-    for (i, c) in contenders.iter().enumerate() {
-        let ly = 61.0 + i as f64 * 18.0;
-        let version = header(&format!("contender {c}")).rsplit("; ").next().unwrap_or("").trim_end_matches(')');
-        writeln!(svg, r#"<rect x="20" y="{ly:.1}" width="12" height="12" rx="2" fill="{}"/>"#, PALETTE[i % PALETTE.len()]).unwrap();
-        writeln!(svg, r##"<text x="37" y="{:.1}" font-size="13" fill="#111827">{} <tspan fill="#6b7280">{}</tspan></text>"##, ly + 10.0, super::xml_escape(c), super::xml_escape(version)).unwrap();
-    }
-    let mut y = top + contenders.len() as f64 * 18.0 - 18.0;
-    for cache in &caches {
-        let title = if cache == "warm" { "Files in the page cache (read moments before)" } else { "Files read from storage (evicted before each run)" };
-        writeln!(svg, r##"<text x="20" y="{:.1}" font-size="14" font-weight="600" fill="#111827">{title}</text>"##, y + 18.0).unwrap();
-        y += panel_head;
-        for input in &inputs {
-            let runs: Vec<&[super::Measured]> = contenders.iter().map(|c| cell(c, cache, input)).collect();
-            // Each build's mean time per run (ns), rounded.
-            let times: Vec<u128> = runs.iter().map(|r| {
-                let total: u128 = r.iter().map(|m| u128::from(m.ns)).sum();
-                (total + r.len() as u128 / 2) / r.len() as u128
-            }).collect();
-            let fastest = *times.iter().min().unwrap();
-            writeln!(svg, r##"<text x="{:.1}" y="{:.1}" font-size="13" fill="#111827" text-anchor="end">{}</text>"##, left - 10.0, y + block / 2.0, super::xml_escape(input)).unwrap();
-            for (i, time) in times.iter().enumerate() {
-                let w = plot * fastest as f64 / *time as f64;
-                let by = y + i as f64 * row_h;
-                writeln!(svg, r#"<rect x="{left}" y="{by:.1}" width="{w:.1}" height="{:.1}" rx="2" fill="{}"/>"#, row_h - 3.0, PALETTE[i % PALETTE.len()]).unwrap();
-                let mut label = super::b3sum::time(*time);
-                if i > 0 {
-                    let ratios: Vec<u64> = runs[i].iter().zip(runs[0]).map(|(a, b)| clocks::summary::ratio_permille(u128::from(a.ns), u128::from(b.ns))).collect();
-                    let median = clocks::summary::median_permille(&ratios);
-                    let mark = match clocks::summary::verdict(&ratios, 30) {
-                        clocks::summary::Verdict::Slower => ", slower",
-                        clocks::summary::Verdict::Faster => ", faster",
-                        clocks::summary::Verdict::Level => "",
-                    };
-                    label += &format!(" · x{}.{:02}{mark}", median / 1000, (median % 1000 + 5) / 10);
-                }
-                writeln!(svg, r##"<text x="{:.1}" y="{:.1}" font-size="11" fill="#374151">{label}</text>"##, left + w + 6.0, by + row_h - 5.0).unwrap();
-            }
-            y += block;
-        }
-    }
-    let footer = format!("bench-hashes {} on {}, {} rounds: bars, speed against each row's fastest; xN, time against {}'s (median over the rounds)",
-        header("bench-hashes version").split('+').next().unwrap_or("?"), header("timestamp").split(' ').next().unwrap_or("?"), header("rounds"), contenders[0]);
-    writeln!(svg, r##"<text x="20" y="{:.1}" font-size="11" fill="#9a9a9a">{}</text>"##, height - 14.0, super::xml_escape(&footer)).unwrap();
-    svg.push_str("</svg>\n");
-    svg
-}
-
 /// `bench-hashes chart SAMPLES.tsv`: draw its chart beside the samples file
-/// (bench-hashes.samples.tsv -> bench-hashes.chart.svg, b3sum.samples.tsv ->
-/// b3sum.chart.svg).
+/// (bench-hashes.samples.tsv -> bench-hashes.chart.svg).
 pub fn command(args: &[String]) {
     let [path] = args else { panic!("usage: bench-hashes chart SAMPLES.tsv") };
     let svg = from_samples(path).unwrap_or_else(|| panic!("{path} holds no 1 MiB cells of BLAKE3 servil st and mt (a full run measures them)"));

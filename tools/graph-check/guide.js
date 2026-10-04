@@ -1,6 +1,6 @@
 // Exercise the generated guide in a real browser: every decision-table
 // route, every uncertain default, Back and restart, and each ending's
-// example, chart, and table. npm install playwright; node guide.js GUIDE.html [CHROMIUM]
+// example, map link, and table. npm install playwright; node guide.js GUIDE.html [CHROMIUM]
 const { chromium } = require('playwright');
 const { pathToFileURL } = require('url');
 const assert = require('assert');
@@ -36,9 +36,8 @@ const path = require('path');
     if (buffer !== null) await page.locator('#choices button').nth(buffer).click();
     const state = await page.evaluate(() => ({
       call: current.call, example: document.getElementById('example').textContent, unmeasured: !document.getElementById('unmeasured').hidden,
-      dots: document.querySelectorAll('#chart g.dot').length, titles: [...document.querySelectorAll('#chart g.dot title')].map(t => t.textContent),
+      map: (document.querySelector('#chart a') || {}).getAttribute?.('href') || '',
       chips: [...document.querySelectorAll('#how button')].map(b => [b.textContent, b.getAttribute('aria-pressed')]),
-      paths: document.querySelectorAll('#paths li').length,
       summary: document.getElementById('speed-summary').textContent, resultVisible: !document.getElementById('result').hidden,
       standIn: !document.getElementById('stand-in').hidden,
       uses: current.uses,
@@ -49,10 +48,8 @@ const path = require('path');
     if (state.unmeasured) { assert(['Queue::pieces', 'update', 'update_multithreaded'].includes(state.call), `${state.call}: only cells past 1 MiB may be absent from a quick run`); }
     else {
       measured++;
-      assert(state.dots >= 2, `${state.call}: dots`);
-      /* Every hover names the size, a time per call in a readable unit, a rate, and the code path. */
-      for (const t of state.titles) assert(/: \d+(\.\d+)? (ns|µs|ms|s) per (call|batch) · \d+(\.\d+)? (GB\/s|million messages\/s)/.test(t), t);
-      assert(state.paths >= 1, `${state.call}: code paths listed`);
+      /* The door to the measurement: its chart on the map. */
+      assert(/^bench-hashes\.map\.html#(solo|shared)%7C[a-z]+%7C[a-z]+$/.test(state.map), `${state.call}: a link to its chart on the map: ${state.map}`);
       assert(/Faster|Slower|As fast as|trade places|measured alone/.test(state.summary), state.summary);
       if (state.call.startsWith('Queue::')) assert(!state.standIn, 'queue measurements are actual queue calls');
       if (shape === 1 && threads === 0 && !state.call.startsWith('Queue::')) {
@@ -80,7 +77,7 @@ const path = require('path');
           /* Two programs at once are offered nonstop alone. */
           const sharedChip = await page.evaluate(() => [...document.querySelectorAll('#how button')].some(b => b.textContent === 'beside another program'));
           assert.equal(sharedChip, other === 'nonstop', `${state.call}, ${other}: the shared chip`);
-          assert(await page.evaluate(() => document.querySelectorAll('#chart g.dot').length) >= 2);
+          assert(await page.evaluate(() => !!document.querySelector('#chart a[href^="bench-hashes.map.html#"]')), 'the map link follows the pattern');
         }
       }
     }
@@ -95,9 +92,7 @@ const path = require('path');
   assert((await page.locator('#q-title').innerText()).includes('several threads'));
   const defaults = await page.evaluate(() => Object.fromEntries(Object.entries(QUESTIONS).map(([k, q]) => [k, q.choices.at(-1)[0]])));
   assert.deepEqual(defaults, { threads: 'one', shape: 'message', keepsUp: 'yes', buffer: 'lent' });
-  assert(await page.evaluate(() => mark('downward triangle', 4, 0, 0, 'red').includes('<path')),
-    'the Rust downward-triangle name produces the matching shape');
   assert.deepEqual(errors, []);
-  console.log(`${routes} table routes, ${endings} clicked endings (${measured} measured), defaults, Back, restart, examples, charts, hovers, chips: pass`);
+  console.log(`${routes} table routes, ${endings} clicked endings (${measured} measured), defaults, Back, restart, examples, map links, chips: pass`);
   await browser.close();
 })().catch(e => { console.error(e); process.exit(1); });

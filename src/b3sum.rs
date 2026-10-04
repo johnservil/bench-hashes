@@ -447,12 +447,11 @@ pub fn command(args: &[String]) {
     }
     let samples_path = directory.join("b3sum.samples.tsv");
     fs::write(&samples_path, tsv).unwrap();
-    let chart = super::chart::from_samples(samples_path.to_str().expect("a path in UTF-8")).expect("a b3sum run draws its chart");
-    fs::write(directory.join("b3sum.chart.svg"), chart).unwrap();
+    super::map::write(&directory);
     let report = report(&specs, &inputs, &caches, &cells, &machine, &filesystem, quick, rounds);
     fs::write(directory.join("b3sum.result.txt"), &report).unwrap();
     print!("{report}");
-    eprintln!("bench-hashes b3sum: report, samples, and chart in {}", directory.display());
+    eprintln!("bench-hashes b3sum: report, samples, and map in {}", directory.display());
 }
 
 // ---------- The report ----------

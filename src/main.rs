@@ -197,7 +197,6 @@ const MESSAGE_LEN: usize = 64;
 const BENCH_VERSION: &str = env!("CARGO_PKG_VERSION");
 const GIT_SOURCE: &str = env!("BENCH_GIT_SOURCE");
 const GIT_COMMIT: &str = env!("BENCH_GIT_COMMIT");
-const GIT_TAG: &str = env!("BENCH_GIT_TAG");
 const GIT_CLEAN_STATUS: &str = env!("BENCH_GIT_CLEAN_STATUS");
 
 const RUSTC_VERSION: &str = env!("BENCH_RUSTC_VERSION");
@@ -419,7 +418,6 @@ struct RunSamples {
     shared_started_ns: Vec<Vec<Vec<u64>>>,
 }
 
-
 /*
  * The use cases (FROZEN.md). Two synchronous calls, each made now and
  * then, after other work and, as their idle twins, after idling: one
@@ -482,29 +480,6 @@ impl UseCase {
         if self.idle() { "idle" } else if self.after_gap() { "busy" } else { "nonstop" }
     }
 
-    /// What a call hashes, as the graph's chips name it.
-    fn what_key(self) -> &'static str {
-        match self.call() {
-            Self::OneMessage | Self::ContinuousMessages | Self::LentMessages => "messages",
-            Self::ManyMessages | Self::ContinuousBatches | Self::LentBatches => "batches",
-            Self::Interleaved => "pieces",
-            Self::Collection => "collections",
-            Self::Outboard => "outboards",
-            Self::IdleOneMessage | Self::IdleManyMessages => unreachable!("call() names the call after other work"),
-        }
-    }
-
-    /// Whose buffers a nonstop use case hashes, as the graph's chips name
-    /// it: the producer's own, handed over (owned), or lent until each call
-    /// returns; None for the calls after a gap.
-    fn buffers_key(self) -> Option<&'static str> {
-        match self {
-            Self::ContinuousMessages | Self::ContinuousBatches => Some("owned"),
-            Self::LentMessages | Self::Interleaved | Self::Collection | Self::Outboard | Self::LentBatches => Some("lent"),
-            Self::OneMessage | Self::ManyMessages | Self::IdleOneMessage | Self::IdleManyMessages => None,
-        }
-    }
-
     /// Whether the program idles before each call.
     fn idle(self) -> bool {
         matches!(self, Self::IdleOneMessage | Self::IdleManyMessages)
@@ -539,18 +514,6 @@ impl UseCase {
         let end = POINTS.iter().rposition(|point| point.use_case == self).unwrap() + 1;
         assert!(POINTS[start..end].iter().all(|point| point.use_case == self), "a use case's points are contiguous");
         start..end
-    }
-
-    /// What the x axis counts.
-    fn x_axis(self) -> &'static str {
-        match self {
-            Self::OneMessage | Self::IdleOneMessage | Self::LentMessages => "Message length (logarithmic spacing)",
-            Self::Interleaved => "Messages open at once",
-            Self::Collection => "Collection",
-            Self::Outboard => "Message length (logarithmic spacing)",
-            Self::ManyMessages | Self::IdleManyMessages | Self::ContinuousBatches | Self::LentBatches => "Messages per batch, 64 B each (logarithmic spacing)",
-            Self::ContinuousMessages => "Length of each message (logarithmic spacing)",
-        }
     }
 
     fn heading(self) -> &'static str {
@@ -620,15 +583,6 @@ impl UseCase {
 
     fn rate_unit(self) -> &'static str {
         if self.batch() { "Mmsg/s" } else { "GB/s" }
-    }
-
-    fn rate_unit_long(self) -> &'static str {
-        if self.batch() { "Million messages per second" } else { "Gigabytes per second" }
-    }
-
-    /// rate = rate_scale / (ns per unit): 1 ns/B is 1 GB/s; 1 ns/msg is 1000 Mmsg/s.
-    fn rate_scale(self) -> u64 {
-        if self.batch() { 1000 } else { 1 }
     }
 
     /// How the program calls, for a reader of the results.
@@ -787,7 +741,6 @@ impl Algorithm {
         }
     }
 
-
     /// Whether this contender runs on the calling thread's core alone:
     /// no SME unit shared with other cores, no helper threads.
     fn core_only(self) -> bool {
@@ -851,22 +804,6 @@ impl Algorithm {
         }
     }
 
-    /// What the hash is, in a line for a reader who has never heard of it
-    /// (the tooltip on its name in the graph's legend).
-    fn blurb(self) -> &'static str {
-        match self {
-            Self::Blake3 => "the official BLAKE3 Rust crate, on one thread",
-            Self::Blake3Rayon => "the official BLAKE3 Rust crate, spreading large inputs over its thread pool",
-            Self::Blake3ServilSt => "a fork of the official BLAKE3 Rust crate, faster on 64-bit Arm and above all on Apple M4-class chips, on one thread",
-            Self::Blake3ServilMt => "a fork of the official BLAKE3 Rust crate, faster on 64-bit Arm and above all on Apple M4-class chips, spreading large inputs over every CPU core",
-            Self::Sha256 => "SHA-256 from the sha2 Rust crate, with the CPU's SHA-256 instructions where it has them",
-            Self::Sha256Ring => "SHA-256 from the ring Rust crate, with the CPU's SHA-256 instructions where it has them",
-            Self::Sha256CommonCrypto => "SHA-256 from Apple's CommonCrypto library",
-            Self::Sha1Dc => "SHA-1 with collision detection, from the sha1-checked Rust crate",
-            Self::Sha3_256 => "SHA3-256 from the sha3 Rust crate, with the CPU's SHA-3 instructions where it has them",
-        }
-    }
-
     /*
      * Contender colours stay off pure green and pure red, which the hover
      * panel reserves for "faster" and "slower". A multithreaded contender
@@ -918,16 +855,6 @@ impl Algorithm {
         }
     }
 
-    /// The threads a multithreaded contender runs on, as far as the
-    /// benchmarker can say without asking the implementation for machine
-    /// capacity: Rayon's global pool is documented to take one thread per
-    /// logical CPU by default; the fork sizes its own workers.
-    fn thread_resources(self) -> Option<String> {
-        match self {
-            Self::Blake3Rayon => Some("Rayon's global pool, at its default size (one thread per logical CPU)".to_owned()),
-            _ => None,
-        }
-    }
 }
 
 /*
@@ -956,9 +883,6 @@ impl Measured {
         Measured { ns, units }
     }
 
-    fn per_unit(self) -> PerUnit {
-        Fixed(((u128::from(self.ns) << 64) + u128::from(self.units) / 2) / u128::from(self.units))
-    }
 }
 
 /// A cell's mean exactly as measured: total ns over total units. Kept for
@@ -1048,11 +972,6 @@ impl Fixed {
         u64::try_from((self.0 * 1000 + (1 << 63)) >> 64).expect("a permille figure fits in u64")
     }
 
-    /// Nanoseconds, for the SVG's log axis only.
-    fn ns_f64(self) -> f64 {
-        self.0 as f64 / (1u128 << 64) as f64
-    }
-
     /// Nanoseconds with three decimals, and more below 0.1 ns so that
     /// three significant digits show, rounded once: "0.437", "0.0311",
     /// "121.362".
@@ -1066,31 +985,16 @@ impl Fixed {
         format!("{}.{:0width$}", rounded / whole, rounded % whole, width = decimals as usize)
     }
 
-    /// `numerator` / self, in tenths, rounded once: a rate from a time.
-    fn tenths_of(self, numerator: u64) -> u64 {
-        self.scaled_of(numerator, 10)
-    }
-
-    /// `numerator` / self times `scale`, rounded once.
-    fn scaled_of(self, numerator: u64, scale: u64) -> u64 {
-        assert!(self.0 > 0);
-        u64::try_from((((u128::from(numerator) * u128::from(scale)) << 64) + self.0 / 2) / self.0).expect("a rate fits in u64")
-    }
 }
-
 
 /*
  * Summary of one cell's samples: its mean, the total time of its samples
  * over the total work they did (clocks::summary), what a caller pays on
- * average; `minimum` and `maximum`, the extremes seen.
+ * average.
  */
 #[derive(Clone, Copy)]
 struct Statistics {
-    /// Samples behind these figures.
-    count: usize,
-    minimum: PerUnit,
     mean: PerUnit,
-    maximum: PerUnit,
     exact_mean: Option<ExactMean>,
 }
 
@@ -1127,14 +1031,6 @@ impl Scenario {
         match self {
             Self::Solo => "Solo",
             Self::Shared => "Shared",
-        }
-    }
-
-    /// The scenario in a plot's subtitle.
-    fn subtitle(self) -> &'static str {
-        match self {
-            Self::Solo => "one program hashing",
-            Self::Shared => "two programs hashing at once; the time of either",
         }
     }
 
@@ -1536,6 +1432,9 @@ fn main() {
     if arguments.first().map(String::as_str) == Some("chart") {
         return chart::command(&arguments[1..]);
     }
+    if arguments.first().map(String::as_str) == Some("map") {
+        return map::command(&arguments[1..]);
+    }
     let Options { selection, explicit, points, rounds, trace_path, quick } = parse_arguments();
     let mut trace = trace_path.map(ClockTrace::new);
     let mut machine = machine_metadata();
@@ -1567,7 +1466,7 @@ fn main() {
 
     let text = generate_text(&roster, &results, &machine, &selection_note);
     /* The graph draws whole axes: every point of each use case it shows. */
-    let svg = roster.whole_axes().then(|| generate_svg(&roster, &results, &machine, &selection_note));
+    let whole = roster.whole_axes();
 
     print!("{text}");
 
@@ -1582,7 +1481,6 @@ fn main() {
 
     let stem = "bench-hashes";
     let text_path = directory.join(format!("{stem}.result.txt"));
-    let svg_path = directory.join(format!("{stem}.graph.svg"));
     let samples_path = directory.join(format!("{stem}.samples.tsv"));
     let samples = generate_samples_tsv(&roster, &samples, &machine, &selection_note);
     fs::write(&samples_path, &samples).unwrap_or_else(|error| {
@@ -1597,28 +1495,22 @@ fn main() {
         panic!("failed to write {}: {error}", checks_path.display())
     });
 
-    if let Some(svg) = &svg {
-        fs::write(&svg_path, svg).unwrap_or_else(|error| {
-            panic!("failed to write {}: {error}", svg_path.display())
-        });
+    if whole {
         let guide_path = directory.join(format!("{stem}.guide.html"));
         fs::write(&guide_path, generate_guide(&roster, &results, &machine)).unwrap_or_else(|error| {
             panic!("failed to write {}: {error}", guide_path.display())
         });
         println!("# API guide (HTML) is in \"{}\" .", guide_path.display());
     } else {
-        remove_visualizations(&directory);
+        remove_guide(&directory);
     }
 
     println!(
         "# Data results (text) are in \"{}\" .",
         text_path.display(),
     );
-    match svg {
-        Some(_) => println!("# Graph results (SVG) are in \"{}\" .", svg_path.display()),
-        None => println!("# No graph: plots need at least two consecutive points from each axis’s start (its one point, on an axis of one) and a measured cell for every selected contender."),
-    }
     println!("# Samples (TSV) are in \"{}\" .", samples_path.display());
+    map::write(&directory);
     let chart_path = directory.join(format!("{stem}.chart.svg"));
     match chart::from_samples(samples_path.to_str().expect("a path in UTF-8")) {
         Some(chart) => {
@@ -1634,10 +1526,10 @@ fn main() {
     }
 }
 
-/// Sparse runs replace the report and samples too, so any older full-run
-/// visualization must leave their directory with them.
-fn remove_visualizations(directory: &std::path::Path) {
-    for name in ["bench-hashes.graph.svg", "bench-hashes.guide.html"] {
+/// Sparse runs replace the report and samples too, so a guide from an
+/// older full run leaves their directory with them.
+fn remove_guide(directory: &std::path::Path) {
+    for name in ["bench-hashes.guide.html"] {
         let path = directory.join(name);
         if path.exists() {
             fs::remove_file(&path).unwrap_or_else(|error| panic!("failed to remove stale {}: {error}", path.display()));
@@ -1825,7 +1717,6 @@ fn measure_all(roster: &Roster, mut trace: Option<&mut ClockTrace>) -> (Results,
                     let copies = Scenario::Shared.measures(point.use_case)
                         .then(|| duo.run(algorithm, input, duo_inputs[size_index], point, iterations));
 
-
                     let total_units = point.use_case.units(point, iterations);
                     let per_unit = |ns: u64| Measured::new(ns, total_units);
                     samples.solo[algorithm_index][size_index].push(per_unit(elapsed_ns));
@@ -1890,7 +1781,6 @@ fn measure_all(roster: &Roster, mut trace: Option<&mut ClockTrace>) -> (Results,
 
     (results, samples, load)
 }
-
 
 /*
  * Live progress on stderr, so stdout stays a clean report. Shows the phase,
@@ -2817,7 +2707,6 @@ thread_local! {
     static STREAM_BUFFER: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
-
 /*
  * What the benchmark asks of the servil fork, by contender and use case:
  * the fork's call and its usage pattern. FROZEN.md lists the same, with the
@@ -3510,26 +3399,14 @@ fn calibrate_batch(
     }
 }
 
-/*
- * Requires a non-empty, ascending slice. For an even count the median is
- * the mean of the two middle values, rounded half up.
- */
-/// Each sample's time per unit, in the samples' order.
-fn per_units(samples: &[Measured]) -> Vec<PerUnit> {
-    samples.iter().map(|m| m.per_unit()).collect()
-}
 
 /// A cell's summary from its samples: their mean (clocks::summary), kept
-/// exact for display, and their extremes.
+/// exact for display.
 fn summarize_measured(samples: &[Measured]) -> Statistics {
     assert!(!samples.is_empty(), "a cell has at least one sample");
-    let values = per_units(samples);
     let exact = ExactMean::of(samples);
     Statistics {
-        count: samples.len(),
-        minimum: *values.iter().min().unwrap(),
         mean: exact.fixed(),
-        maximum: *values.iter().max().unwrap(),
         exact_mean: Some(exact),
     }
 }
@@ -3544,46 +3421,6 @@ struct Kernel {
     first: usize,
     /// Short name for the report and the hover panel, e.g. "NEON hash_many".
     name: String,
-    /// One sentence on why the path changes here, for the first dot of the kernel.
-    why: String,
-    /// Mark drawn at every dot in this kernel.
-    mark: Mark,
-}
-
-/// Dot shapes: the same colour keeps the contender's identity, the shape
-/// says which code path produced the point.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Mark {
-    Circle,
-    Diamond,
-    Square,
-    /// A fourth kernel.
-    Triangle,
-    /// A fifth, which only the multithreaded servil contender has.
-    DownTriangle,
-}
-
-impl Mark {
-    /// The shape as a character, for text beside the drawn marks.
-    fn glyph(self) -> char {
-        match self {
-            Mark::Circle => '●',
-            Mark::Diamond => '◆',
-            Mark::Square => '■',
-            Mark::Triangle => '▲',
-            Mark::DownTriangle => '▼',
-        }
-    }
-
-    fn name(self) -> &'static str {
-        match self {
-            Self::Circle => "circle",
-            Self::Diamond => "diamond",
-            Self::Square => "square",
-            Self::Triangle => "triangle",
-            Self::DownTriangle => "downward triangle",
-        }
-    }
 }
 
 /*
@@ -3648,23 +3485,17 @@ fn detect_blake3_kernels() -> Kernels {
         let mut kernels = vec![Kernel {
             first: 0,
             name: one.to_owned(),
-            why: "Each chunk (1 KiB) is hashed on its own, one after another.".to_owned(),
-            mark: Mark::Circle,
         }];
         if degree > 4 {
             kernels.push(Kernel {
                 first: 4 * 1024,
                 name: "SSE4.1 vectors, four chunks at a time".to_owned(),
-                why: "Four whole chunks fill the narrowest vectors; the wider ones wait for more chunks.".to_owned(),
-                mark: Mark::Diamond,
             });
         }
         if degree > 1 {
             kernels.push(Kernel {
                 first: degree * 1024,
                 name: wide.to_owned(),
-                why: "Enough whole chunks to fill this CPU's widest vectors.".to_owned(),
-                mark: if degree > 4 { Mark::Square } else { Mark::Diamond },
             });
         }
         return Kernels::new(platform, kernels);
@@ -3678,14 +3509,10 @@ fn detect_blake3_kernels() -> Kernels {
                 Kernel {
                     first: 0,
                     name: "portable code, one chunk at a time".to_owned(),
-                    why: "Below four whole chunks (4 KiB), each chunk is hashed by the crate's portable code, one after another.".to_owned(),
-                    mark: Mark::Circle,
                 },
                 Kernel {
                     first: 4 * 1024,
                     name: "NEON vectors, four chunks at a time".to_owned(),
-                    why: "Four whole chunks fill the NEON vector units; from here most of the input runs four chunks at a time.".to_owned(),
-                    mark: Mark::Diamond,
                 },
             ],
         );
@@ -3697,8 +3524,6 @@ fn detect_blake3_kernels() -> Kernels {
         vec![Kernel {
             first: 0,
             name: "portable code".to_owned(),
-            why: "This build hashes every size with the crate's portable code.".to_owned(),
-            mark: Mark::Circle,
         }],
     )
 }
@@ -3720,8 +3545,6 @@ fn detect_sha256_kernels() -> Kernels {
         vec![Kernel {
             first: 0,
             name: name.to_owned(),
-            why: "One method at every size.".to_owned(),
-            mark: Mark::Circle,
         }],
     )
 }
@@ -3736,8 +3559,6 @@ fn detect_sha3_kernels() -> Kernels {
         vec![Kernel {
             first: 0,
             name: if instructions { "ARMv8 SHA-3 instructions".to_owned() } else { "portable code".to_owned() },
-            why: "One method at every size.".to_owned(),
-            mark: Mark::Circle,
         }],
     )
 }
@@ -3748,8 +3569,6 @@ fn detect_sha1dc_kernels() -> Kernels {
         vec![Kernel {
             first: 0,
             name: "portable code with collision detection".to_owned(),
-            why: "One method at every size.".to_owned(),
-            mark: Mark::Circle,
         }],
     )
 }
@@ -3760,8 +3579,6 @@ fn detect_common_crypto_kernels() -> Kernels {
         vec![Kernel {
             first: 0,
             name: "Apple's library, with the CPU's SHA-256 instructions".to_owned(),
-            why: "One method at every size.".to_owned(),
-            mark: Mark::Circle,
         }],
     )
 }
@@ -3779,8 +3596,6 @@ fn detect_ring_kernels() -> Kernels {
         vec![Kernel {
             first: 0,
             name: name.to_owned(),
-            why: "One method at every size.".to_owned(),
-            mark: Mark::Circle,
         }],
     )
 }
@@ -3788,23 +3603,10 @@ fn detect_ring_kernels() -> Kernels {
 /*
  * The servil fork describes its own kernels: kernel_report() and
  * kernel_report_multithreaded() come from the same run-time detection
- * its hash functions use, so the report describes what was measured. The
- * bencher adds only the dot shapes, in order.
+ * its hash functions use, so the report describes what was measured.
  */
 fn servil_kernels(report: blake3_servil::KernelReport) -> Kernels {
-    const MARKS: [Mark; 5] = [Mark::Circle, Mark::Diamond, Mark::Square, Mark::Triangle, Mark::DownTriangle];
-    assert!(
-        report.kernels.len() <= MARKS.len(),
-        "the graph has {} dot shapes; the fork reports {} kernels",
-        MARKS.len(),
-        report.kernels.len(),
-    );
-    let kernels = report
-        .kernels
-        .iter()
-        .zip(MARKS)
-        .map(|(kernel, mark)| Kernel { first: kernel.from_len, name: kernel.name.to_owned(), why: kernel.why.to_owned(), mark })
-        .collect();
+    let kernels = report.kernels.iter().map(|kernel| Kernel { first: kernel.from_len, name: kernel.name.to_owned() }).collect();
     Kernels::new(report.platform, kernels)
 }
 
@@ -3816,21 +3618,18 @@ fn detect_kernels(algorithm: Algorithm, use_case: UseCase) -> Kernels {
     // Their known API boundaries remain useful; their schedules stay
     // explicitly unreported instead of inheriting one-shot thresholds.
     if use_case == UseCase::Outboard {
-        let why = "The contender leaves this API's kernel schedule unreported.";
         let api = match algorithm {
             Algorithm::Blake3 => "bao-tree PreOrderMemOutboard::create",
             Algorithm::Blake3ServilMt => "outboard_multithreaded_with",
             _ => "outboard_with",
         };
-        return Kernels::new("API (kernel unreported)", vec![Kernel { first: 0, name: api.to_owned(), why: why.to_owned(), mark: Mark::Circle }]);
+        return Kernels::new("API (kernel unreported)", vec![Kernel { first: 0, name: api.to_owned() }]);
     }
     if algorithm == Algorithm::Blake3ServilSt && use_case == UseCase::Collection {
-        let why = "The contender leaves this API's kernel schedule unreported.";
-        return Kernels::new("API (kernel unreported)", vec![Kernel { first: 0, name: "hash_each_with".to_owned(), why: why.to_owned(), mark: Mark::Circle }]);
+        return Kernels::new("API (kernel unreported)", vec![Kernel { first: 0, name: "hash_each_with".to_owned() }]);
     }
     if algorithm == Algorithm::Blake3ServilMt {
-        let why = "The contender leaves this API's kernel schedule unreported.";
-        let kernel = |first, api: &str| Kernel { first, name: api.to_owned(), why: why.to_owned(), mark: Mark::Circle };
+        let kernel = |first, api: &str| Kernel { first, name: api.to_owned() };
         let kernels = match use_case {
             UseCase::ContinuousMessages => Some(vec![kernel(0, "Queue::messages"), kernel(PIECE_LEN + 1, "Queue::pieces")]),
             UseCase::ContinuousBatches => Some(vec![kernel(0, "Queue::fixed")]),
@@ -3878,8 +3677,6 @@ fn detect_kernels(algorithm: Algorithm, use_case: UseCase) -> Kernels {
                 vec![Kernel {
                     first: 0,
                     name: format!("{}, one message per call", kernel.name),
-                    why: "Each message is its own call; the size of the batch changes nothing.".to_owned(),
-                    mark: Mark::Circle,
                 }],
             )
         }
@@ -3904,15 +3701,11 @@ fn detect_blake3_many_kernels(message_len: usize) -> Kernels {
     let mut kernels = vec![Kernel {
         first: 0,
         name: "one message at a time".to_owned(),
-        why: format!("Below {words} messages, the batch function hashes each message on its own, one after another."),
-        mark: Mark::Circle,
     }];
     if degree > 1 {
         kernels.push(Kernel {
             first: degree * message_len,
             name: format!("{} vectors, {words} messages at a time", blake3.platform),
-            why: format!("From {words} messages, each group of {words} fills this CPU's widest vectors, one message per lane; messages past the last full group are hashed one at a time."),
-            mark: Mark::Diamond,
         });
     }
     Kernels::new(blake3.platform, kernels)
@@ -3932,14 +3725,10 @@ fn detect_blake3_rayon_kernels() -> Kernels {
             Kernel {
                 first: 0,
                 name: "on the calling thread".to_owned(),
-                why: "Up to one vector width of chunks, there is nothing to split.".to_owned(),
-                mark: Mark::Circle,
             },
             Kernel {
                 first: 2 * degree_bytes,
                 name: "split over Rayon's threads".to_owned(),
-                why: "Above that, the input splits in halves, again and again, and idle threads of the Rayon pool take them.".to_owned(),
-                mark: Mark::Diamond,
             },
         ],
     )
@@ -4446,7 +4235,6 @@ fn append_table(output: &mut String, roster: &Roster, results: &Results, scenari
     writeln!(output).unwrap();
 }
 
-
 /// Column heading that fits the 13-character summary columns.
 fn column_heading(algorithm: Algorithm) -> &'static str {
     match algorithm {
@@ -4458,18 +4246,6 @@ fn column_heading(algorithm: Algorithm) -> &'static str {
         Algorithm::Blake3ServilMt => "B3 servil mt",
         other => other.name(),
     }
-}
-
-/// A point's x position on an axis of the points in `range`, as a
-/// fraction of the axis width; both axes are logarithmic in bytes. An
-/// axis of one point puts it in the middle.
-fn x_fraction(point_index: usize, range: std::ops::Range<usize>) -> f64 {
-    if range.len() == 1 {
-        return 0.5;
-    }
-    let smallest = (POINTS[range.start].bytes as f64).log2();
-    let largest = (POINTS[range.end - 1].bytes as f64).log2();
-    ((POINTS[point_index].bytes as f64).log2() - smallest) / (largest - smallest)
 }
 
 fn machine_metadata() -> MachineMetadata {
@@ -4622,20 +4398,6 @@ fn civil_date_from_unix_days(unix_days: i64) -> (i64, i64, i64) {
     (year, month, day)
 }
 
-/*
- * Rate from a time per unit, with the use case's unit: GB/s = 1 / (ns/B),
- * Mmsg/s = 1000 / (ns/msg). Shown to one decimal below 10, whole numbers
- * above.
- */
-fn format_rate(time: PerUnit, use_case: UseCase) -> String {
-    let tenths = time.tenths_of(use_case.rate_scale());
-    if tenths >= 100 {
-        format!("{} {}", (tenths + 5) / 10, use_case.rate_unit())
-    } else {
-        format!("{}.{} {}", tenths / 10, tenths % 10, use_case.rate_unit())
-    }
-}
-
 fn sanitize_alphanumeric(input: &str) -> String {
     let sanitized: String = input
         .chars()
@@ -4658,236 +4420,6 @@ fn output_directory(machine: &MachineMetadata) -> std::path::PathBuf {
         .join(format!("{cpu}.{os}"))
 }
 
-/*
- * Layout constants shared by the static geometry (Rust) and the interactive
- * relayout (JavaScript inside the SVG). The script receives them through a
- * JSON block, so a single source of truth drives both.
- *
- * Two plots stack down the canvas, one per use case, sharing the x extent,
- * the unit switch, and the contender toggles at right.
- */
-const SVG_WIDTH: f64 = 1300.0;
-/// Canvas height: the provenance block ends where the lines end, with the
-/// bottom margin that follows.
-fn svg_height(provenance_top: f64, provenance_lines: usize) -> f64 {
-    provenance_line_y(provenance_top, provenance_lines.saturating_sub(1)) + PROVENANCE_LINE_HEIGHT + 8.0
-}
-const PLOT_LEFT: f64 = 110.0;
-const PLOT_RIGHT: f64 = 1000.0;
-/// The first plot's top, below the title, two method lines, and its own
-/// heading; each further plot sits PLOT_PITCH lower.
-const PLOT_TOP: f64 = 244.0;
-const PLOT_HEIGHT: f64 = 340.0;
-/// Room under a plot for its x labels, axis title, and shape legend, and
-/// above the next for its heading.
-const PLOT_PITCH: f64 = 470.0;
-const X_INSET: f64 = 40.0;
-/// Vertical room per right-hand label (name and detail line). Eight
-/// contenders, the most a run takes, stack in 7 × 34 px, inside a plot.
-const SERIES_LABEL_GAP: f64 = 34.0;
-/// The highest a legend name sits: this far below the plot's top, level
-/// with its top grid line, so the stack stays clear of the plot's title
-/// and of the header above it. Nine names at SERIES_LABEL_GAP fit between
-/// here and the bottom.
-const LABEL_TOP_ROOM: f64 = 4.0;
-/// Fixed shape slots before each right-hand name, so names align across
-/// contenders with different shape counts. Four covers every contender.
-const SWATCH_SLOTS: usize = 4;
-/// Where provenance starts, below the last of `plots` plots.
-fn provenance_top(plots: usize) -> f64 {
-    PLOT_TOP + (plots - 1) as f64 * PLOT_PITCH + PLOT_HEIGHT + 85.0
-}
-
-const PROVENANCE_LINE_HEIGHT: f64 = 14.0;
-
-fn plot_top(plot_index: usize) -> f64 {
-    PLOT_TOP + plot_index as f64 * PLOT_PITCH
-}
-
-fn plot_bottom(plot_index: usize) -> f64 {
-    plot_top(plot_index) + PLOT_HEIGHT
-}
-
-/*
- * The y axis spans [axis_min, axis_max] on a log scale, with room below
- * the smallest minimum and above the largest maximum. The script applies
- * the same rule to whichever contenders are on, so the axis reflects the
- * visible data alone.
- */
-fn log_axis_bounds(observed_min: f64, observed_max: f64) -> (f64, f64) {
-    assert!(
-        observed_min.is_finite() && observed_min > 0.0,
-        "log axis requires positive measurements"
-    );
-    assert!(
-        observed_max.is_finite() && observed_max >= observed_min,
-        "graph maximum must be finite and at least the minimum"
-    );
-
-    (
-        nice_log_bound_below(observed_min * 0.92),
-        nice_log_bound_above(observed_max * 1.08),
-    )
-}
-
-/*
- * One plot's geometry: its use case, the points along its x axis, the
- * contenders that take part, its y axis in GB/s, and where each
- * contender's right-hand label sits.
- */
-struct Plot {
-    index: usize,
-    scenario: Scenario,
-    use_case: UseCase,
-    points: std::ops::Range<usize>,
-    /// Roster indices of the contenders measured in this use case.
-    contenders: Vec<usize>,
-    top: f64,
-    bottom: f64,
-    log_min: f64,
-    log_max: f64,
-    axis_min: f64,
-    axis_max: f64,
-    /// Rate per unit time: rate = scale / (ns per unit). 1 for GB/s from
-    /// ns/B, 1000 for million messages per second from ns/message.
-    scale: f64,
-    /// Pixel x per point of this plot, in axis order.
-    x_positions: Vec<f64>,
-    /// Pixel y of each contender's label at right; None for a contender
-    /// that takes no part here.
-    label_y: Vec<Option<f64>>,
-    /// Each contender's kernels in this use case; None for a non-participant.
-    kernels: Vec<Option<Kernels>>,
-    /// Where the provenance block starts, below the last plot.
-    provenance_top: f64,
-}
-
-impl Plot {
-    fn new(index: usize, scenario: Scenario, use_case: UseCase, roster: &Roster, results: &Results) -> Self {
-        let measured: Vec<usize> = use_case.points().filter(|&index| roster.measures(index)).collect();
-        let points = measured[0]..measured[measured.len() - 1] + 1;
-        let contenders: Vec<usize> = (0..roster.len())
-            .filter(|&algorithm_index| roster.algorithms[algorithm_index].takes_part(use_case))
-            .collect();
-        assert!(!contenders.is_empty(), "a plot has at least one contender");
-
-        /*
-         * From here down the SVG needs pixel positions on a log axis, which
-         * is where floating point earns its place: the values are drawn,
-         * never compared or reported. Everything above this point is integer.
-         */
-        /* The axis spans the contenders shown when the graph opens, as the script's does. */
-        let shown = shown_at_first(roster);
-        let visible: Vec<usize> = contenders.iter().copied().filter(|&a| shown[a]).collect();
-        assert!(!visible.is_empty(), "every contender shown at first takes part in every use case");
-        let cells = || visible.iter().flat_map(|&a| points.clone().map(move |s| (a, s))).map(|(a, s)| cell(results, a, s));
-        let observed_max = cells().map(|cell| cell.get(scenario).mean).max().expect("there are results");
-        let observed_min = cells().map(|cell| cell.get(scenario).mean).min().expect("there are results");
-
-        /*
-         * The static render shows gigabytes per second, the default unit:
-         * the axis spans the reciprocals of the observed times, so on the
-         * log axis the plot mirrors a time-per-byte one, fastest at the
-         * top. The script rebuilds all of this when the unit flips.
-         */
-        let scale = use_case.rate_scale() as f64;
-        let observed_lo_rate = scale / observed_max.ns_f64();
-        let observed_hi_rate = scale / observed_min.ns_f64();
-        let (axis_min, axis_max) = log_axis_bounds(observed_lo_rate, observed_hi_rate);
-
-        let x_positions: Vec<f64> = points
-            .clone()
-            .map(|point_index| PLOT_LEFT + X_INSET + x_fraction(point_index, points.clone()) * (PLOT_RIGHT - PLOT_LEFT - 2.0 * X_INSET))
-            .collect();
-
-        let kernels: Vec<Option<Kernels>> = roster
-            .algorithms
-            .iter()
-            /* Only the methods that start within the plot's inputs (a run's --points may stop early). */
-            .map(|&algorithm| algorithm.takes_part(use_case).then(|| detect_kernels(algorithm, use_case).up_to(POINTS[points.end - 1].bytes)))
-            .collect();
-
-        let mut plot = Self {
-            index,
-            scenario,
-            use_case,
-            points: points.clone(),
-            contenders: contenders.clone(),
-            top: plot_top(index),
-            bottom: plot_bottom(index),
-            log_min: axis_min.ln(),
-            log_max: axis_max.ln(),
-            axis_min,
-            axis_max,
-            scale,
-            x_positions,
-            label_y: vec![None; roster.len()],
-            kernels,
-            provenance_top: 0.0,
-        };
-
-        /*
-         * Right-edge series labels double as toggles. Each sits level with
-         * its line's last point, pushed apart when medians nearly coincide.
-         * The script repeats this rule after each toggle; a hidden
-         * contender keeps its slot, anchored where its line would end on
-         * the current axis and clamped to the plot edge, so its grey label
-         * points toward its data.
-         */
-        let last = points.end - 1;
-        let mut label_slots: Vec<(usize, f64)> = contenders
-            .iter()
-            .map(|&algorithm_index| (algorithm_index, plot.map_y(plot.stats(results, algorithm_index, last).mean)))
-            .collect();
-        label_slots.sort_by(|a, b| a.1.total_cmp(&b.1));
-        for index in 1..label_slots.len() {
-            let minimum_y = label_slots[index - 1].1 + SERIES_LABEL_GAP;
-            if label_slots[index].1 < minimum_y {
-                label_slots[index].1 = minimum_y;
-            }
-        }
-        /*
-         * Keep the stack inside the plot: with many contenders the
-         * pushed-apart labels can run past the bottom axis, so the whole
-         * stack shifts up by the overrun. The script applies the same rule.
-         */
-        let overrun = (label_slots.last().map(|slot| slot.1).unwrap_or(0.0) + 20.0 - plot.bottom).max(0.0);
-        /* ...and never above the plot's top: from there the names space out again downward. */
-        let mut previous = f64::NEG_INFINITY;
-        for (algorithm_index, label_y) in label_slots {
-            let y = (label_y - overrun).max(plot.top + LABEL_TOP_ROOM).max(previous + SERIES_LABEL_GAP);
-            plot.label_y[algorithm_index] = Some(y);
-            previous = y;
-        }
-        plot
-    }
-
-    /// Pixel y for a rate (GB/s, or million messages per second) on the log axis.
-    fn map_rate(&self, value: f64) -> f64 {
-        assert!(value > 0.0);
-        self.bottom - (value.ln() - self.log_min) / (self.log_max - self.log_min) * (self.bottom - self.top)
-    }
-
-    /// Pixel y for a measured value.
-    fn map_y(&self, time: PerUnit) -> f64 {
-        self.map_rate(self.scale / time.ns_f64())
-    }
-
-    /// A contender's statistics at a point, in this plot's scenario.
-    fn stats(&self, results: &Results, algorithm_index: usize, point_index: usize) -> Statistics {
-        cell(results, algorithm_index, point_index).get(self.scenario)
-    }
-
-    fn kernels(&self, algorithm_index: usize) -> &Kernels {
-        self.kernels[algorithm_index].as_ref().expect("the contender takes part in this plot")
-    }
-
-    /// The point count along this plot's axis.
-    fn len(&self) -> usize {
-        self.points.len()
-    }
-}
-
 /// A self-contained decision guide: the questions, a complete example per
 /// call (compiled as this crate's examples), and this run's medians for
 /// every plot, drawn by the page's own small chart. Escape '<' inside
@@ -4906,7 +4438,7 @@ fn generate_guide(roster: &Roster, results: &Results, machine: &MachineMetadata)
             if points.is_empty() { continue; }
             if !first { data.push(','); }
             first = false;
-            write!(data, "{{\"scenario\":\"{}\",\"use\":\"{:?}\",\"batch\":{},\"labels\":[", scenario.key(), use_case, use_case.batch()).unwrap();
+            write!(data, "{{\"scenario\":\"{}\",\"use\":\"{:?}\",\"batch\":{},\"map\":{},\"labels\":[", scenario.key(), use_case, use_case.batch(), json_string(&map::cell_key(scenario.key(), use_case))).unwrap();
             data.push_str(&points.iter().map(|&index| json_string(POINTS[index].label)).collect::<Vec<_>>().join(","));
             data.push_str("],\"units\":[");
             data.push_str(&points.iter().map(|&index| use_case.units(POINTS[index], 1).to_string()).collect::<Vec<_>>().join(","));
@@ -4919,20 +4451,10 @@ fn generate_guide(roster: &Roster, results: &Results, machine: &MachineMetadata)
                 if !first_series { data.push(','); }
                 first_series = false;
                 write!(data, "{}:{{", json_string(algorithm.key())).unwrap();
-                /* Per point: the mean (ns per unit), and the exact per-call latency. */
-                let per_point = |f: &dyn Fn(Statistics, u64) -> String| -> String {
-                    points.iter().map(|&index| f(cell(results, algorithm_index, index).get(scenario), use_case.units(POINTS[index], 1))).collect::<Vec<_>>().join(",")
-                };
-                write!(data, "\"mean\":[{}],", per_point(&|t, _| t.format_mean(1))).unwrap();
-                write!(data, "\"lat\":[{}],", per_point(&|t, units| t.format_mean(units))).unwrap();
-                /* The code paths, by the first byte count each serves; the graph's marks name them. */
-                let kernels = detect_kernels(*algorithm, use_case).up_to(POINTS[*points.last().unwrap()].bytes);
-                data.push_str("\"kernels\":[");
-                for (k, kernel) in kernels.kernels.iter().enumerate() {
-                    if k > 0 { data.push(','); }
-                    write!(data, "{{\"from\":{},\"name\":{},\"mark\":\"{}\"}}", kernel.first, json_string(&kernel.name), kernel.mark.name()).unwrap();
-                }
-                data.push_str("]}");
+                /* Per point: the mean (ns per unit). */
+                let means: Vec<String> = points.iter().map(|&index| cell(results, algorithm_index, index).get(scenario).format_mean(1)).collect();
+                write!(data, "\"mean\":[{}]", means.join(",")).unwrap();
+                data.push('}');
             }
             data.push_str("}}");
         }
@@ -4962,1102 +4484,6 @@ const GUIDE_EXAMPLES: [(&str, &str); 9] = [
     ("Queue::fixed", include_str!("../examples/guide_queue_fixed.rs")),
 ];
 
-fn generate_svg(
-    roster: &Roster,
-    results: &Results,
-    machine: &MachineMetadata,
-    selection_note: &str,
-) -> String {
-    assert!(roster.len() >= 2, "a graph compares at least two contenders");
-
-    /* Solo plots first, then shared: one per use case the run measured. */
-    let mut plots: Vec<Plot> = Vec::new();
-    for scenario in Scenario::ALL {
-        for use_case in UseCase::ALL.into_iter().filter(|&use_case| scenario.measures(use_case)) {
-            if use_case.points().any(|index| roster.measures(index)) {
-                plots.push(Plot::new(plots.len(), scenario, use_case, roster, results));
-            }
-        }
-    }
-    let provenance_top = provenance_top(plots.len());
-    for plot in &mut plots {
-        plot.provenance_top = provenance_top;
-    }
-
-    let mut provenance_cats = shared_provenance_cats(machine, selection_note);
-    provenance_cats.push(code_path_cat(roster, &plots));
-    /* The hashes' own lines follow this header, in the first plot's series groups. */
-    provenance_cats.push(ProvCat {
-        key: "hashes",
-        name: "Hashes",
-        summary: "the version and settings of each hash shown".to_owned(),
-        lines: Vec::new(),
-    });
-    /* Each contender's provenance lines go with the first plot it takes part in. */
-    let first_plot: Vec<usize> = (0..roster.len())
-        .map(|algorithm_index| {
-            plots.iter().position(|plot| plot.kernels[algorithm_index].is_some()).expect("every contender takes part in some plot")
-        })
-        .collect();
-    let provenance_total = provenance_cats.len()
-        + provenance_cats.iter().map(|cat| cat.lines.len()).sum::<usize>()
-        + roster
-            .algorithms
-            .iter()
-            .enumerate()
-            .map(|(algorithm_index, &algorithm)| contender_provenance_lines(algorithm, plots[first_plot[algorithm_index]].kernels(algorithm_index)).len())
-            .sum::<usize>();
-    let svg_height = svg_height(provenance_top, provenance_total);
-
-    let mut svg = String::new();
-
-    writeln!(svg, r##"<?xml version="1.0" encoding="UTF-8"?>"##)
-        .unwrap();
-
-    writeln!(
-        svg,
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {SVG_WIDTH:.0} {svg_height:.0}" width="{SVG_WIDTH:.0}" height="{svg_height:.0}" onclick="tapAway()">"##
-    )
-        .unwrap();
-
-    writeln!(
-        svg,
-        "  <!-- For maintainers: bench-hashes' src/main.rs (generate_svg) writes this file. The script at the end carries the measurements and \
-         layout constants as DATA and redraws from them; <metadata> holds the full provenance and crate checksums; the samples file beside \
-         this one holds every timing. The text for readers follows the fork's AGENTS.md, \"Write each page for a reader who holds only the page\". -->"
-    )
-    .unwrap();
-    writeln!(
-        svg,
-        r##"  <rect id="page" width="{SVG_WIDTH:.0}" height="{svg_height:.0}" fill="#fdfdfc"/>"##
-    )
-        .unwrap();
-
-    svg.push_str(
-        r##"  <style>
-    text { font-family: -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
-    .title { font-size: 22px; font-weight: 700; fill: #1a1a1a; }
-    .method { font-size: 11px; fill: #8a8a8a; }
-    .plot-title { font-size: 14px; font-weight: 700; fill: #333333; }
-    .plot-sub { font-size: 11px; fill: #8a8a8a; }
-    .axis-title { font-size: 12px; fill: #666666; }
-    .better-arrow { fill: none; stroke: #8a8a8a; stroke-width: 1.2; stroke-linecap: round; stroke-linejoin: round; }
-    .tick-label { font-size: 11px; fill: #777777; }
-    .size-label { font-size: 11px; font-weight: 600; fill: #333333; }
-    .size-tick { stroke: #bbbbbb; stroke-width: 1; }
-    .zoom-btn { cursor: pointer; }
-    .zoom-btn rect { fill: #f1f1ee; stroke: #d2d2cd; stroke-width: 1; }
-    .zoom-btn text { font-size: 13px; font-weight: 600; fill: #333333; }
-    .zoom-btn:hover rect { fill: #e4e4de; }
-    .zoom-btn[data-off="true"] { display: none; }
-    .zoom-track { fill: #e6e6e1; }
-    .zoom-track-hit { fill: transparent; }
-    .door { fill: #5b21b6; cursor: pointer; }
-    .door:hover { text-decoration: underline; }
-    .howto-box { fill: #ffffff; fill-opacity: 0.98; stroke: #c8c8c4; stroke-width: 1; }
-    .howto-line { font-size: 12px; fill: #333333; }
-    .series-absent { font-size: 12px; fill: #b8b8b2; }
-    .series-absent-detail { font-size: 9px; fill: #c4c4be; }
-    .header-edge { stroke: #ecece8; stroke-width: 1; }
-    .zoom-tick { stroke: #b4b4ae; stroke-width: 1; }
-    .zoom-band { fill: #5b21b6; fill-opacity: 0.16; stroke: #5b21b6; stroke-opacity: 0.55; stroke-width: 1; }
-    .zoom-grip { cursor: ew-resize; touch-action: none; }
-    .zoom-band { cursor: grab; touch-action: none; }
-    .zoom-tick[data-at="true"] { stroke: #5b21b6; stroke-width: 2; }
-    .chip { cursor: pointer; }
-    .chip rect { fill: #ffffff; stroke: #cfcfca; stroke-width: 1; }
-    .chip text { font-size: 11px; fill: #8a8a8a; }
-    .chip[data-on="true"] rect { fill: #ede9fe; stroke: #a78bfa; }
-    .chip[data-on="true"] text { fill: #3b0764; font-weight: 600; }
-    .chip-label { font-size: 10px; fill: #9a9a9a; }
-    .chip[data-live="false"] { opacity: 0.38; }
-    .chip-tie { fill: none; stroke: #cfcfca; stroke-width: 1; }
-    .plot-off { visibility: hidden; pointer-events: none; }
-    .plot-off .series-prov { visibility: visible; }
-    .zoom-grip-hit { fill: transparent; }
-    .zoom-grip-bar { fill: #5b21b6; fill-opacity: 0.7; }
-    .zoom-grip:hover .zoom-grip-bar { fill-opacity: 1; }
-    .value-label { font-size: 10px; font-weight: 700; }
-    .series-name { font-size: 13px; font-weight: 700; }
-    .series-detail { font-size: 10px; fill: #777777; }
-    .series-hint { font-size: 9px; fill: #b0b0b0; }
-    .series-note { font-size: 10px; font-weight: 400; fill: #777777; }
-    .annotation { font-size: 10px; font-style: italic; fill: #8a8a8a; }
-    .prov-head { font-size: 10px; font-weight: 700; fill: #aaaaaa; letter-spacing: 0.1em; }
-    .prov-head-row { cursor: pointer; }
-    .prov { font-size: 9px; fill: #9a9a9a; }
-    .grid { stroke: #e8e8e6; stroke-width: 1; }
-    .grid-x { stroke: #f0f0ee; stroke-width: 1; }
-    .axis { stroke: #55555a; stroke-width: 1; }
-    .divider { stroke: #e0e0de; stroke-width: 1; }
-    .series-label { cursor: pointer; transition: transform 0.3s ease; }
-    .series-hint { display: none; }
-    .marks, .dots { transition: opacity 0.3s ease; }
-    .marks { pointer-events: none; }
-    /* Hovering a name dims the other contenders' marks alone: every name
-       keeps its shown or hidden look, so the names always tell which
-       contenders are shown (a dimmed name read as a hidden one). */
-    .series[data-dim="true"] .marks, .dots[data-dim="true"] { opacity: 0.25; }
-    .series[data-on="false"] .marks, .dots[data-on="false"] { opacity: 0; pointer-events: none; }
-    .series[data-on="false"] .series-name { fill: #9a9a9a; }
-    .series[data-on="false"] .series-detail { display: none; }
-    .series[data-on="false"] .series-hint { display: inline; }
-    .series[data-on="false"] .series-prov { display: none; }
-    .series[data-on="false"] .series-swatch * { fill: #fdfdfc; stroke: #b0b0b0; }
-    .series[data-hl="true"] .series-name { text-decoration: underline; }
-    .series-swatch { stroke-width: 2; transition: fill 0.3s ease; }
-    #unit-switch { cursor: pointer; }
-    .unit-track { fill: #e8e8e6; stroke: #c8c8c4; stroke-width: 1; }
-    @media (hover: hover) {
-      .prov-head-row:hover .prov-head { text-decoration: underline; }
-      .series-label:hover .series-name { text-decoration: underline; }
-      #unit-switch:hover .unit-track { stroke: #55555a; }
-    }
-    .unit-knob { fill: #55555a; transition: cy 0.35s ease; }
-    .unit-label { font-size: 10px; font-weight: 600; fill: #b0b0b0; transition: fill 0.35s ease; }
-    .unit-label.unit-on { fill: #333333; }
-    .dot { cursor: crosshair; }
-    .legend { font-size: 10px; fill: #8a8a8a; }
-    #hover { pointer-events: none; }
-    #hover-guide { stroke: #9a9a9a; stroke-width: 1; stroke-dasharray: 3,3; }
-    #hover-box { fill: #ffffff; fill-opacity: 0.97; stroke: #c8c8c4; stroke-width: 1; }
-    .hover-head { font-size: 12px; font-weight: 700; fill: #1a1a1a; }
-    .hover-sub { font-size: 10px; fill: #777777; }
-    .hover-row { font-size: 11px; fill: #333333; }
-    .hover-row-focus { font-weight: 700; }
-    .hover-ratio { font-size: 11px; font-weight: 600; }
-    .hover-note { font-size: 9px; font-style: italic; fill: #9a9a9a; }
-  </style>
-"##,
-    );
-
-    /*
-     * The header (title, method lines, unit switch, zoom row, chips) is one
-     * group at the top of the page. It stays there as the page scrolls, so
-     * a plot and the screen's top never overlap; the chips bring the plot a
-     * reader wants up to it (Zooko, September 26, 2026: on a phone a header
-     * that followed the page covered the top of every plot).
-     */
-    writeln!(svg, r##"  <g id="header">"##).unwrap();
-    writeln!(svg, r##"  <rect id="header-bg" x="0" y="0" width="{SVG_WIDTH:.0}" height="{HEADER_BOTTOM:.0}" fill="#fdfdfc"/>"##).unwrap();
-    writeln!(
-        svg,
-        r##"  <text x="{PLOT_LEFT:.0}" y="44" class="title">Cryptographic Hash Performance</text>"##
-    )
-        .unwrap();
-
-    /*
-     * Under the title: where and when, then what a reader can do, with a
-     * door to how the graph is drawn. Everything a newcomer needs to read
-     * the plots is here; the finer points wait behind the door.
-     */
-    let os_name = match machine.os_type.as_str() {
-        os if os.starts_with("darwin") => "macOS",
-        os if os.starts_with("linux") => "Linux",
-        os => os,
-    };
-    let date = machine.timestamp.split(' ').next().unwrap_or(&machine.timestamp);
-    let busy = machine.load.iter().any(clocks::load::Window::busy);
-    let on_battery = machine.power.iter().flatten().any(|power| power.on_battery);
-    let caveat = match (busy, machine.power_slowing()) {
-        (true, true) => " · other programs were busy and the machine saved power during the run, so some results may read slow",
-        (true, false) => " · other programs were busy during the run, so some results may read slow",
-        (false, true) if on_battery => " · the machine ran on battery power, which can change results",
-        (false, true) => " · the machine ran in a low-power mode, which can change results",
-        (false, false) => "",
-    };
-    writeln!(
-        svg,
-        r##"  <text x="{PLOT_LEFT:.0}" y="72" class="method">How fast each hash runs on {} ({os_name}), measured {date}{caveat}</text>"##,
-        xml_escape(&machine.cpu_type),
-    )
-    .unwrap();
-    writeln!(
-        svg,
-        r##"  <text x="{PLOT_LEFT:.0}" y="88" class="method">Hover or tap a dot to compare the hashes there · click a name at right to show or hide it · <tspan id="howto-door" class="door" onclick="event.stopPropagation(); toggleHowto()">How to read this graph ▸</tspan></text>"##
-    )
-    .unwrap();
-
-    /*
-     * Unit switch, in the header above the y titles it changes: a vertical track with a knob
-     * that slides between GB/s (top) and ns/B (bottom). Clicking anywhere
-     * on the switch flips every plot. The knob's position is the state;
-     * the label beside it reads darker. Without script the graph stays in
-     * GB/s and the switch is inert.
-     */
-    writeln!(
-        svg,
-        r##"  <g id="unit-switch" transform="translate({:.1} {:.1})" onclick="event.stopPropagation(); flipUnit()">"##,
-        UNIT_SWITCH_LEFT,
-        UNIT_SWITCH_TOP,
-    )
-        .unwrap();
-    writeln!(svg, r##"    <title>Switch every plot between rate (GB/s, million messages per second) and time (ns per byte, ns per message)</title>"##).unwrap();
-    writeln!(svg, r##"    <rect class="unit-hit" x="-4" y="-4" width="60" height="42" fill="transparent"/>"##).unwrap();
-    writeln!(svg, r##"    <rect class="unit-track" x="0" y="0" width="14" height="34" rx="7"/>"##).unwrap();
-    writeln!(svg, r##"    <circle id="unit-knob" class="unit-knob" cx="7" cy="7" r="5"/>"##).unwrap();
-    writeln!(svg, r##"    <text class="unit-label unit-on" data-unit="gbps" x="20" y="11">rate</text>"##).unwrap();
-    writeln!(svg, r##"    <text class="unit-label" data-unit="ns" x="20" y="31">time</text>"##).unwrap();
-    writeln!(svg, "  </g>").unwrap();
-
-    /*
-     * Zoom, a row above the first plot: the inputs every plot shows. A
-     * strip spans the plots' width with a tick for every input the plots
-     * have (a batch counts its messages' bytes), on the plots' logarithmic
-     * spacing, spanning the x range of the plots' inputs, so at the full
-     * range each tick stands over its input below; a band covers the inputs
-     * shown, drawn across the whole width in the plots. No numbers: each plot's
-     * own axis names its inputs, sizes or message counts. Two arrows at
-     * the strip's left end move the first input shown, two at its right
-     * end the last, and "all" shows every input; they never move. Without
-     * script the graph shows every input and the controls are inert.
-     */
-    let all_bytes: Vec<usize> = {
-        let mut v: Vec<usize> = plots.iter().flat_map(|plot| plot.points.clone().map(|i| POINTS[i].bytes)).collect();
-        v.sort_unstable();
-        v.dedup();
-        v
-    };
-    let (lo, hi) = ((all_bytes[0] as f64).log2(), (*all_bytes.last().expect("a graph has points") as f64).log2());
-    let strip_x = |bytes: usize| ZOOM_STRIP_LEFT + ((bytes as f64).log2() - lo) / (hi - lo) * (ZOOM_STRIP_RIGHT - ZOOM_STRIP_LEFT);
-    writeln!(svg, r##"  <g id="zoom" transform="translate(0 {:.1})">"##, ZOOM_ROW_TOP).unwrap();
-    /* "all" shows only when it can act; the page opens at the full range. */
-    let button = |svg: &mut String, id: &str, x: f64, width: f64, glyph: &str, action: &str, title: &str| {
-        let off = id == "zoom-all";
-        writeln!(
-            svg,
-            r##"    <g class="zoom-btn" id="{id}" data-off="{off}" transform="translate({x:.1} 0)" onclick="event.stopPropagation(); {action}"><title>{title}</title><rect x="0" y="0" width="{width:.1}" height="18" rx="4"/><text x="{:.1}" y="13" text-anchor="middle">{glyph}</text></g>"##,
-            width / 2.0,
-        )
-        .unwrap();
-    };
-    writeln!(svg, r##"    <g><title>The inputs every plot shows, from smallest (left) to largest; drag an end of the band, or the band itself</title><rect class="zoom-track-hit" x="{ZOOM_STRIP_LEFT:.1}" y="0" width="{:.1}" height="18"/><rect class="zoom-track" x="{ZOOM_STRIP_LEFT:.1}" y="7" width="{:.1}" height="4" rx="2"/></g>"##, ZOOM_STRIP_RIGHT - ZOOM_STRIP_LEFT, ZOOM_STRIP_RIGHT - ZOOM_STRIP_LEFT).unwrap();
-    for (i, &bytes) in all_bytes.iter().enumerate() {
-        writeln!(svg, r##"    <line class="zoom-tick" id="zoom-tick-{i}" x1="{0:.1}" y1="4" x2="{0:.1}" y2="14"/>"##, strip_x(bytes)).unwrap();
-    }
-    let (band_left, band_right) = (ZOOM_STRIP_LEFT, ZOOM_STRIP_RIGHT);
-    /* The band itself: drag it to move both ends at once. */
-    writeln!(svg, r##"    <rect id="zoom-band" class="zoom-band" x="{:.1}" y="1" width="{:.1}" height="16" rx="3" onpointerdown="gripDown(event, 'both')" onclick="event.stopPropagation()"/>"##, band_left - 3.0, band_right - band_left + 6.0).unwrap();
-    // A grip at each end of the band: drag it to move that end.
-    for (end, x) in [("from", band_left), ("to", band_right)] {
-        writeln!(
-            svg,
-            r##"    <g class="zoom-grip" id="zoom-grip-{end}" transform="translate({x:.1} 0)" onpointerdown="gripDown(event, '{end}')" onclick="event.stopPropagation()"><title>Drag to move this end</title><rect class="zoom-grip-hit" x="-8" y="-3" width="16" height="24"/><rect class="zoom-grip-bar" x="-1.5" y="3" width="3" height="12" rx="1.5"/></g>"##
-        )
-        .unwrap();
-    }
-    button(&mut svg, "zoom-all", PLOT_RIGHT + 14.0, 30.0, "all", "zoomAll()", "Show every input");
-    writeln!(svg, "  </g>").unwrap();
-
-    /*
-     * Chips that show and hide plots, from the plots this run has, in
-     * groups that follow the measurements: what is hashed (messages,
-     * batches, pieces); how the program calls (after idling, after other
-     * work, nonstop); and under Nonstop, joined to it by a line, the two
-     * choices only nonstop plots have (owned or lent buffers; one program
-     * or two at once). A plot shows when every chip that applies to it is
-     * pressed. A chip whose press would change nothing, as the others
-     * stand, is dimmed; a press that would leave no plot is refused (the
-     * script's toggleChip).
-     */
-    type Chip = (&'static str, &'static str, &'static str);
-    let has = |test: &dyn Fn(&Plot) -> bool| plots.iter().any(test);
-    let mut chip_lines: Vec<(&str, bool, Vec<Chip>)> = Vec::new();
-    let mut line_of = |kind: &'static str, nested: bool, chips: Vec<(Chip, bool)>| {
-        let chips: Vec<Chip> = chips.into_iter().filter(|(_, present)| *present).map(|(chip, _)| chip).collect();
-        if !chips.is_empty() {
-            chip_lines.push((kind, nested, chips));
-        }
-    };
-    line_of("what", false, vec![
-        (("messages", "Messages", "Show or hide the plots of messages: one in one buffer now and then, or one after another"), has(&|p| p.use_case.what_key() == "messages")),
-        (("batches", "Batches", "Show or hide the plots of batches of 64-byte messages"), has(&|p| p.use_case.what_key() == "batches")),
-        (("pieces", "Many at once", "Show or hide the plots of many messages at once, each arriving in pieces"), has(&|p| p.use_case.what_key() == "pieces")),
-        (("outboards", "Outboards", "Show or hide the plots of messages hashed with their outboards, for verified streaming"), has(&|p| p.use_case.what_key() == "outboards")),
-        (("collections", "Collections", "Show or hide the plots of collections: each item hashed once, as git or a content-addressed store names its items"), has(&|p| p.use_case.what_key() == "collections")),
-    ]);
-    line_of("pattern", false, vec![
-        (("idle", "After idling", "Show or hide the plots of calls each made after the program slept 1 ms, as a server waiting for its next request"), has(&|p| p.use_case.pattern_key() == "idle")),
-        (("busy", "After other work", "Show or hide the plots of calls each made after the program ran other code and read 128 MiB, as a program that hashes between its other tasks"), has(&|p| p.use_case.pattern_key() == "busy")),
-    ]);
-    line_of("pattern", false, vec![
-        (("nonstop", "Nonstop", "Show or hide the plots of inputs hashed one after another, as fast as the program can"), has(&|p| p.use_case.pattern_key() == "nonstop")),
-    ]);
-    if has(&|p| p.use_case.pattern_key() == "nonstop") {
-        line_of("buffers", true, vec![
-            (("owned", "Owned", "Show or hide nonstop plots where the program hands each buffer over for good and fills the next while it is hashed"), has(&|p| p.use_case.buffers_key() == Some("owned"))),
-            (("lent", "Lent", "Show or hide nonstop plots where the program waits for each call to return before refilling its buffer"), has(&|p| p.use_case.buffers_key() == Some("lent"))),
-        ]);
-        line_of("scenario", true, vec![
-            (("solo", "Solo", "Show or hide the nonstop plots of one program hashing alone"), has(&|p| !p.use_case.after_gap() && p.scenario == Scenario::Solo)),
-            (("shared", "Shared", "Show or hide the nonstop plots of two programs hashing at once"), has(&|p| p.scenario == Scenario::Shared)),
-        ]);
-    }
-    /* One line per group, continued on the next where it would pass the right edge; nested lines hang from Nonstop. */
-    const NEST: f64 = 18.0;
-    let mut line = 0;
-    let mut nonstop_line = None;
-    for (kind, nested, chips) in &chip_lines {
-        let left = PLOT_RIGHT + 14.0 + if *nested { NEST } else { 0.0 };
-        let mut x = left;
-        if *nested {
-            let top = CHIP_ROW_TOP + nonstop_line.expect("nested chips follow Nonstop") as f64 * 24.0 + 18.0;
-            let mid = CHIP_ROW_TOP + line as f64 * 24.0 + 9.0;
-            writeln!(svg, r##"  <path class="chip-tie" d="M{:.1} {top:.1} L{:.1} {mid:.1} L{:.1} {mid:.1}"/>"##, PLOT_RIGHT + 24.0, PLOT_RIGHT + 24.0, left - 3.0).unwrap();
-        }
-        for (index, (value, label, tip)) in chips.iter().enumerate() {
-            let width = label.chars().count() as f64 * 6.6 + 16.0;
-            if index > 0 && x + width > SVG_WIDTH - 4.0 {
-                line += 1;
-                x = left;
-            }
-            let y = CHIP_ROW_TOP + line as f64 * 24.0;
-            assert!(y + 18.0 <= HEADER_BOTTOM, "the chips fit in the header");
-            writeln!(
-                svg,
-                r##"  <g class="chip" data-kind="{kind}" data-value="{value}" data-on="true" data-live="true" transform="translate({x:.1} {y:.1})" onclick="event.stopPropagation(); toggleChip('{kind}', '{value}')"><title>{}</title><rect x="0" y="0" width="{width:.1}" height="18" rx="9"/><text x="{:.1}" y="13" text-anchor="middle">{}</text></g>"##,
-                xml_escape(tip),
-                width / 2.0,
-                xml_escape(label),
-            )
-            .unwrap();
-            x += width + 6.0;
-            if *value == "nonstop" {
-                nonstop_line = Some(line);
-            }
-        }
-        line += 1;
-    }
-    writeln!(svg, r##"  <line class="header-edge" x1="0" y1="{HEADER_BOTTOM:.0}" x2="{SVG_WIDTH:.0}" y2="{HEADER_BOTTOM:.0}"/>"##).unwrap();
-    /*
-     * Behind the door: how the plots are drawn, for a reader who wants it.
-     * A panel under the header, over the plots, shown by the door's click.
-     */
-    let mut howto = vec![
-        format!("Each line is one hash. Each dot is the mean of up to {} timings at that size.", 2 * roster.rounds),
-        "A dot's shape marks the method the hash used at that size. The section \"Code paths\" at the bottom names each method.".to_owned(),
-        "Rate counts bytes or messages per second, time the nanoseconds per byte or message; the switch at right changes every plot.".to_owned(),
-        "The strip at the top narrows every plot to part of its inputs: drag an end of its band, or use the arrows at its ends.".to_owned(),
-    ];
-    if plots.iter().any(|plot| plot.use_case.after_gap() && !plot.use_case.idle()) {
-        howto.push("After other work: the program calls the hash, runs a fixed other program (about 1 MiB of code) and reads 128 MiB of data, at least 1 ms in all, writes the input, and calls again; the write and the second call are timed. So a program works that hashes between its other tasks.".to_owned());
-    }
-    if plots.iter().any(|plot| plot.use_case.idle()) {
-        howto.push("After idling: the program calls the hash, sleeps 1 ms, writes the input, and calls again; the write and the second call are timed. So a server works that waits for its next request.".to_owned());
-    }
-    if plots.iter().any(|plot| !plot.use_case.after_gap()) {
-        howto.push("Nonstop, each input (each piece, for many messages at once) is first read into memory, a memory copy, the cheapest read, inside the time.".to_owned());
-        howto.push("Owned buffers: the program hands each buffer over and fills the next while it is hashed. Lent buffers: the program waits for each call to return before refilling its buffer.".to_owned());
-    }
-    let howto_height = 16.0 + howto.len() as f64 * 16.0;
-    writeln!(svg, r##"  <g id="howto" style="display:none" onclick="event.stopPropagation(); toggleHowto()">"##).unwrap();
-    writeln!(svg, r##"    <rect class="howto-box" x="{:.0}" y="{:.0}" width="{:.0}" height="{howto_height:.0}" rx="6"/>"##, PLOT_LEFT - 10.0, HEADER_BOTTOM + 4.0, PLOT_RIGHT - PLOT_LEFT + 20.0).unwrap();
-    for (i, line) in howto.iter().enumerate() {
-        writeln!(svg, r##"    <text class="howto-line" x="{PLOT_LEFT:.0}" y="{:.0}">{}</text>"##, HEADER_BOTTOM + 22.0 + i as f64 * 16.0, xml_escape(line)).unwrap();
-    }
-    writeln!(svg, "  </g>").unwrap();
-    writeln!(svg, "  </g>").unwrap();
-
-    /*
-     * Headers occupy the first provenance slots, then every category's
-     * detail lines; the per-contender lines emitted inside the first plot's
-     * series groups start after them. The script flows detail lines from
-     * the header count when categories collapse.
-     */
-    let shared_count = provenance_cats.len();
-    let mut provenance_slot = shared_count
-        + provenance_cats.iter().map(|cat| cat.lines.len()).sum::<usize>();
-
-    /* Each plot is one group, which the script moves or hides as the header's chips choose. */
-    for plot in &plots {
-        writeln!(svg, r##"  <g id="plot-{}" class="plot-group">"##, plot.index).unwrap();
-        write_plot(&mut svg, plot, roster, results, &first_plot, &mut provenance_slot);
-        writeln!(svg, "  </g>").unwrap();
-    }
-
-    /*
-     * Hover panel, filled by the script when a dot is hovered. Last among
-     * the drawn elements so it paints over every series.
-     */
-    writeln!(svg, r##"  <g id="hover" style="display:none">"##).unwrap();
-    writeln!(
-        svg,
-        r##"    <line id="hover-guide" x1="0" y1="{:.1}" x2="0" y2="{:.1}"/>"##,
-        plots[0].top,
-        plots[0].bottom,
-    )
-        .unwrap();
-    writeln!(svg, r##"    <rect id="hover-box" x="0" y="0" width="0" height="0" rx="4"/>"##).unwrap();
-    writeln!(svg, r##"    <g id="hover-body"></g>"##).unwrap();
-    writeln!(svg, "  </g>").unwrap();
-
-    /* Machine-readable provenance, complete and untruncated. */
-    writeln!(svg, "  <metadata>").unwrap();
-
-    for (name, value) in [
-        ("timestamp", machine.timestamp.as_str()),
-        ("git source", GIT_SOURCE),
-        ("git commit", GIT_COMMIT),
-        ("git tag", GIT_TAG),
-        ("git clean status", GIT_CLEAN_STATUS),
-        ("bench-hashes version", BENCH_VERSION),
-        ("CPU type", machine.cpu_type.as_str()),
-        ("OS type", machine.os_type.as_str()),
-        ("Rust compiler", RUSTC_VERSION),
-        ("build target", BUILD_TARGET),
-        ("target features", TARGET_FEATURES),
-        ("sample clock", clocks::WALL_CLOCK),
-        ("BLAKE3 source", BLAKE3_SOURCE_INFO),
-        ("SHA-256 source", SHA2_SOURCE_INFO),
-        ("SHA-1DC source", SHA1_CHECKED_SOURCE_INFO),
-        ("SHA3-256 source", SHA3_SOURCE_INFO),
-        ("SHA-256 ring source", RING_SOURCE_INFO),
-        ("BLAKE3 servil source", BLAKE3_SERVIL_SOURCE_INFO),
-    ] {
-        writeln!(
-            svg,
-            "    {}: {}",
-            xml_escape(name),
-            xml_escape(value),
-        )
-            .unwrap();
-    }
-    writeln!(svg, "    power: {}", xml_escape(&machine.describe_power())).unwrap();
-
-    writeln!(svg, "  </metadata>").unwrap();
-
-    /*
-     * Human-readable provenance: left-aligned, compact, de-emphasized.
-     * Shared lines first; the per-contender lines emitted above follow and
-     * close ranks when a contender is hidden.
-     */
-    writeln!(svg, r##"  <g class="below">"##).unwrap();
-    writeln!(
-        svg,
-        r##"  <line x1="{PLOT_LEFT:.1}" y1="{provenance_top:.1}" x2="{:.1}" y2="{provenance_top:.1}" class="divider"/>"##,
-        SVG_WIDTH - PLOT_LEFT,
-    )
-        .unwrap();
-
-    writeln!(
-        svg,
-        r##"  <text x="{PLOT_LEFT:.1}" y="{:.1}" class="prov-head">ABOUT THIS RUN</text>"##,
-        provenance_top + 20.0,
-    )
-        .unwrap();
-
-    /* Collapsible categories: a header row per category, then its detail
-       lines. Without script everything shows, fully laid out. */
-    let mut header_slot = 0;
-    for cat in &provenance_cats {
-        writeln!(
-            svg,
-            r##"  <g class="prov-head-row" data-cat="{}" data-name="{}" data-summary="{}" onclick="event.stopPropagation(); toggleProv('{}')">"##,
-            cat.key,
-            xml_escape(cat.name),
-            xml_escape(&cat.summary),
-            cat.key,
-        )
-        .unwrap();
-        writeln!(
-            svg,
-            r##"    <text class="prov-head" x="{PLOT_LEFT:.1}" y="{:.1}">▾ {} — {}</text>"##,
-            provenance_line_y(provenance_top, header_slot),
-            xml_escape(cat.name),
-            xml_escape(&cat.summary),
-        )
-        .unwrap();
-        writeln!(svg, r##"  </g>"##).unwrap();
-        header_slot += 1;
-        for line in &cat.lines {
-            writeln!(
-                svg,
-                r##"  <text class="prov prov-shared" data-cat="{}" x="{PLOT_LEFT:.1}" y="{:.1}">{}</text>"##,
-                cat.key,
-                provenance_line_y(provenance_top, header_slot),
-                xml_escape(line),
-            )
-            .unwrap();
-            header_slot += 1;
-        }
-    }
-
-    writeln!(svg, "  </g>").unwrap();
-    assert_eq!(
-        provenance_slot, provenance_total,
-        "the provenance lines emitted must match the count the canvas was sized for"
-    );
-
-    /* Data and behaviour for the interactive toggles. */
-    write_interaction_script(&mut svg, roster, results, &plots, shared_count);
-
-    svg.push_str("</svg>\n");
-    svg
-}
-
-/*
- * One plot: heading, axes, every participating contender's band, line,
- * dots, value labels, and clickable label at right, and the shape legend
- * beneath. The first plot's series groups also carry each contender's
- * provenance lines, which hide with the contender.
- */
-fn write_plot(svg: &mut String, plot: &Plot, roster: &Roster, results: &Results, first_plot: &[usize], provenance_slot: &mut usize) {
-    let p = plot.index;
-    let top = plot.top;
-    let bottom = plot.bottom;
-
-    /*
-     * A plot after a gap has one scenario (one program), so its subtitle
-     * says what the program did between calls; a nonstop plot's names its
-     * scenario.
-     */
-    let lead = if plot.use_case.idle() {
-        "the program hashes, sleeps 1 ms, and hashes again; the time of the second call"
-    } else if plot.use_case.after_gap() {
-        "the program hashes, runs other code and reads 128 MiB of memory, and hashes again; the time of the second call"
-    } else {
-        plot.scenario.subtitle()
-    };
-    let heading_note = match plot.use_case {
-        UseCase::OneMessage | UseCase::IdleOneMessage => lead.to_owned(),
-        UseCase::ManyMessages | UseCase::IdleManyMessages => format!("{lead} · each hash takes the whole batch where it can, else one message at a time"),
-        UseCase::ContinuousMessages | UseCase::ContinuousBatches => format!("{} · owned: the program hands each buffer over and fills the next while it is hashed", plot.scenario.subtitle()),
-        UseCase::LentMessages | UseCase::Interleaved | UseCase::LentBatches => format!("{} · lent: the program waits for each call to return before refilling its buffer", plot.scenario.subtitle()),
-        UseCase::Collection => format!("{} · each item hashed once by one call, the items one after another", plot.scenario.subtitle()),
-        UseCase::Outboard => format!("{} · lent: the program waits for each call to return before refilling its buffer", plot.scenario.subtitle()),
-    };
-    writeln!(
-        svg,
-        r##"  <text x="{PLOT_LEFT:.0}" y="{:.1}" class="plot-title">{}</text>"##,
-        top - 26.0,
-        xml_escape(&if plot.use_case.after_gap() { plot.use_case.heading().to_owned() } else { format!("{} · {}", plot.scenario.heading(), plot.use_case.heading()) }),
-    )
-    .unwrap();
-    writeln!(
-        svg,
-        r##"  <text x="{PLOT_LEFT:.0}" y="{:.1}" class="plot-sub">{}</text>"##,
-        top - 11.0,
-        xml_escape(&heading_note),
-    )
-    .unwrap();
-
-    /*
-     * The plot area, for marks and dots: nothing is drawn outside it, and
-     * when the zoom narrows the inputs shown, points beyond it slide out
-     * of view. Room above and below for value labels.
-     */
-    writeln!(
-        svg,
-        r##"  <clipPath id="plot-clip-{p}"><rect x="{PLOT_LEFT:.1}" y="{:.1}" width="{:.1}" height="{:.1}"/></clipPath>"##,
-        top - 40.0,
-        PLOT_RIGHT - PLOT_LEFT,
-        bottom - top + 60.0,
-    )
-    .unwrap();
-
-    /* Horizontal grid and y-axis tick labels; the script rebuilds these. */
-    writeln!(svg, r##"  <g id="y-axis-{p}">"##).unwrap();
-    for value in log_ticks(plot.axis_min, plot.axis_max) {
-        let y = plot.map_rate(value);
-        let ns = plot.scale / value;
-        writeln!(
-            svg,
-            r##"    <line x1="{PLOT_LEFT:.1}" y1="{y:.2}" x2="{PLOT_RIGHT:.1}" y2="{y:.2}" class="grid" data-ns="{ns}"/>"##
-        )
-            .unwrap();
-
-        writeln!(
-            svg,
-            r##"    <text x="{:.1}" y="{:.2}" class="tick-label" text-anchor="end" data-ns="{ns}">{}</text>"##,
-            PLOT_LEFT - 10.0,
-            y + 3.5,
-            format_gbps_tick(value),
-        )
-            .unwrap();
-    }
-    writeln!(svg, "  </g>").unwrap();
-
-    let y_title = format!("{} (log scale) · higher is better", plot.use_case.rate_unit_long());
-    writeln!(
-        svg,
-        r##"  <text id="y-title-{p}" x="{Y_TITLE_X:.0}" y="{:.1}" class="axis-title" text-anchor="middle" transform="rotate(-90 {Y_TITLE_X:.0} {:.1})">{}</text>"##,
-        (top + bottom) / 2.0,
-        (top + bottom) / 2.0,
-        xml_escape(&y_title),
-    )
-        .unwrap();
-    /*
-     * An arrow under "higher is better" (or "lower is better"), parallel to
-     * the title and on the side below its words as they read, pointing the
-     * way that is better. The script's betterArrow draws the same.
-     */
-    let (y0, y1) = better_arrow_span(&y_title, (top + bottom) / 2.0);
-    writeln!(
-        svg,
-        r##"  <path id="y-better-{p}" class="better-arrow" d="{}"/>"##,
-        better_arrow_path(y0, y1, true),
-    )
-        .unwrap();
-
-    /*
-     * Vertical guides and x-axis labels at each tested point, placed by
-     * place_size_labels: two rows, a short tick joining a second-row
-     * label to its column.
-     */
-    let labels: Vec<&str> = plot.points.clone().map(|point_index| POINTS[point_index].label).collect();
-    let primary: Vec<bool> = plot.points.clone().map(|point_index| POINTS[point_index].bytes.is_power_of_two()).collect();
-    let label_rows = place_size_labels(&plot.x_positions, &labels, &primary);
-    for (k, point_index) in plot.points.clone().enumerate() {
-        let x = plot.x_positions[k];
-        let row = label_rows[k].unwrap_or(0);
-        let hidden = label_rows[k].is_none();
-        let label_y = bottom + 24.0 + 13.0 * f64::from(row);
-
-        writeln!(
-            svg,
-            r##"  <line x1="{x:.2}" y1="{top:.1}" x2="{x:.2}" y2="{bottom:.1}" class="grid-x" data-plot="{p}" data-size="{k}"/>"##
-        )
-            .unwrap();
-
-        /* Every column has a tick for the second row; the zoom script shows
-           it wherever the label drops there. */
-        writeln!(
-            svg,
-            r##"  <line x1="{x:.2}" y1="{:.1}" x2="{x:.2}" y2="{:.1}" class="size-tick" data-plot="{p}" data-size="{k}"{}/>"##,
-            bottom + 4.0,
-            bottom + 24.0 + 13.0 - 10.0,
-            if row == 1 && !hidden { "" } else { r#" display="none""# },
-        )
-            .unwrap();
-
-        writeln!(
-            svg,
-            r##"  <text x="{x:.2}" y="{label_y:.1}" class="size-label" text-anchor="middle" data-plot="{p}" data-size="{k}"{}>{}</text>"##,
-            if hidden { r#" opacity="0""# } else { "" },
-            xml_escape(POINTS[point_index].label),
-        )
-            .unwrap();
-    }
-
-    writeln!(
-        svg,
-        r##"  <text x="{:.1}" y="{:.1}" class="axis-title" text-anchor="middle">{}</text>"##,
-        (PLOT_LEFT + PLOT_RIGHT) / 2.0,
-        bottom + 52.0,
-        xml_escape(plot.use_case.x_axis()),
-    )
-        .unwrap();
-
-    writeln!(
-        svg,
-        r##"  <line x1="{PLOT_LEFT:.1}" y1="{top:.1}" x2="{PLOT_LEFT:.1}" y2="{bottom:.1}" class="axis"/>"##
-    )
-        .unwrap();
-
-    writeln!(
-        svg,
-        r##"  <line x1="{PLOT_LEFT:.1}" y1="{bottom:.1}" x2="{PLOT_RIGHT:.1}" y2="{bottom:.1}" class="axis"/>"##
-    )
-        .unwrap();
-
-    let value_label_y = place_value_labels(plot, results, &shown_at_first(roster));
-    let value_columns = value_label_columns(&plot.x_positions);
-
-    /*
-     * Dots are collected here and emitted after every series' line, so no
-     * line can sit above another contender's dots and take the hover. Each dot layer carries its plot and series index; the
-     * script and stylesheet treat it as part of that series.
-     */
-    let mut dot_layers: Vec<String> = Vec::new();
-
-    /*
-     * One group per contender holds everything that belongs to it: line,
-     * dots, value labels, the clickable label at right, and (in the
-     * first plot it takes part in) its provenance lines. Toggling flips one attribute on
-     * the group.
-     */
-    for &algorithm_index in &plot.contenders {
-        let algorithm = roster.algorithms[algorithm_index];
-        let color = algorithm.color();
-        let kernels = plot.kernels(algorithm_index);
-        let cell_at = |k: usize| cell(results, algorithm_index, plot.points.start + k);
-        let last = cell_at(plot.len() - 1);
-
-        let shown = shown_at_first(roster)[algorithm_index];
-        writeln!(
-            svg,
-            r##"  <g class="series" id="series-{p}-{algorithm_index}" data-on="{shown}">"##
-        )
-            .unwrap();
-
-        writeln!(svg, r##"    <g class="marks" clip-path="url(#plot-clip-{p})">"##).unwrap();
-
-        /* The line through the means, a segment between each pair of points. */
-        let point = |k: usize| (plot.x_positions[k], plot.map_y(cell_at(k).get(plot.scenario).mean));
-        for k in 0..plot.len().saturating_sub(1) {
-            let ((x0, m0), (x1, m1)) = (point(k), point(k + 1));
-            writeln!(
-                svg,
-                r##"      <path class="median" data-k="{k}" d="M {x0:.2} {m0:.2} L {x1:.2} {m1:.2}" fill="none" stroke="{color}" stroke-width="2.5" stroke-linecap="round"/>"##,
-            )
-            .unwrap();
-        }
-
-        let mut dots = format!("  <g class=\"dots\" id=\"dots-{p}-{algorithm_index}\" data-on=\"{shown}\" clip-path=\"url(#plot-clip-{p})\">\n");
-
-        for k in 0..plot.len() {
-            let x = plot.x_positions[k];
-            let statistics = cell_at(k).get(plot.scenario);
-
-            /*
-             * The dot's shape names the code path that produced this point;
-             * the shape alone marks a new path, so every dot draws the same
-             * size with no ring. Hovering shows the path's explanation.
-             */
-            let kernel = &kernels.kernels[kernels.kernel_index_for(POINTS[plot.points.start + k].bytes)];
-            let mean_y = plot.map_y(statistics.mean);
-            writeln!(
-                dots,
-                r##"    <g class="dot" data-size="{k}" transform="translate({x:.2} {mean_y:.2})" onpointerenter="hoverDot(event,{p},{algorithm_index},{k})" onpointerleave="leaveDot(event)" onclick="tapDot(event,{p},{algorithm_index},{k})">"##,
-            )
-                .unwrap();
-            writeln!(dots, "      {}", mark_shape(kernel.mark, color, 5.0)).unwrap();
-            dots.push_str("    </g>\n");
-
-            /* With two dozen columns, a value at every dot would overprint. */
-            if !value_columns[k] {
-                continue;
-            }
-
-            /*
-             * Centred over its dot, so a label names one column only (a
-             * right-aligned last label, `45 | 36` wide, read as the
-             * column before); the last column sits X_INSET from the plot's
-             * edge, room for the widest pair. The first column's label
-             * starts beside its dot, clear of the y axis.
-             */
-            let (label_x, anchor) = if k == 0 { (x + 9.0, "start") } else { (x, "middle") };
-
-            let (label_y, display) = match value_label_y[algorithm_index][k] {
-                Some(y) => (y, ""),
-                None => (0.0, r#" display="none""#),
-            };
-            writeln!(
-                svg,
-                r##"      <text class="value-label" data-size="{k}" x="{label_x:.2}" y="{label_y:.2}" fill="{color}" text-anchor="{anchor}"{display}>{}</text>"##,
-                format_rate_value(statistics.mean, plot.use_case),
-            )
-                .unwrap();
-        }
-
-        writeln!(svg, "    </g>").unwrap();
-        dots.push_str("  </g>\n");
-        dot_layers.push(dots);
-
-        /* Clickable label at right: swatch, name, detail, hint. */
-        let statistics = last.get(plot.scenario);
-        let label_x = PLOT_RIGHT + 14.0;
-        let label_y = plot.label_y[algorithm_index].expect("a participant has a label slot");
-
-        writeln!(
-            svg,
-            r##"    <g class="series-label" transform="translate(0 {label_y:.2})" onclick="event.stopPropagation(); toggleSeries({algorithm_index})" onpointerenter="hoverLabel(event,{algorithm_index},true)" onpointerleave="hoverLabel(event,{algorithm_index},false)">"##
-        )
-            .unwrap();
-        /* The batch plots' note beside the crates.io crate's name, in full. */
-        let batch_note = if plot.use_case.batch() && algorithm == Algorithm::Blake3 {
-            "; in this plot, from two messages, through the crate's hidden batch function blake3::platform::Platform::hash_many, sixteen messages per call"
-        } else {
-            ""
-        };
-        writeln!(
-            svg,
-            r##"      <title>{}: {}{}. Click to hide or show it.</title>"##,
-            xml_escape(algorithm.name()),
-            algorithm.blurb(),
-            xml_escape(batch_note),
-        )
-            .unwrap();
-        writeln!(
-            svg,
-            r##"      <rect x="{:.1}" y="-14" width="{:.1}" height="{:.0}" fill="transparent"/>"##,
-            label_x - 4.0,
-            SVG_WIDTH - label_x - 6.0,
-            SERIES_LABEL_GAP - 4.0,
-        )
-            .unwrap();
-        /* Swatch: every dot shape this contender uses, in its colour, so the
-           right-hand names match the marks in the plot. Names share one x
-           across contenders; shapes fill fixed slots, so rows align. Each
-           shape carries a tooltip naming its code path. */
-        let mut swatch_marks: Vec<(Mark, &str)> = Vec::new();
-        for kernel in &kernels.kernels {
-            if !swatch_marks.iter().any(|slot| slot.0 == kernel.mark) {
-                swatch_marks.push((kernel.mark, &kernel.name));
-            }
-        }
-        let name_x = label_x + 14.0 + (SWATCH_SLOTS as f64) * 13.0;
-        writeln!(svg, r##"      <g class="series-swatch" transform="translate(0 0)">"##).unwrap();
-        for (mark_index, (mark, name)) in swatch_marks.iter().enumerate() {
-            writeln!(
-                svg,
-                r##"        <g transform="translate({:.1} 0)"><title>{}</title>{}</g>"##,
-                label_x + 4.5 + mark_index as f64 * 13.0,
-                xml_escape(name),
-                mark_shape(*mark, color, 4.5),
-            )
-            .unwrap();
-        }
-        writeln!(svg, r##"      </g>"##).unwrap();
-        /* In the batch plots the crates.io crate runs a function its docs hide; the name says so beside it. */
-        let note = if plot.use_case.batch() && algorithm == Algorithm::Blake3 {
-            r##"<tspan class="series-note" dx="5">hidden batch API</tspan>"##
-        } else {
-            ""
-        };
-        writeln!(
-            svg,
-            r##"      <text class="series-name" x="{:.1}" y="4" fill="{color}">{}{note}</text>"##,
-            name_x,
-            xml_escape(algorithm.name()),
-        )
-            .unwrap();
-        writeln!(
-            svg,
-            r##"      <text class="series-detail" x="{:.1}" y="18">{} · {} {} at {}</text>"##,
-            name_x,
-            format_rate(statistics.mean, plot.use_case),
-            statistics.mean.format_ns(),
-            plot.use_case.time_unit(),
-            xml_escape(POINTS[plot.points.end - 1].label),
-        )
-            .unwrap();
-        writeln!(
-            svg,
-            r##"      <text class="series-hint" x="{:.1}" y="18">hidden · click to show</text>"##,
-            name_x,
-        )
-            .unwrap();
-        writeln!(svg, "    </g>").unwrap();
-
-        /* This contender's provenance lines, hidden along with it. */
-        if first_plot[algorithm_index] == p {
-            for line in contender_provenance_lines(algorithm, kernels) {
-                writeln!(
-                    svg,
-                    r##"    <text class="prov series-prov" x="{PLOT_LEFT:.1}" y="{:.1}">{}</text>"##,
-                    provenance_line_y(plot.provenance_top, *provenance_slot),
-                    xml_escape(&line),
-                )
-                    .unwrap();
-                *provenance_slot += 1;
-            }
-        }
-
-        writeln!(svg, "  </g>").unwrap();
-    }
-
-    for layer in &dot_layers {
-        svg.push_str(layer);
-    }
-
-    /*
-     * The hashes of this run that take no part in this plot: listed under
-     * the legend in a pale, still style, apart from the hidden ones (which
-     * keep their place and a click), with the reason as a tooltip.
-     */
-    let absent: Vec<Algorithm> = roster.algorithms.iter().copied().filter(|algorithm| !algorithm.takes_part(plot.use_case)).collect();
-    for (i, algorithm) in absent.iter().enumerate() {
-        let y = bottom + 30.0 + i as f64 * 30.0;
-        let label_x = PLOT_RIGHT + 14.0 + 14.0 + (SWATCH_SLOTS as f64) * 13.0;
-        writeln!(svg, r##"  <g class="series-absent-row"><title>{}</title>"##, xml_escape(&absent_reason(*algorithm, plot.use_case))).unwrap();
-        writeln!(svg, r##"    <text class="series-absent" x="{label_x:.1}" y="{y:.1}">{}</text>"##, xml_escape(algorithm.name())).unwrap();
-        writeln!(svg, r##"    <text class="series-absent-detail" x="{label_x:.1}" y="{:.1}">not measured here</text>"##, y + 14.0).unwrap();
-        writeln!(svg, "  </g>").unwrap();
-    }
-}
-
-/// Screen y from and to of the phrase after the title's last " · ", for
-/// the y title `title` centred at `mid` and rotated to read upward, at the
-/// axis title's 12 px font (about 6.2 px a character; the script's
-/// betterArrow uses the same figure).
-fn better_arrow_span(title: &str, mid: f64) -> (f64, f64) {
-    let width = |t: &str| t.chars().count() as f64 * 6.2;
-    let phrase = title.rsplit(" · ").next().unwrap_or(title);
-    let end = mid - width(title) / 2.0;
-    (end + width(phrase), end)
-}
-
-/// The arrow beside the y title from `y0` (the phrase's start) to `y1` (its
-/// end, the top): its head at the top when higher is better, else at the
-/// bottom.
-fn better_arrow_path(y0: f64, y1: f64, up: bool) -> String {
-    let x = BETTER_ARROW_X;
-    let (tail, head, dir) = if up { (y0, y1, 1.0) } else { (y1, y0, -1.0) };
-    format!("M{x:.1} {tail:.1} L{x:.1} {head:.1} M{:.1} {:.1} L{x:.1} {head:.1} L{:.1} {:.1}", x - 3.5, head + 5.0 * dir, x + 3.5, head + 5.0 * dir)
-}
-
-/// The y title's x: close to the tick numbers it names (right-aligned 10 px
-/// left of the plot, up to five characters), with the arrow between.
-const Y_TITLE_X: f64 = 54.0;
-/// The arrow's x: beside the rotated y title, on the side below its words.
-const BETTER_ARROW_X: f64 = Y_TITLE_X + 7.0;
-
-/// Why a hash of the run takes no part in a plot, for the tooltip on its
-/// pale name there.
-fn absent_reason(algorithm: Algorithm, use_case: UseCase) -> String {
-    let how = match (algorithm, use_case) {
-        (Algorithm::Blake3ServilSt, _) => "for messages one after another, BLAKE3 servil offers its multithreaded queue",
-        (_, UseCase::ManyMessages | UseCase::ContinuousBatches | UseCase::LentBatches) => "it has no way to hash a batch of messages over threads",
-        _ => "it has no way to hash these inputs",
-    };
-    format!("{} is measured in the other plots; {how}.", algorithm.name())
-}
-
-/*
- * X-axis labels in two rows. About 7.2 px per character at the bold label
- * font, plus a 12 px gutter. The powers of two go first, then the sizes between
- * them, each pass left to right. A label takes the first row if it
- * overlaps no label there and covers no second-row tick, else the second
- * row if it overlaps no label there and its tick crosses no first-row
- * label, else it stays hidden (2304 B beside 2 KiB, 7935 B beside 8 KiB)
- * until the zoom spreads the points. The script's placeSizeLabels applies
- * the same rule. Returns each column's row, None for hidden.
- */
-fn place_size_labels(x: &[f64], labels: &[&str], primary: &[bool]) -> Vec<Option<u8>> {
-    let half = |k: usize| (labels[k].chars().count() as f64 * 7.2 + 12.0) / 2.0;
-    let mut rows: Vec<Option<u8>> = vec![None; x.len()];
-    for pass in [true, false] {
-        for k in (0..x.len()).filter(|&k| primary[k] == pass) {
-            let overlaps = |row: u8| {
-                (0..x.len()).any(|j| rows[j] == Some(row) && (x[j] - x[k]).abs() < half(j) + half(k))
-            };
-            let covers_tick = (0..x.len()).any(|j| rows[j] == Some(1) && (x[j] - x[k]).abs() < half(k));
-            let tick_crosses = (0..x.len()).any(|j| rows[j] == Some(0) && (x[j] - x[k]).abs() < half(j));
-            rows[k] = if !overlaps(0) && !covers_tick {
-                Some(0)
-            } else if !overlaps(1) && !tick_crosses {
-                Some(1)
-            } else {
-                None
-            };
-        }
-    }
-    rows
-}
-
-/*
- * The columns that carry value labels: the first and the last, and,
- * walking left from the last, each column at least VALUE_COLUMN_SPACING
- * from the one labelled before and from the first, with both neighbours
- * at least VALUE_COLUMN_ROOM away. Crowded stretches (2-8 KiB) carry no
- * values until the zoom spreads them; hovering a dot shows every value.
- * The script's valueColumns applies the same rule to its window.
- */
-const VALUE_COLUMN_SPACING: f64 = 110.0;
-const VALUE_COLUMN_ROOM: f64 = 32.0;
-
-fn value_label_columns(x: &[f64]) -> Vec<bool> {
-    let n = x.len();
-    let mut labeled = vec![false; n];
-    labeled[0] = true;
-    labeled[n - 1] = true;
-    let mut previous = x[n - 1];
-    for k in (1..n - 1).rev() {
-        if previous - x[k] >= VALUE_COLUMN_SPACING
-            && x[k] - x[0] >= VALUE_COLUMN_SPACING
-            && x[k] - x[k - 1] >= VALUE_COLUMN_ROOM
-            && x[k + 1] - x[k] >= VALUE_COLUMN_ROOM
-        {
-            labeled[k] = true;
-            previous = x[k];
-        }
-    }
-    labeled
-}
-
-/*
- * Value labels sit above their dot by default. Within a column, labels
- * are processed top to bottom; one that would land within a label height
- * of a label already placed, or on a dot of the column, moves below its
- * dot instead, and if that also collides it steps down once more; a
- * label with no clear place within VALUE_LABEL_REACH below its dot stays
- * hidden (hovering the dot shows the value). A label's baseline at y
- * clears a dot at d when y <= d - 6 or y >= d + 14 (the text spans y - 9
- * to y + 1, the dot d - 5 to d + 5), and the plot's edges when it lies
- * within [top + 10, bottom - 3]. The script repeats this rule.
- */
-const VALUE_LABEL_ABOVE: f64 = -11.0;
-const VALUE_LABEL_BELOW: f64 = 17.0;
-const VALUE_LABEL_HEIGHT: f64 = 11.0;
-const VALUE_LABEL_REACH: f64 = VALUE_LABEL_BELOW + VALUE_LABEL_HEIGHT;
-
-fn value_label_clear(y: f64, labels: &[f64], dots: &[f64], plot: &Plot) -> bool {
-    y >= plot.top + 10.0
-        && y <= plot.bottom - 3.0
-        && labels.iter().all(|t| (t - y).abs() >= VALUE_LABEL_HEIGHT)
-        && dots.iter().all(|&d| y <= d - 6.0 || y >= d + 14.0)
-}
-
-fn place_value_labels(plot: &Plot, results: &Results, shown: &[bool]) -> Vec<Vec<Option<f64>>> {
-    let mut placed = vec![vec![None; plot.len()]; results.len()];
-    for k in 0..plot.len() {
-        let point_index = plot.points.start + k;
-        let mut order: Vec<usize> = plot.contenders.iter().copied().filter(|&a| shown[a]).collect();
-        order.sort_by(|&a, &b| {
-            plot.stats(results, b, point_index).mean.cmp(&plot.stats(results, a, point_index).mean)
-        });
-        /* Smallest y (fastest, highest on the plot) first. */
-        order.reverse();
-        let dots: Vec<f64> = order.iter().map(|&a| plot.map_y(plot.stats(results, a, point_index).mean)).collect();
-        let mut taken: Vec<f64> = Vec::new();
-        for algorithm_index in order {
-            let dot_y = plot.map_y(plot.stats(results, algorithm_index, point_index).mean);
-            let y = [VALUE_LABEL_ABOVE, VALUE_LABEL_BELOW, VALUE_LABEL_REACH]
-                .into_iter()
-                .map(|offset| dot_y + offset)
-                .find(|&y| value_label_clear(y, &taken, &dots, plot));
-            if let Some(y) = y {
-                taken.push(y);
-            }
-            placed[algorithm_index][k] = y;
-        }
-    }
-    placed
-}
-
-/// The zoom strip's ends: where the plots' first and last inputs sit, so
-/// at the full range each tick stands over its input in the plots; the
-/// arrow pairs sit between these and the plots' edges.
-const ZOOM_STRIP_LEFT: f64 = PLOT_LEFT + X_INSET;
-const ZOOM_STRIP_RIGHT: f64 = PLOT_RIGHT - X_INSET;
-/// Where the zoom guides end, below the zoom row's top, above the first
-/// plot's title.
-const ZOOM_GUIDE_BOTTOM: f64 = 26.0;
-/// The header's bottom: the header group's background reaches here.
-const HEADER_BOTTOM: f64 = ZOOM_ROW_TOP + ZOOM_GUIDE_BOTTOM + 2.0;
-/// The chips' first row's top, in the header above "all".
-const CHIP_ROW_TOP: f64 = 44.0;
-
-/// The unit switch, in the header straight above the y titles it changes:
-/// its track centred on their column.
-const UNIT_SWITCH_LEFT: f64 = Y_TITLE_X - 7.0;
-const UNIT_SWITCH_TOP: f64 = 86.0;
-
-/// The zoom row's top, between the method lines and the first plot's title.
-const ZOOM_ROW_TOP: f64 = 172.0;
-/// An input size: whole MiB or KiB where it is one, else exact bytes
-/// ("16 MiB", "3 KiB", "2304 B", "1025 B").
-fn format_bytes(bytes: usize) -> String {
-    if bytes >= 1 << 20 && bytes % (1 << 20) == 0 {
-        format!("{} MiB", bytes >> 20)
-    } else if bytes >= 1 << 10 && bytes % (1 << 10) == 0 {
-        format!("{} KiB", bytes >> 10)
-    } else {
-        format!("{bytes} B")
-    }
-}
-
 fn json_string(text: &str) -> String {
     let mut quoted = String::from("\"");
     for c in text.chars() {
@@ -6075,1348 +4501,10 @@ fn json_string(text: &str) -> String {
     quoted
 }
 
-/*
- * A mark centred on the origin. Diamonds and squares are sized to match a
- * circle's visual weight at the same radius.
- */
-fn mark_shape(mark: Mark, color: &str, radius: f64) -> String {
-    let stroke = r##"stroke="#fdfdfc" stroke-width="1.5""##;
-    match mark {
-        Mark::Circle => format!(r##"<circle r="{radius:.1}" fill="{color}" {stroke}/>"##),
-        Mark::Diamond => {
-            let r = radius * 1.25;
-            format!(
-                r##"<path d="M 0 {a:.2} L {r:.2} 0 L 0 {r:.2} L {a:.2} 0 Z" fill="{color}" {stroke}/>"##,
-                a = -r,
-            )
-        }
-        Mark::Square => {
-            let h = radius * 0.9;
-            format!(
-                r##"<rect x="{a:.2}" y="{a:.2}" width="{w:.2}" height="{w:.2}" fill="{color}" {stroke}/>"##,
-                a = -h,
-                w = 2.0 * h,
-            )
-        }
-        Mark::Triangle => {
-            /* Point up; the centroid sits at the origin. */
-            let r = radius * 1.3;
-            format!(
-                r##"<path d="M 0 {top:.2} L {r:.2} {base:.2} L {left:.2} {base:.2} Z" fill="{color}" {stroke}/>"##,
-                top = -r,
-                base = r * 0.5,
-                left = -r,
-            )
-        }
-        Mark::DownTriangle => {
-            /* Point down; the centroid sits at the origin. */
-            let r = radius * 1.3;
-            format!(
-                r##"<path d="M 0 {bottom:.2} L {r:.2} {base:.2} L {left:.2} {base:.2} Z" fill="{color}" {stroke}/>"##,
-                bottom = r,
-                base = -r * 0.5,
-                left = -r,
-            )
-        }
-    }
-}
-
-fn provenance_line_y(provenance_top: f64, slot: usize) -> f64 {
-    provenance_top + 40.0 + slot as f64 * PROVENANCE_LINE_HEIGHT
-}
-
 /* Provenance that describes the run as a whole. */
-/// One collapsible provenance category: a header row plus its detail lines.
-struct ProvCat {
-    key: &'static str,
-    name: &'static str,
-    summary: String,
-    lines: Vec<String>,
-}
-
-fn shared_provenance_cats(machine: &MachineMetadata, selection_note: &str) -> Vec<ProvCat> {
-    vec![
-        ProvCat {
-            key: "machine",
-            name: "Machine",
-            summary: format!(
-                "{} · {} CPUs · {}{}{}",
-                machine.cpu_type,
-                machine.cpu_count,
-                machine.os_type,
-                match &machine.load {
-                    load if load.iter().any(clocks::load::Window::busy) => " · busy during the run",
-                    load if !load.is_empty() => " · quiet during the run",
-                    _ => "",
-                },
-                if machine.power.iter().flatten().any(|power| power.on_battery) {
-                    " · on battery"
-                } else if machine.power_slowing() {
-                    " · low-power mode"
-                } else {
-                    ""
-                },
-            ),
-            lines: vec![
-                format!(
-                    "Machine: {} · {} logical CPUs · {}",
-                    machine.cpu_type, machine.cpu_count, machine.os_type,
-                ),
-                format!("Load during the run: {}", clocks::load::describe(&machine.load)),
-                format!("Power: {}", machine.describe_power()),
-                format!("Toolchain: {RUSTC_VERSION} · {BUILD_TARGET}"),
-                format!("Sample clock: {}", clocks::WALL_CLOCK),
-            ],
-        },
-        ProvCat {
-            key: "run",
-            name: "Run",
-            summary: format!("{} · bench-hashes {}", machine.timestamp, BENCH_VERSION.split('+').next().unwrap_or(BENCH_VERSION)),
-            lines: vec![
-                format!(
-                    "Run: {} · bench-hashes {BENCH_VERSION}",
-                    machine.timestamp,
-                ),
-                format!("Contenders: {selection_note}"),
-                format!("Tag: {GIT_TAG} · Working tree: {GIT_CLEAN_STATUS}"),
-            ],
-        },
-        ProvCat {
-            key: "sources",
-            name: "Sources",
-            summary: format!("bench-hashes @ {}", &GIT_COMMIT[..12.min(GIT_COMMIT.len())]),
-            lines: vec![
-                format!("Source: {GIT_SOURCE} @ {GIT_COMMIT}"),
-                "Full crate checksums are in this file's metadata element".to_owned(),
-            ],
-        },
-    ]
-}
-
-/*
- * What each code path is, folded away at the bottom: the dots' shapes and
- * the hover panel name a contender's code path; this section says what
- * each name means and from which size it runs, contender by contender,
- * for one message and for batches.
- */
-fn code_path_cat(roster: &Roster, plots: &[Plot]) -> ProvCat {
-    let mut lines = Vec::new();
-    for (algorithm_index, algorithm) in roster.algorithms.iter().enumerate() {
-        /*
-         * Each method once per hash, with the plots it runs in when that is
-         * not all of them. Where it starts is told in the plot's own x:
-         * bytes for an input, messages for a batch.
-         */
-        let mut methods: Vec<(&Kernel, String, Vec<UseCase>)> = Vec::new();
-        let mut takes_part: Vec<UseCase> = Vec::new();
-        for use_case in UseCase::ALL {
-            let Some(plot) = plots.iter().find(|plot| plot.use_case == use_case) else { continue };
-            let Some(kernels) = &plot.kernels[algorithm_index] else { continue };
-            takes_part.push(use_case);
-            for kernel in &kernels.kernels {
-                let from = match kernel.first {
-                    0 => "from the start".to_owned(),
-                    first if use_case.batch() => format!("from {} messages", first.div_ceil(use_case.message_len())),
-                    first => format!("from {}", format_bytes(first)),
-                };
-                match methods.iter_mut().find(|(k, f, _)| k.name == kernel.name && k.why == kernel.why && *f == from) {
-                    Some((_, _, use_cases)) => use_cases.push(use_case),
-                    None => methods.push((kernel, from, vec![use_case])),
-                }
-            }
-        }
-        for (kernel, from, use_cases) in methods {
-            let plots_named = if use_cases.len() == takes_part.len() {
-                String::new()
-            } else {
-                format!(" ({})", use_cases.iter().map(|u| u.short()).collect::<Vec<_>>().join(", "))
-            };
-            let text = format!("{} · {} {}, {from}{plots_named}: {}", algorithm.name(), kernel.mark.glyph(), kernel.name, kernel.why);
-            /* One line to about 180 characters; longer ones continue indented. */
-            let mut line = String::new();
-            for word in text.split(' ') {
-                if !line.is_empty() && line.len() + word.len() > 180 {
-                    lines.push(std::mem::take(&mut line));
-                    line.push_str("    ");
-                }
-                if !line.is_empty() && !line.ends_with("    ") {
-                    line.push(' ');
-                }
-                line.push_str(word);
-            }
-            lines.push(line);
-        }
-    }
-    ProvCat { key: "paths", name: "Code paths", summary: "the method behind each dot shape, hash by hash".to_owned(), lines }
-}
 
 /* Provenance that belongs to one contender and hides with it: the
    implementation, its mode, and the platform its kernels ran on. */
-fn contender_provenance_lines(
-    algorithm: Algorithm,
-    kernels: &Kernels,
-) -> Vec<String> {
-    let name = algorithm.name();
-    let platform = kernels.platform;
-    match algorithm {
-        Algorithm::Blake3 => vec![format!(
-            "{name}: {} · {} · platform {platform}",
-            package_name_and_version(BLAKE3_SOURCE_INFO),
-            algorithm.mode(),
-        )],
-        Algorithm::Sha256 => vec![format!(
-            "{name}: {} · {} · {}",
-            package_name_and_version(SHA2_SOURCE_INFO),
-            algorithm.mode(),
-            kernels.kernels[0].name,
-        )],
-        Algorithm::Sha1Dc => vec![format!(
-            "{name}: {} · {}",
-            package_name_and_version(SHA1_CHECKED_SOURCE_INFO),
-            algorithm.mode(),
-        )],
-        Algorithm::Sha3_256 => vec![format!(
-            "{name}: {} · {} · {}",
-            package_name_and_version(SHA3_SOURCE_INFO),
-            algorithm.mode(),
-            kernels.kernels[0].name,
-        )],
-        Algorithm::Blake3ServilSt => vec![
-            format!("{name}: {} · hash, hash_many for a batch, Hasher::update for many messages at once", short_git_source(BLAKE3_SERVIL_SOURCE_INFO)),
-            format!("{name}: single-threaded · platform {platform}"),
-        ],
-        Algorithm::Sha256CommonCrypto => vec![format!("{name}: {} · {}", algorithm.mode(), kernels.kernels[0].name)],
-        Algorithm::Sha256Ring => vec![format!(
-            "{name}: {} · {} · {}",
-            package_name_and_version(RING_SOURCE_INFO),
-            algorithm.mode(),
-            kernels.kernels[0].name,
-        )],
-        Algorithm::Blake3Rayon => vec![
-            format!(
-                "{name}: {} · Hasher::update_rayon · platform {platform}",
-                package_name_and_version(BLAKE3_SOURCE_INFO),
-            ),
-            format!("{name}: {}", algorithm.thread_resources().expect("BLAKE3 mt runs on Rayon's pool")),
-        ],
-        Algorithm::Blake3ServilMt => vec![
-            format!("{name}: {} · hash_multithreaded, hash_many_multithreaded for a batch, Hasher::update_multithreaded for many messages at once; Queue::messages, Queue::pieces, and Queue::fixed for inputs one after another", short_git_source(BLAKE3_SERVIL_SOURCE_INFO)),
-            format!("{name}: multithreaded on the fork's own threads · platform {platform}"),
-        ],
-    }
-}
-
-/*
- * The script re-derives every y position from the visible contenders'
- * data, using the same rules as the Rust layout: nice log bounds with 8%
- * headroom, the same tick mantissas, the same label stacking gap. The
- * measurements and layout constants travel as JSON so the two stay in
- * lockstep. Each plot carries its own points, series, and units; the
- * contender names, colours, and on/off state are shared.
- */
-/// Which contenders the graph shows when it opens: those in SHOWN_AT_FIRST,
-/// or every contender when the run has none of them.
-fn shown_at_first(roster: &Roster) -> Vec<bool> {
-    let shown: Vec<bool> = roster.algorithms.iter().map(|algorithm| SHOWN_AT_FIRST.contains(algorithm)).collect();
-    if shown.contains(&true) { shown } else { vec![true; roster.len()] }
-}
-
-fn write_interaction_script(
-    svg: &mut String,
-    roster: &Roster,
-    results: &Results,
-    plots: &[Plot],
-    shared_count: usize,
-) {
-    let mut data = String::from("{\"names\":[");
-    for (index, algorithm) in roster.algorithms.iter().enumerate() {
-        if index > 0 { data.push(','); }
-        data.push_str(&json_string(algorithm.name()));
-    }
-    data.push_str("],\"shown\":[");
-    for (index, shown) in shown_at_first(roster).iter().enumerate() {
-        if index > 0 { data.push(','); }
-        data.push_str(if *shown { "true" } else { "false" });
-    }
-    data.push_str("],\"colors\":[");
-    for (index, algorithm) in roster.algorithms.iter().enumerate() {
-        if index > 0 { data.push(','); }
-        write!(data, "\"{}\"", algorithm.color()).unwrap();
-    }
-    data.push_str("],\"plots\":[");
-    for (plot_index, plot) in plots.iter().enumerate() {
-        if plot_index > 0 { data.push(','); }
-        write!(
-            data,
-            "{{\"scenario\":\"{}\",\"use\":\"{:?}\",\"call\":\"{:?}\",\"pattern\":\"{}\",\"what\":\"{}\",\"buffers\":{},\"top\":{:.1},\"bottom\":{:.1},\"scale\":{},\"timeUnit\":{},\"rateUnit\":{},\"rateLong\":{},\"timeLong\":{},\"x\":[",
-            plot.scenario.key(),
-            plot.use_case,
-            plot.use_case.call(),
-            plot.use_case.pattern_key(),
-            plot.use_case.what_key(),
-            plot.use_case.buffers_key().map_or("null".to_owned(), |key| format!("\"{key}\"")),
-            plot.top,
-            plot.bottom,
-            plot.use_case.rate_scale(),
-            json_string(plot.use_case.time_unit()),
-            json_string(plot.use_case.rate_unit()),
-            json_string(plot.use_case.rate_unit_long()),
-            json_string(match plot.use_case {
-                _ if plot.use_case.batch() => "Nanoseconds per message",
-                _ => "Nanoseconds per byte",
-            }),
-        )
-        .unwrap();
-        for (index, x) in plot.x_positions.iter().enumerate() {
-            if index > 0 { data.push(','); }
-            write!(data, "{x:.2}").unwrap();
-        }
-        data.push_str("],\"bytes\":[");
-        for (index, point_index) in plot.points.clone().enumerate() {
-            if index > 0 { data.push(','); }
-            write!(data, "{}", POINTS[point_index].bytes).unwrap();
-        }
-        data.push_str("],\"sizes\":[");
-        for (index, point_index) in plot.points.clone().enumerate() {
-            if index > 0 { data.push(','); }
-            data.push_str(&json_string(POINTS[point_index].label));
-        }
-        data.push_str("],\"labelY\":[");
-        for (index, label_y) in plot.label_y.iter().enumerate() {
-            if index > 0 { data.push(','); }
-            match label_y {
-                Some(y) => write!(data, "{y:.2}").unwrap(),
-                None => data.push_str("null"),
-            }
-        }
-        data.push_str("],\"series\":[");
-        for algorithm_index in 0..roster.len() {
-            if algorithm_index > 0 { data.push(','); }
-            let Some(kernels) = &plot.kernels[algorithm_index] else {
-                data.push_str("null");
-                continue;
-            };
-            data.push_str("{\"kernels\":[");
-            for (kernel_index, kernel) in kernels.kernels.iter().enumerate() {
-                if kernel_index > 0 { data.push(','); }
-                let first = plot
-                    .points
-                    .clone()
-                    .position(|point_index| POINTS[point_index].bytes >= kernel.first)
-                    .expect("every kernel starts at or below the axis's largest point");
-                write!(
-                    data,
-                    "{{\"from\":{first},\"name\":{},\"mark\":\"{}\"}}",
-                    json_string(&kernel.name),
-                    kernel.mark.name(),
-                )
-                .unwrap();
-            }
-            let cell_at = |k: usize| cell(results, algorithm_index, plot.points.start + k);
-            /* Each point's mean, extremes, and sample count. */
-            for (key, pick) in [
-                ("med", (|t: Statistics| t.format_mean(1)) as fn(Statistics) -> String),
-                ("min", |t| t.minimum.format_ns()),
-                ("max", |t| t.maximum.format_ns()),
-                ("n", |t| t.count.to_string()),
-            ] {
-                write!(data, "],\"{key}\":[").unwrap();
-                for k in 0..plot.len() {
-                    if k > 0 { data.push(','); }
-                    data.push_str(&pick(cell_at(k).get(plot.scenario)));
-                }
-            }
-            data.push(']');
-            data.push('}');
-        }
-        data.push_str("]}");
-    }
-    write!(
-        data,
-        "],\"sharedProv\":{shared_count},\"svgWidth\":{SVG_WIDTH:.0},\"plotLeft\":{PLOT_LEFT},\"plotRight\":{PLOT_RIGHT},\"xInset\":{X_INSET},\"labelGap\":{SERIES_LABEL_GAP},\"labelTopRoom\":{LABEL_TOP_ROOM},\"rounds\":{},\"labelAbove\":{VALUE_LABEL_ABOVE},\"labelBelow\":{VALUE_LABEL_BELOW},\"labelHeight\":{VALUE_LABEL_HEIGHT},\"valueSpacing\":{VALUE_COLUMN_SPACING},\"valueRoom\":{VALUE_COLUMN_ROOM},\"provTop\":{:.1},\"provLine\":{PROVENANCE_LINE_HEIGHT},\"stripLeft\":{ZOOM_STRIP_LEFT},\"betterX\":{BETTER_ARROW_X},\"stripRight\":{ZOOM_STRIP_RIGHT}}}",
-        roster.rounds,
-        plots[0].provenance_top,
-    )
-        .unwrap();
-
-    svg.push_str("  <script><![CDATA[\n");
-    writeln!(svg, "const DATA = {data};").unwrap();
-    svg.push_str(INTERACTION_SCRIPT);
-    svg.push_str("  ]]></script>\n");
-}
-
-const INTERACTION_SCRIPT: &str = r##"
-/* One on/off state per contender, shared by every plot. */
-const on = DATA.shown.slice();
-
-/*
- * Zoom: the inputs every plot shows, as a range of input sizes, a batch
- * counting its messages' bytes, so all four plots move in lock step. The
- * range runs from one data point to another of ALLB, every input size the
- * plots have. Each plot shows its points inside the range, or, when fewer
- * than two fall inside, the two nearest it. A plot's x axis maps log2 of
- * bytes across its window, as the static render maps its whole axis.
- */
-const ALLB = [...new Set(DATA.plots.flatMap(pl => pl.bytes))].sort((a, b) => a - b);
-let zFrom = 0, zTo = ALLB.length - 1;
-function windowFor(p, lo, hi) {
-  const b = DATA.plots[p].bytes;
-  let ks = b.map((_, k) => k).filter(k => b[k] >= lo && b[k] <= hi);
-  if (ks.length < 2) {
-    const d = k => Math.max(0, Math.log2(lo) - Math.log2(b[k]), Math.log2(b[k]) - Math.log2(hi));
-    ks = b.map((_, k) => k).sort((x, y) => d(x) - d(y) || x - y).slice(0, 2).sort((x, y) => x - y);
-  }
-  const k0 = ks[0], k1 = ks[ks.length - 1];
-  /* A plot of one point keeps it in the middle, whatever the zoom. */
-  if (b.length === 1) return { k0, k1, w0: Math.log2(b[0]) - 1, w1: Math.log2(b[0]) + 1 };
-  return { k0, k1, w0: Math.log2(b[k0]), w1: Math.log2(b[k1]) };
-}
-/* The window each plot moves to, the one it moves from, and how far along (eased, 0 to 1). */
-let win = DATA.plots.map((_, p) => windowFor(p, ALLB[zFrom], ALLB[zTo]));
-let winFrom = win, zoomE = 1, zoomAnimation = null;
-/* Pixel x of each point, as last laid out. */
-const currentX = DATA.plots.map(() => null);
-function xsFor(p) {
-  const a = winFrom[p], c = win[p];
-  const w0 = (1 - zoomE) * a.w0 + zoomE * c.w0, w1 = (1 - zoomE) * a.w1 + zoomE * c.w1;
-  const left = DATA.plotLeft + DATA.xInset, width = DATA.plotRight - DATA.plotLeft - 2 * DATA.xInset;
-  return DATA.plots[p].bytes.map(v => left + (Math.log2(v) - w0) / (w1 - w0) * width);
-}
-function setZoom(from, to, duration = 600) {
-  from = Math.max(0, from); to = Math.min(ALLB.length - 1, to);
-  if (to <= from || (from === zFrom && to === zTo)) return;
-  /* A click during a transition starts from where that one was headed. */
-  if (zoomAnimation) { cancelAnimationFrame(zoomAnimation); zoomAnimation = null; }
-  zFrom = from; zTo = to;
-  winFrom = win;
-  win = DATA.plots.map((_, p) => windowFor(p, ALLB[zFrom], ALLB[zTo]));
-  updateZoomControls();
-  const startTime = performance.now();
-  const ease = x => x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
-  const step = now => {
-    const raw = Math.min(1, (now - startTime) / duration);
-    zoomE = ease(raw);
-    relayout();
-    if (hovered) showHover(hovered[0], hovered[1], hovered[2]);
-    if (raw < 1) {
-      zoomAnimation = requestAnimationFrame(step);
-    } else {
-      winFrom = win;
-      zoomAnimation = null;
-    }
-  };
-  zoomE = 0;
-  zoomAnimation = requestAnimationFrame(step);
-}
-function zoomAll() { setZoom(0, ALLB.length - 1); }
-/* The arrow beside a y title, under its "better" phrase, as the Rust side's better_arrow_path draws it. */
-function betterArrow(p, title, up) {
-  const phrase = title.split(" · ").pop();
-  /* The title's and the phrase's drawn lengths where the browser measures them; else the estimate the Rust side uses. */
-  let total = [...title].length * 6.2, phraseWidth = [...phrase].length * 6.2;
-  const el = document.getElementById("y-title-" + p);
-  if (el && el.getComputedTextLength && el.getSubStringLength && el.textContent === title) {
-    try {
-      const measured = el.getComputedTextLength();
-      if (measured > 0) { total = measured; phraseWidth = el.getSubStringLength(title.length - phrase.length, phrase.length); }
-    } catch (e) { /* keep the estimate */ }
-  }
-  const mid = (DATA.plots[p].top + DATA.plots[p].bottom) / 2, end = mid - total / 2;
-  const y0 = end + phraseWidth, y1 = end, x = DATA.betterX;
-  const [tail, head, dir] = up ? [y0, y1, 1] : [y1, y0, -1];
-  const f = v => v.toFixed(1);
-  document.getElementById("y-better-" + p).setAttribute("d",
-    `M${f(x)} ${f(tail)} L${f(x)} ${f(head)} M${f(x - 3.5)} ${f(head + 5 * dir)} L${f(x)} ${f(head)} L${f(x + 3.5)} ${f(head + 5 * dir)}`);
-}
-/*
- * The chips show and hide plots. A plot shows when every chip that
- * applies to it is pressed: what it hashes and how the program calls,
- * and for a nonstop plot whose buffers and how many programs. The plots
- * shown close ranks from the first plot's place, and what lies below them
- * follows. A press that would leave no plot is refused; a chip whose
- * press would change nothing, as the others stand, is dimmed.
- */
-const chipOn = { what: {}, pattern: {}, buffers: {}, scenario: {} };
-document.querySelectorAll(".chip").forEach(c => { chipOn[c.getAttribute("data-kind")][c.getAttribute("data-value")] = true; });
-const plotShown = (plot, on) => !!(on.what[plot.what] && on.pattern[plot.pattern]
-  && (plot.pattern !== "nonstop" || (on.buffers[plot.buffers] && on.scenario[plot.scenario])));
-const shownWith = on => DATA.plots.map(plot => plotShown(plot, on));
-const flipped = (kind, value) => ({ ...chipOn, [kind]: { ...chipOn[kind], [value]: !chipOn[kind][value] } });
-const plotShift = DATA.plots.map(() => 0);
-let belowShift = 0;
-function toggleChip(kind, value) {
-  const next = flipped(kind, value);
-  if (!shownWith(next).some(v => v)) return;
-  chipOn[kind] = next[kind];
-  document.querySelector(`.chip[data-kind="${kind}"][data-value="${value}"]`).setAttribute("data-on", chipOn[kind][value] ? "true" : "false");
-  layoutPlots();
-}
-function dimChips() {
-  const now = shownWith(chipOn).join();
-  document.querySelectorAll(".chip").forEach(c => {
-    const kind = c.getAttribute("data-kind"), value = c.getAttribute("data-value");
-    c.setAttribute("data-live", shownWith(flipped(kind, value)).join() !== now ? "true" : "false");
-  });
-}
-function layoutPlots() {
-  const pitch = DATA.plots.length > 1 ? DATA.plots[1].top - DATA.plots[0].top : 0;
-  let shown = 0;
-  DATA.plots.forEach((plot, p) => {
-    const visible = plotShown(plot, chipOn);
-    const group = document.getElementById("plot-" + p);
-    group.classList.toggle("plot-off", !visible);
-    plotShift[p] = visible ? (shown - p) * pitch : 0;
-    group.setAttribute("transform", `translate(0 ${plotShift[p]})`);
-    if (visible) shown++;
-  });
-  belowShift = (shown - DATA.plots.length) * pitch;
-  document.querySelectorAll(".below").forEach(g => g.setAttribute("transform", `translate(0 ${belowShift})`));
-  if (hovered && !plotShown(DATA.plots[hovered[0]], chipOn)) hideHover();
-  dimChips();
-  layoutProv();
-}
-/* The door under the title opens and closes the panel on how to read the graph. */
-function toggleHowto() {
-  const panel = document.getElementById("howto"), open = panel.style.display === "none";
-  panel.style.display = open ? "" : "none";
-  document.getElementById("howto-door").textContent = open ? "How to read this graph ▾" : "How to read this graph ▸";
-}
-/*
- * Dragging: a grip moves its end of the range, the band both ends at once,
- * each to an input's tick, never past the other end. The strip follows the
- * pointer's travel at full speed while the hand moves fast, and at a third
- * of it while it moves slowly (under 0.3 px per ms), so a slow hand can
- * settle on one of several close ticks; and an end leaves its tick only
- * once the point aimed at is 3 px nearer another, so it stays where the
- * hand stops. The ticks under the ends light up while dragging.
- */
-let dragging = null;
-function nearestIndex(x) {
-  let best = 0;
-  ALLB.forEach((v, i) => { if (Math.abs(stripX(v) - x) < Math.abs(stripX(ALLB[best]) - x)) best = i; });
-  return best;
-}
-function aimIndex(x, current) {
-  const j = nearestIndex(x);
-  return j !== current && Math.abs(stripX(ALLB[j]) - x) + 3 < Math.abs(stripX(ALLB[current]) - x) ? j : current;
-}
-function svgXOf(ev) {
-  const root = document.getElementById("zoom").ownerSVGElement;
-  if (!root || !root.getScreenCTM || !root.getScreenCTM()) return ev.clientX;
-  const pt = root.createSVGPoint();
-  pt.x = ev.clientX; pt.y = ev.clientY;
-  return pt.matrixTransform(root.getScreenCTM().inverse()).x;
-}
-function markTicks(active) {
-  ALLB.forEach((_, i) => document.getElementById("zoom-tick-" + i).setAttribute("data-at", active && (i === zFrom || i === zTo) ? "true" : "false"));
-}
-function gripDown(ev, end) {
-  ev.stopPropagation(); ev.preventDefault();
-  const at = end === "to" ? zTo : zFrom;
-  dragging = { end, lastX: svgXOf(ev), lastT: performance.now(), aim: stripX(ALLB[at]), span: zTo - zFrom };
-  markTicks(true);
-}
-function gripMove(ev) {
-  if (!dragging) return;
-  const x = svgXOf(ev), t = performance.now();
-  const dx = x - dragging.lastX, dt = Math.max(1, t - dragging.lastT);
-  dragging.aim += dx * (Math.abs(dx) / dt < 0.3 ? 0.35 : 1);
-  dragging.lastX = x; dragging.lastT = t;
-  const last = ALLB.length - 1;
-  if (dragging.end === "from") {
-    setZoom(Math.min(aimIndex(dragging.aim, zFrom), zTo - 1), zTo, 150);
-  } else if (dragging.end === "to") {
-    setZoom(zFrom, Math.max(aimIndex(dragging.aim, zTo), zFrom + 1), 150);
-  } else {
-    const from = Math.max(0, Math.min(last - dragging.span, aimIndex(dragging.aim, zFrom)));
-    setZoom(from, from + dragging.span, 150);
-  }
-  markTicks(true);
-}
-function gripUp() {
-  if (!dragging) return;
-  dragging = null;
-  markTicks(false);
-}
-window.addEventListener("pointermove", gripMove);
-window.addEventListener("pointerup", gripUp);
-window.addEventListener("pointercancel", gripUp);
-/* The zoom strip's x of an input, on the log spacing the Rust side draws its ticks with. */
-const stripX = bytes => DATA.stripLeft + (Math.log2(bytes) - Math.log2(ALLB[0])) / (Math.log2(ALLB[ALLB.length - 1]) - Math.log2(ALLB[0])) * (DATA.stripRight - DATA.stripLeft);
-function updateZoomControls() {
-  const last = ALLB.length - 1;
-  /* The band over the inputs shown. */
-  const x0 = stripX(ALLB[zFrom]), x1 = stripX(ALLB[zTo]);
-  const band = document.getElementById("zoom-band");
-  band.setAttribute("x", (x0 - 3).toFixed(1));
-  band.setAttribute("width", (x1 - x0 + 6).toFixed(1));
-  document.getElementById("zoom-grip-from").setAttribute("transform", `translate(${x0.toFixed(1)} 0)`);
-  document.getElementById("zoom-grip-to").setAttribute("transform", `translate(${x1.toFixed(1)} 0)`);
-  document.getElementById("zoom-all").setAttribute("data-off", zFrom === 0 && zTo === last ? "true" : "false");
-}
-
-/*
- * Display unit. Data is stored as ns per unit (byte or message, by plot);
- * the rate is the plot's scale over it, so on the log axis switching units
- * mirrors each plot: the fastest contender moves from the bottom to the
- * top. Every drawn or printed value goes through val() and fmt(); ratios
- * between contenders are unitless and stay put.
- */
-let unit = "gbps";
-
-/*
- * Blend between the units. `blend` runs from 0 (time) to 1 (rate), and the
- * plotted value is the log-space interpolation of the two readings, so
- * during a switch every point travels a straight line on the log axis and
- * each plot mirrors through its middle. Text follows the unit from the
- * midpoint; the two axes cross-fade.
- */
-let blend = 1;
-const valAt = (ns, b, scale) => Math.exp((1 - b) * Math.log(ns) + b * Math.log(scale / ns));
-const val = (ns, p) => valAt(ns, blend, DATA.plots[p].scale);
-/* Values in the settled unit, for text. */
-const settled = (ns, p) => unit === "ns" ? ns : DATA.plots[p].scale / ns;
-function fmt(ns, p, digits) {
-  const v = settled(ns, p);
-  if (unit === "ns") return v.toFixed(digits === undefined ? 3 : digits);
-  if (v < 1 && digits !== undefined) return v.toFixed(Math.min(9, Math.max(2, Math.ceil(-Math.log10(v)) + 1)));
-  return v >= 10 ? v.toFixed(digits === undefined ? 0 : Math.max(0, digits - 2)) : v.toFixed(digits === undefined ? 1 : Math.max(1, digits - 1));
-}
-const unitLabel = p => unit === "ns" ? DATA.plots[p].timeUnit : DATA.plots[p].rateUnit;
-const otherUnitLabel = p => unit === "ns" ? DATA.plots[p].rateUnit : DATA.plots[p].timeUnit;
-const fmtOther = (ns, p) => unit === "ns" ? rate(ns, p) : ns.toFixed(3) + " " + DATA.plots[p].timeUnit;
-
-let animation = null;
-let chosen = "gbps";
-function flipUnit() { setUnit(chosen === "ns" ? "gbps" : "ns"); }
-function setUnit(u) {
-  chosen = u;
-  const target = u === "ns" ? 0 : 1;
-  if (animation) cancelAnimationFrame(animation);
-  document.getElementById("unit-knob").setAttribute("cy", u === "ns" ? 27 : 7);
-  document.getElementById("unit-switch").querySelectorAll(".unit-label")
-    .forEach(l => l.setAttribute("class", "unit-label" + (l.getAttribute("data-unit") === u ? " unit-on" : "")));
-
-  const start = blend, startTime = performance.now(), DURATION = 700;
-  const ease = x => x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
-  /* Prepare each incoming axis so it can fade in while the old one fades out. */
-  const outgoing = [], incoming = [];
-  DATA.plots.forEach((_, p) => {
-    const out = document.getElementById("y-axis-" + p);
-    out.setAttribute("id", "y-axis-old-" + p);
-    const inc = document.createElementNS(NS, "g");
-    inc.setAttribute("id", "y-axis-" + p);
-    inc.setAttribute("opacity", "0");
-    out.parentNode.insertBefore(inc, out.nextSibling);
-    outgoing.push(out); incoming.push(inc);
-  });
-
-  const step = now => {
-    const raw = Math.min(1, (now - startTime) / DURATION);
-    const e = ease(raw);
-    blend = start + (target - start) * e;
-    /* Text follows the unit once the plot is past halfway. */
-    unit = blend >= 0.5 ? "gbps" : "ns";
-    DATA.plots.forEach((plot, p) => {
-      const title = unit === "ns" ? plot.timeLong + " (log scale) · lower is better" : plot.rateLong + " (log scale) · higher is better";
-      document.getElementById("y-title-" + p).textContent = title;
-      betterArrow(p, title, unit !== "ns");
-      outgoing[p].setAttribute("opacity", (1 - e).toFixed(3));
-      incoming[p].setAttribute("opacity", e.toFixed(3));
-    });
-    relayout();
-    if (hovered) showHover(hovered[0], hovered[1], hovered[2]);
-    if (raw < 1) {
-      animation = requestAnimationFrame(step);
-    } else {
-      outgoing.forEach(out => out.parentNode.removeChild(out));
-      animation = null;
-    }
-  };
-  animation = requestAnimationFrame(step);
-}
-const NS = "http://www.w3.org/2000/svg";
-
-function niceBelow(v) {
-  const mag = Math.pow(10, Math.floor(Math.log10(v)));
-  const n = v / mag;
-  return (n >= 5 ? 5 : n >= 2 ? 2 : 1) * mag;
-}
-function niceAbove(v) {
-  const mag = Math.pow(10, Math.floor(Math.log10(v)));
-  const n = v / mag;
-  return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * mag;
-}
-/* Below 1, two significant digits, trailing zeros dropped (0.15, 0.2, 0.05); format_gbps_tick in Rust writes the same. */
-function fmtTick(v) {
-  if (v >= 10) return v.toFixed(0);
-  if (v >= 1) return v.toFixed(1);
-  return v.toFixed(Math.ceil(-Math.log10(v)) + 1).replace(/0+$/, "").replace(/\.$/, "");
-}
-
-function ticks(lo, hi) {
-  const out = [];
-  const eLo = Math.floor(Math.log10(lo)) - 1, eHi = Math.ceil(Math.log10(hi)) + 1;
-  for (let e = eLo; e <= eHi; e++) {
-    for (const m of [1, 1.5, 2, 3, 5, 7]) {
-      const v = m * Math.pow(10, e);
-      if (v >= lo * 0.999999 && v <= hi * 1.000001) out.push(v);
-    }
-  }
-  return out;
-}
-
-/* Current y mapping per plot, kept by relayout() so the hover panel places itself. */
-const currentMapY = DATA.plots.map(() => null);
-
-function relayout() {
-  DATA.plots.forEach((_, p) => relayoutPlot(p));
-  layoutProv();
-}
-
-
-function relayoutPlot(p) {
-  const plot = DATA.plots[p];
-  const visible = plot.series.map((s, i) => i).filter(i => on[i] && plot.series[i]);
-  const X = xsFor(p);
-  currentX[p] = X;
-  const w = win[p];
-  /* The data's extent over a window's points. */
-  const rangeOf = wnd => {
-    let lo = Infinity, hi = 0;
-    for (const i of visible) {
-      const s = plot.series[i];
-      for (let k = wnd.k0; k <= wnd.k1; k++) {
-        lo = Math.min(lo, s.med[k]);
-        hi = Math.max(hi, s.med[k]);
-      }
-    }
-    return visible.length === 0 ? [0.1, 1] : [lo, hi];
-  };
-  /*
-   * Axis bounds at both ends of the unit blend, then interpolated in log
-   * space alongside the data, so the axis and the points move together;
-   * the same between the zoom's start and end windows.
-   */
-  const boundsAt = (b, lo, hi) => {
-    const a = valAt(lo, b, plot.scale), c = valAt(hi, b, plot.scale);
-    const dLo = Math.min(a, c), dHi = Math.max(a, c);
-    return [Math.log(niceBelow(dLo * 0.92)), Math.log(niceAbove(dHi * 1.08))];
-  };
-  const startRange = rangeOf(winFrom[p]), endRange = rangeOf(w);
-  const zoomed = b => {
-    const [a0, a1] = boundsAt(b, ...startRange), [c0, c1] = boundsAt(b, ...endRange);
-    return [(1 - zoomE) * a0 + zoomE * c0, (1 - zoomE) * a1 + zoomE * c1];
-  };
-  const [n0, n1] = zoomed(0), [g0, g1] = zoomed(1);
-  const lMin = (1 - blend) * n0 + blend * g0, lMax = (1 - blend) * n1 + blend * g1;
-  /* mapY takes ns per unit, as stored; the unit transform happens inside. */
-  const mapY = ns => plot.bottom - (Math.log(val(ns, p)) - lMin) / (lMax - lMin) * (plot.bottom - plot.top);
-  currentMapY[p] = mapY;
-  /*
-   * Y axis for the settled unit. Each tick is a value in that unit; its
-   * stored equivalent is placed with the blended mapY, so mid-animation
-   * the ticks ride the same mirroring motion as the data, while the
-   * outgoing axis (still in the old unit, in its own group) fades out and
-   * this one fades in.
-   */
-  const axis = document.getElementById("y-axis-" + p);
-  while (axis.firstChild) axis.removeChild(axis.firstChild);
-  const [tMin, tMax] = unit === "ns" ? [n0, n1] : [g0, g1];
-  const tickToNs = v => unit === "ns" ? v : plot.scale / v;
-  for (const v of ticks(Math.exp(tMin), Math.exp(tMax))) {
-    const y = mapY(tickToNs(v));
-    const line = document.createElementNS(NS, "line");
-    line.setAttribute("x1", DATA.plotLeft); line.setAttribute("x2", DATA.plotRight);
-    line.setAttribute("y1", y.toFixed(2)); line.setAttribute("y2", y.toFixed(2));
-    line.setAttribute("class", "grid");
-    axis.appendChild(line);
-    line.setAttribute("data-ns", tickToNs(v));
-    const t = document.createElementNS(NS, "text");
-    t.setAttribute("x", (DATA.plotLeft - 10).toFixed(1)); t.setAttribute("y", (y + 3.5).toFixed(2));
-    t.setAttribute("class", "tick-label"); t.setAttribute("text-anchor", "end");
-    t.setAttribute("data-ns", tickToNs(v));
-    t.textContent = fmtTick(v);
-    axis.appendChild(t);
-  }
-  /* The outgoing axis, if one is fading, rides the same motion. */
-  const old = document.getElementById("y-axis-old-" + p);
-  if (old) {
-    old.querySelectorAll("line").forEach(l => { const y = mapY(+l.getAttribute("data-ns")); l.setAttribute("y1", y.toFixed(2)); l.setAttribute("y2", y.toFixed(2)); });
-    old.querySelectorAll("text").forEach(t => { t.setAttribute("y", (mapY(+t.getAttribute("data-ns")) + 3.5).toFixed(2)); });
-  }
-
-  /* Each series: its line through the means, dots, value labels. */
-  plot.series.forEach((s, i) => {
-    if (!s) return;
-    const g = document.getElementById("series-" + p + "-" + i);
-    const dots = document.getElementById("dots-" + p + "-" + i);
-    g.setAttribute("data-on", on[i] ? "true" : "false");
-    dots.setAttribute("data-on", on[i] ? "true" : "false");
-    if (!on[i]) return;
-    const pt = (k, v) => X[k].toFixed(2) + " " + mapY(v).toFixed(2);
-    g.querySelectorAll(".median").forEach(el => {
-      const k = +el.getAttribute("data-k");
-      el.setAttribute("d", `M ${pt(k, s.med[k])} L ${pt(k + 1, s.med[k + 1])}`);
-    });
-    dots.querySelectorAll(".dot").forEach(dot => {
-      const k = +dot.getAttribute("data-size");
-      dot.setAttribute("transform", `translate(${X[k].toFixed(2)} ${mapY(s.med[k]).toFixed(2)})`);
-    });
-  });
-
-  /*
-   * Value labels: above the dot unless that collides within the column,
-   * at the columns valueColumns picks in the window.
-   */
-  const columns = valueColumns(X, w.k0, w.k1);
-  for (let k = 0; k < plot.x.length; k++) {
-    const shown = columns[k];
-    const order = visible.slice().sort((a, b) => mapY(plot.series[a].med[k]) - mapY(plot.series[b].med[k]));
-    const taken = [], dotYs = order.map(i => mapY(plot.series[i].med[k]));
-    const clear = y => y >= plot.top + 10 && y <= plot.bottom - 3
-      && taken.every(t => Math.abs(t - y) >= DATA.labelHeight) && dotYs.every(d => y <= d - 6 || y >= d + 14);
-    for (const i of order) {
-      const dotY = mapY(plot.series[i].med[k]);
-      const y = [DATA.labelAbove, DATA.labelBelow, DATA.labelBelow + DATA.labelHeight].map(o => dotY + o).find(clear);
-      if (y !== undefined) taken.push(y);
-      document.getElementById("series-" + p + "-" + i).querySelectorAll(".value-label").forEach(t => {
-        if (+t.getAttribute("data-size") === k) {
-          t.setAttribute("y", (y === undefined ? 0 : y).toFixed(2));
-          t.setAttribute("x", (k === w.k0 ? X[k] + 9 : X[k]).toFixed(2));
-          t.setAttribute("text-anchor", k === w.k0 ? "start" : "middle");
-          t.setAttribute("display", shown && y !== undefined ? "inline" : "none");
-          t.textContent = fmt(plot.series[i].med[k], p, 2);
-        }
-      });
-    }
-  }
-  /*
-   * Right-edge labels, every participating contender in its slot. Each
-   * anchors level with its line's last point on the current axis; a hidden
-   * contender's anchor is clamped to the plot edge, so its grey label
-   * points toward where its data lies. Then push overlapping labels apart
-   * and keep the stack inside the plot.
-   */
-  /* The window's last point; mid-zoom the anchor moves between the two windows' last points. */
-  const last = w.k1, lastFrom = winFrom[p].k1;
-  const clamp = y => Math.min(plot.bottom - 8, Math.max(plot.top + 8, y));
-  const slots = plot.series
-    .map((s, i) => s ? [i, clamp((1 - zoomE) * mapY(s.med[lastFrom]) + zoomE * mapY(s.med[last]))] : null)
-    .filter(slot => slot)
-    .sort((a, b) => a[1] - b[1]);
-  for (let k = 1; k < slots.length; k++) {
-    slots[k][1] = Math.max(slots[k][1], slots[k - 1][1] + DATA.labelGap);
-  }
-  const overrun = Math.max(0, slots[slots.length - 1][1] + 20 - plot.bottom);
-  let previous = -Infinity;
-  for (const [i, y0] of slots) {
-    /* Never above the plot's top: from there the names space out again downward. */
-    const y = Math.max(y0 - overrun, plot.top + DATA.labelTopRoom, previous + DATA.labelGap);
-    previous = y;
-    const lab = document.getElementById("series-" + p + "-" + i).querySelector(".series-label");
-    lab.setAttribute("transform", `translate(0 ${y.toFixed(2)})`);
-    const detail = lab.querySelector(".series-detail");
-    const s = plot.series[i];
-    detail.textContent = `${fmt(s.med[last], p, 2)} ${unitLabel(p)} · ${fmtOther(s.med[last], p)} at ${plot.sizes[last]}`;
-  }
-
-  /*
-   * The x axis: each column's guide and label follow its point, fading
-   * over 12 px past the plot's edges. A label that would run into its
-   * shown left neighbour drops to a second row with a tick to its column,
-   * the static render's rule.
-   */
-  const labelY = row => plot.bottom + 24 + 13 * row;
-  const opacities = X.map(x => Math.max(0, Math.min(1, (Math.min(x - DATA.plotLeft, DATA.plotRight - x) + 12) / 12)));
-  const rows = placeSizeLabels(X, plot.sizes, plot.bytes, opacities);
-  for (let k = 0; k < X.length; k++) {
-    const x = X[k], opacity = opacities[k], row = rows[k];
-    const [grid, tick, label] = xAxis[p][k];
-    grid.setAttribute("x1", x.toFixed(2)); grid.setAttribute("x2", x.toFixed(2));
-    grid.setAttribute("opacity", opacity.toFixed(3));
-    label.setAttribute("x", x.toFixed(2)); label.setAttribute("y", labelY(Math.max(row, 0)).toFixed(1));
-    label.setAttribute("opacity", (row >= 0 ? opacity : 0).toFixed(3));
-    tick.setAttribute("x1", x.toFixed(2)); tick.setAttribute("x2", x.toFixed(2));
-    tick.setAttribute("opacity", opacity.toFixed(3));
-    tick.setAttribute("display", row === 1 ? "inline" : "none");
-  }
-}
-
-/*
- * X-axis label rows, the static render's place_size_labels: powers of two
- * first, then the sizes between, each left to right; a label takes the
- * first row if it overlaps no label there and covers no second-row tick,
- * else the second if it overlaps none there and its tick crosses no
- * first-row label, else it hides (-1). Columns outside the plot hide.
- */
-function placeSizeLabels(X, sizes, bytes, opacities) {
-  const half = k => (sizes[k].length * 7.2 + 12) / 2;
-  const rows = X.map(() => -1);
-  const isPow2 = b => Number.isInteger(Math.log2(b));
-  for (const pass of [true, false]) {
-    for (let k = 0; k < X.length; k++) {
-      if (isPow2(bytes[k]) !== pass || opacities[k] <= 0) continue;
-      const overlaps = row => rows.some((r, j) => r === row && Math.abs(X[j] - X[k]) < half(j) + half(k));
-      const coversTick = rows.some((r, j) => r === 1 && Math.abs(X[j] - X[k]) < half(k));
-      const tickCrosses = rows.some((r, j) => r === 0 && Math.abs(X[j] - X[k]) < half(j));
-      rows[k] = !overlaps(0) && !coversTick ? 0 : !overlaps(1) && !tickCrosses ? 1 : -1;
-    }
-  }
-  return rows;
-}
-
-/*
- * Columns that carry value labels, the static render's value_label_columns
- * over the window k0..k1: its ends, and walking left from its last, each
- * column far enough from the one labelled before and from the first, with
- * room on both sides.
- */
-function valueColumns(X, k0, k1) {
-  const labeled = X.map((_, k) => k === k0 || k === k1);
-  let previous = X[k1];
-  for (let k = k1 - 1; k > k0; k--) {
-    if (previous - X[k] >= DATA.valueSpacing && X[k] - X[k0] >= DATA.valueSpacing
-        && X[k] - X[k - 1] >= DATA.valueRoom && X[k + 1] - X[k] >= DATA.valueRoom) {
-      labeled[k] = true;
-      previous = X[k];
-    }
-  }
-  return labeled;
-}
-
-/* Each plot's x-axis elements by column: [guide, tick, label]. */
-const xAxis = DATA.plots.map((plot, p) => plot.x.map((_, k) => ["grid-x", "size-tick", "size-label"].map(cls =>
-  document.querySelector(`.${cls}[data-plot="${p}"][data-size="${k}"]`))));
-
-/*
- * The static render labels values at a subset of columns; a zoomed window
- * labels others, so every series gets a (hidden) label at every column.
- */
-DATA.plots.forEach((plot, p) => plot.series.forEach((s, i) => {
-  if (!s) return;
-  const marks = document.getElementById("series-" + p + "-" + i).querySelector(".marks");
-  const have = new Set([...marks.querySelectorAll(".value-label")].map(t => +t.getAttribute("data-size")));
-  const color = DATA.colors[i];
-  plot.x.forEach((_, k) => {
-    if (have.has(k)) return;
-    const t = document.createElementNS(NS, "text");
-    t.setAttribute("class", "value-label"); t.setAttribute("data-size", k);
-    t.setAttribute("fill", color); t.setAttribute("display", "none");
-    marks.appendChild(t);
-  });
-}));
-
-const provOpen = {run: false, machine: false, sources: false, paths: false, hashes: false};
-
-function toggleProv(cat) {
-  provOpen[cat] = !provOpen[cat];
-  layoutProv();
-}
-
-function layoutProv() {
-  /* Headers and details flow in document order: each header stays
-     visible at its slot, details show only when their category is open. */
-  let slot = 0;
-  const y = s => (DATA.provTop + 40 + s * DATA.provLine).toFixed(1);
-  document.querySelectorAll(".prov-head-row, .prov-shared").forEach(el => {
-    if (el.classList.contains("prov-head-row")) {
-      const cat = el.getAttribute("data-cat");
-      el.querySelector("text").textContent =
-        (provOpen[cat] ? "▾ " : "▸ ") + el.getAttribute("data-name") + " — " + el.getAttribute("data-summary");
-      el.querySelector("text").setAttribute("y", y(slot++));
-    } else if (provOpen[el.getAttribute("data-cat")]) {
-      el.style.display = "";
-      el.setAttribute("y", y(slot++));
-    } else {
-      el.style.display = "none";
-    }
-  });
-  /* A contender's lines live in the series group of the first plot it
-     takes part in; they follow the section
-     below, so the group's own shift comes off. */
-  DATA.names.forEach((_, i) => {
-    const p = DATA.plots.findIndex((_, q) => document.querySelector(`#series-${q}-${i} .series-prov`));
-    document.querySelectorAll(`#series-${p}-${i} .series-prov`).forEach(t => {
-      const shown = on[i] && provOpen.hashes;
-      t.style.display = shown ? "" : "none";
-      if (shown) t.setAttribute("y", (DATA.provTop + 40 + slot++ * DATA.provLine + belowShift - plotShift[p]).toFixed(1));
-    });
-  });
-  /* The page never gets shorter than it loaded: mobile WebKit zooms a
-     page whose content shrinks until it fills the screen's height, which
-     left a phone zoomed past the plots' left edge with no way back out
-     (Zooko, September 26, 2026). Hidden plots leave room below; opening
-     "About this run" may still lengthen the page. */
-  const svgEl = document.querySelector("svg");
-  layoutProv.floor ??= +svgEl.getAttribute("height");
-  const h = Math.max(DATA.provTop + 40 + slot * DATA.provLine + 8 + belowShift, layoutProv.floor);
-  svgEl.setAttribute("height", h.toFixed(0));
-  svgEl.setAttribute("viewBox", `0 0 ${DATA.svgWidth} ${h.toFixed(0)}`);
-  document.getElementById("page").setAttribute("height", h.toFixed(0));
-}
-
-function highlightSeries(i, active) {
-  DATA.plots.forEach((plot, p) => {
-    for (let j = 0; j < DATA.names.length; j++) {
-      if (!plot.series[j]) continue;
-      const series = document.getElementById("series-" + p + "-" + j);
-      const dots = document.getElementById("dots-" + p + "-" + j);
-      /* A hidden contender under the pointer dims nothing: it has no marks to single out. */
-      const dim = active && on[i] && j !== i && on[j];
-      series.setAttribute("data-dim", dim ? "true" : "false");
-      series.setAttribute("data-hl", active && j === i ? "true" : "false");
-      if (dots) dots.setAttribute("data-dim", dim ? "true" : "false");
-    }
-  });
-}
-
-function toggleSeries(i) {
-  on[i] = !on[i];
-  relayout();
-  if (labelUnderMouse !== null) highlightSeries(labelUnderMouse, true);
-  if (hovered) showHover(hovered[0], hovered[1], hovered[2]);
-}
-
-/* The dot the panel describes ([plot, series, point]), so a toggle can rebuild the panel in place. */
-let hovered = null;
-/* The dot a tap pinned the panel to; a mouse leaving a dot then leaves the panel up. */
-let pinned = null;
-
-function rate(ns, p) {
-  const t = DATA.plots[p].scale / ns;
-  return (t >= 10 ? t.toFixed(0) : t.toFixed(1)) + " " + DATA.plots[p].rateUnit;
-}
-
-function markGlyph(mark, color) {
-  const stroke = ["stroke", "#fdfdfc"], sw = ["stroke-width", "1.5"];
-  let el;
-  if (mark === "diamond") { el = document.createElementNS(NS, "path"); el.setAttribute("d", "M 0 -6.25 L 6.25 0 L 0 6.25 L -6.25 0 Z"); }
-  else if (mark === "square") { el = document.createElementNS(NS, "rect"); el.setAttribute("x", -4.5); el.setAttribute("y", -4.5); el.setAttribute("width", 9); el.setAttribute("height", 9); }
-  else if (mark === "triangle") { el = document.createElementNS(NS, "path"); el.setAttribute("d", "M 0 -6.5 L 6.5 3.25 L -6.5 3.25 Z"); }
-  else if (mark === "downward triangle") { el = document.createElementNS(NS, "path"); el.setAttribute("d", "M 0 6.5 L 6.5 -3.25 L -6.5 -3.25 Z"); }
-  else { el = document.createElementNS(NS, "circle"); el.setAttribute("r", 5); }
-  el.setAttribute("fill", color); el.setAttribute(...stroke); el.setAttribute(...sw);
-  return el;
-}
-
-
-function textEl(x, y, cls, content, extra) {
-  const t = document.createElementNS(NS, "text");
-  t.setAttribute("x", x); t.setAttribute("y", y); t.setAttribute("class", cls);
-  if (extra) for (const k in extra) t.setAttribute(k, extra[k]);
-  t.textContent = content;
-  return t;
-}
-
-/*
- * Hovering a dot: the hovered contender's mean and range at that point,
- * then every visible contender of that plot ranked fastest first, each
- * with its speed relative to the hovered one. Hidden contenders stay out
- * of the ranking.
- */
-function showHover(p, focus, k) {
-  hovered = [p, focus, k];
-  document.getElementById("hover").setAttribute("transform", `translate(0 ${plotShift[p]})`);
-  highlightSeries(focus, true);
-  const plot = DATA.plots[p];
-  const mapY = currentMapY[p];
-  if (!on[focus] || !mapY || !plot.series[focus]) { document.getElementById("hover").style.display = "none"; return; }
-  const body = document.getElementById("hover-body");
-  while (body.firstChild) body.removeChild(body.firstChild);
-
-  const f = plot.series[focus];
-  const name = i => DATA.names[i];
-  const rows = plot.series.map((s, i) => s ? [i, s.med[k]] : null).filter(r => r && on[r[0]]).sort((a, b) => a[1] - b[1]);
-
-  const PAD = 10, LINE = 16;
-  /*
-   * Text widths, estimated from character counts at each class's font
-   * size (a browser measures text only once it is displayed): wide enough
-   * for the system sans fonts the style names.
-   */
-  const widthOf = (text, cls) => text.length * ({ "hover-head": 7.2, "hover-row": 6.4, "hover-ratio": 6.8, "hover-sub": 5.8, "hover-note": 5.0 }[cls] || 6.4);
-  let wide = 350;
-  const note = (el, extra) => { wide = Math.max(wide, (+el.getAttribute("x") || 0) + widthOf(el.textContent, el.getAttribute("class").split(" ")[0]) + (extra || 0) + PAD); return el; };
-  let y = PAD + 12;
-  body.appendChild(note(textEl(PAD, y, "hover-head", `${name(focus)} at ${plot.sizes[k]}`)));
-  y += 14;
-  /* In the rate unit the fastest sample (min time) is the top of the range. */
-  const asc = (a, b) => unit === "ns" ? [a, b] : [b, a];
-  const [rLo, rHi] = asc(f.min[k], f.max[k]);
-  body.appendChild(note(textEl(PAD, y, "hover-sub", `mean ${fmt(f.med[k], p)} ${unitLabel(p)} (${fmtOther(f.med[k], p)})`)));
-  y += 13;
-  body.appendChild(note(textEl(PAD, y, "hover-sub", `fastest and slowest of ${f.n[k]} timings: ${fmt(rLo, p)}–${fmt(rHi, p)} ${unitLabel(p)}`)));
-
-  /* Code path at this point, by name; the Code paths section at the bottom says what it is. */
-  let ri = 0;
-  f.kernels.forEach((r, j) => { if (k >= r.from) ri = j; });
-  const kernel = f.kernels[ri];
-  y += 14;
-  const pathRow = textEl(PAD + 14, y, "hover-sub", "method: " + kernel.name);
-  const shape = markGlyph(kernel.mark, DATA.colors[focus]);
-  shape.setAttribute("transform", `translate(${PAD + 5} ${y - 3.5}) scale(0.8)`);
-  body.appendChild(shape);
-  body.appendChild(note(pathRow));
-  y += 10;
-
-  if (rows.length > 1) {
-    /* Each row's cells, then columns as wide as their widest entry. */
-    const other = v => fmtOther(v, p).replace(" " + otherUnitLabel(p), "");
-    const table = rows.map(([i, med]) => {
-      const s = plot.series[i];
-      let rel, color;
-      if (i === focus) { rel = "—"; color = "#9a9a9a"; }
-      else {
-        /* The focus's mean over this row's: the row's time ratio. */
-        const r = f.med[k] / s.med[k];
-        if (r > 0.95 && r < 1.05) { rel = "about the same"; color = "#777777"; }
-        else if (r >= 1.05) { rel = "\u25b2 " + r.toFixed(2) + "\u00d7 faster"; color = "#15803d"; }
-        else { rel = "\u25bc " + (1 / r).toFixed(2) + "\u00d7 slower"; color = "#b91c1c"; }
-      }
-      return { i, s, name: name(i), value: fmt(s.med[k], p), other: other(med), rel, color };
-    });
-    const GAP = 14;
-    const colW = (key, cls, head) => Math.max(widthOf(head, "hover-sub"), ...table.map(r => widthOf(r[key], cls)));
-    const nameX = PAD + 15;
-    const valueEnd = nameX + colW("name", "hover-row", "contender") + GAP + colW("value", "hover-row", unitLabel(p));
-    const otherEnd = valueEnd + GAP + colW("other", "hover-row", otherUnitLabel(p));
-    const relW = colW("rel", "hover-ratio", `relative to ${name(focus)}`);
-    wide = Math.max(wide, otherEnd + GAP + relW + PAD);
-    y += LINE;
-    body.appendChild(textEl(PAD, y, "hover-sub", "hash"));
-    body.appendChild(textEl(valueEnd, y, "hover-sub", unitLabel(p), { "text-anchor": "end" }));
-    body.appendChild(textEl(otherEnd, y, "hover-sub", otherUnitLabel(p), { "text-anchor": "end" }));
-    const relHead = textEl(0, y, "hover-sub", `relative to ${name(focus)}`, { "text-anchor": "end" });
-    body.appendChild(relHead);
-    y += 4;
-    const relCells = [relHead];
-    for (const r of table) {
-      y += LINE;
-      /* Swatch: this contender's mark at this point, in its own colour. */
-      let rj = 0;
-      r.s.kernels.forEach((kr, j) => { if (k >= kr.from) rj = j; });
-      const sw = markGlyph(r.s.kernels[rj].mark, DATA.colors[r.i]);
-      sw.setAttribute("class", "hover-swatch");
-      sw.setAttribute("style", `fill: ${DATA.colors[r.i]}`);
-      sw.setAttribute("transform", `translate(${PAD + 5} ${y - 4}) scale(0.85)`);
-      body.appendChild(sw);
-      const cls = "hover-row" + (r.i === focus ? " hover-row-focus" : "");
-      body.appendChild(textEl(nameX, y, cls, r.name));
-      body.appendChild(textEl(valueEnd, y, cls, r.value, { "text-anchor": "end" }));
-      body.appendChild(textEl(otherEnd, y, cls, r.other, { "text-anchor": "end" }));
-      const rel = textEl(0, y, "hover-ratio", r.rel, { "text-anchor": "end", fill: r.color });
-      body.appendChild(rel);
-      relCells.push(rel);
-    }
-    y += 12;
-    body.appendChild(note(textEl(PAD, y, "hover-note", `each row's speed compared with ${name(focus)}; means, ranked fastest first`)));
-    y += 4;
-    /* The comparison column ends at the panel's right edge, known once every line is measured. */
-    relCells.forEach(el => el.setAttribute("x", wide - PAD));
-  }
-  const H = y + PAD - 6, W = Math.min(wide, 640);
-
-  /* Place beside the column, flipping left near the right edge. */
-  const x = currentX[p][k];
-  if (x < DATA.plotLeft || x > DATA.plotRight) { document.getElementById("hover").style.display = "none"; return; }
-  const dotY = mapY(f.med[k]);
-  let bx = x + 14;
-  if (bx + W > DATA.plotRight + 10) bx = x - 14 - W;
-  let by = Math.min(Math.max(dotY - H / 2, plot.top - 30), plot.bottom + 30 - H);
-
-  const box = document.getElementById("hover-box");
-  box.setAttribute("x", bx); box.setAttribute("y", by);
-  box.setAttribute("width", W); box.setAttribute("height", H);
-  body.setAttribute("transform", `translate(${bx} ${by})`);
-  const guide = document.getElementById("hover-guide");
-  guide.setAttribute("x1", x); guide.setAttribute("x2", x);
-  guide.setAttribute("y1", plot.top); guide.setAttribute("y2", plot.bottom);
-  document.getElementById("hover").style.display = "";
-}
-
-function hideHover() {
-  hovered = null;
-  highlightSeries(0, false);
-  document.getElementById("hover").style.display = "none";
-}
-
-/*
- * Two inputs, one panel. A mouse hovers: entering a dot shows the panel,
- * leaving hides it, unless a click pinned it. A finger taps: pointerenter
- * fires too, without a matching leave, so touch is handled by tap alone.
- * Tapping a dot pins the panel to it; tapping it again, or the background,
- * clears it. Name highlighting follows the mouse only, since a finger
- * has no way to leave.
- */
-function hoverDot(event, p, i, k) { if (event.pointerType === "mouse") showHover(p, i, k); }
-function leaveDot(event) { if (event.pointerType === "mouse" && !pinned) hideHover(); }
-function tapDot(event, p, i, k) {
-  event.stopPropagation();
-  if (pinned && pinned[0] === p && pinned[1] === i && pinned[2] === k) { pinned = null; hideHover(); return; }
-  pinned = [p, i, k];
-  showHover(p, i, k);
-}
-function tapAway() { pinned = null; hideHover(); }
-/* The name under the mouse, so a click that shows or hides it redraws the dimming. */
-let labelUnderMouse = null;
-function hoverLabel(event, i, active) {
-  if (event.pointerType !== "mouse") return;
-  labelUnderMouse = active ? i : null;
-  highlightSeries(i, active);
-}
-
-window.toggleSeries = toggleSeries;
-window.toggleProv = toggleProv;
-window.hoverDot = hoverDot;
-window.leaveDot = leaveDot;
-window.tapDot = tapDot;
-window.tapAway = tapAway;
-window.hoverLabel = hoverLabel;
-window.setUnit = setUnit;
-window.flipUnit = flipUnit;
-window.zoomAll = zoomAll;
-window.toggleHowto = toggleHowto;
-window.toggleChip = toggleChip;
-window.gripDown = gripDown;
-window.gripMove = gripMove;
-window.gripUp = gripUp;
-updateZoomControls();
-relayout();
-/* The better arrows, measured against the titles as drawn, once now and again when the fonts arrive. */
-const measureArrows = () => DATA.plots.forEach((_, p) => { const t = document.getElementById("y-title-" + p); betterArrow(p, t.textContent, !t.textContent.endsWith("lower is better")); });
-measureArrows();
-if (document.fonts && document.fonts.ready) document.fonts.ready.then(measureArrows);
-
-"##;
-
-/// "source URL · branch B · commit C" for a git-dependency provenance line.
-fn short_git_source(description: &str) -> String {
-    let mut fields = description.split("; ");
-    let _name = fields.next();
-    let rest: Vec<&str> = fields.collect();
-    rest.iter()
-        .map(|f| if let Some(c) = f.strip_prefix("commit ") { format!("commit {}", &c[..12.min(c.len())]) } else { f.to_string() })
-        .collect::<Vec<_>>()
-        .join(" · ")
-}
-
-fn package_name_and_version(source_info: &str) -> &str {
-    source_info
-        .split(';')
-        .next()
-        .expect("package source information must not be empty")
-}
-
-fn nice_log_bound_below(value: f64) -> f64 {
-    assert!(value.is_finite() && value > 0.0);
-
-    let magnitude = 10.0_f64.powf(value.log10().floor());
-    let normalized = value / magnitude;
-
-    let nice = if normalized >= 5.0 {
-        5.0
-    } else if normalized >= 2.0 {
-        2.0
-    } else {
-        1.0
-    };
-
-    nice * magnitude
-}
-
-fn nice_log_bound_above(value: f64) -> f64 {
-    assert!(value.is_finite() && value > 0.0);
-
-    let magnitude = 10.0_f64.powf(value.log10().floor());
-    let normalized = value / magnitude;
-
-    let nice = if normalized <= 1.0 {
-        1.0
-    } else if normalized <= 2.0 {
-        2.0
-    } else if normalized <= 5.0 {
-        5.0
-    } else {
-        10.0
-    };
-
-    nice * magnitude
-}
-
-fn log_ticks(axis_min: f64, axis_max: f64) -> Vec<f64> {
-    let lowest_exponent = axis_min.log10().floor() as i32 - 1;
-    let highest_exponent = axis_max.log10().ceil() as i32 + 1;
-
-    let mut ticks = Vec::new();
-
-    for exponent in lowest_exponent..=highest_exponent {
-        for mantissa in [1.0, 1.5, 2.0, 3.0, 5.0, 7.0] {
-            let value = mantissa * 10.0_f64.powi(exponent);
-
-            /*
-             * Tolerate one part in a million of floating-point error at
-             * the axis bounds themselves.
-             */
-            if value >= axis_min * 0.999_999
-                && value <= axis_max * 1.000_001
-            {
-                ticks.push(value);
-            }
-        }
-    }
-
-    assert!(
-        ticks.len() >= 2,
-        "a log axis must have at least two ticks"
-    );
-
-    ticks
-}
-
-fn format_gbps_tick(value: f64) -> String {
-    assert!(
-        value > 0.0,
-        "log-axis ticks must be positive"
-    );
-
-    /*
-     * Below 1, two significant digits with trailing zeros dropped, so the
-     * ticks 0.15 and 0.2 (or 0.015 and 0.02) read apart; the script's
-     * fmtTick writes the same.
-     */
-    if value >= 10.0 {
-        format!("{value:.0}")
-    } else if value >= 1.0 {
-        format!("{value:.1}")
-    } else {
-        let decimals = (-value.log10()).ceil() as usize + 1;
-        let text = format!("{value:.decimals$}");
-        text.trim_end_matches('0').trim_end_matches('.').to_owned()
-    }
-}
-
-/// A measured value as a bare rate number, as the graph's value labels
-/// show it in the default unit: whole numbers at 10 and above, one
-/// decimal from 1, and two significant digits below 1 (0.21, 0.012), as
-/// the axis ticks read; the script's fmt writes the same.
-fn format_rate_value(time: PerUnit, use_case: UseCase) -> String {
-    let scale = use_case.rate_scale();
-    let tenths = time.tenths_of(scale);
-    if tenths >= 100 {
-        return format!("{}", (tenths + 5) / 10);
-    }
-    if time.scaled_of(scale, 100) >= 100 {
-        return format!("{}.{}", tenths / 10, tenths % 10);
-    }
-    /* Below 1: the fewest decimals (two to nine) that give two significant digits. */
-    let mut decimals = 2;
-    while decimals < 9 && time.scaled_of(scale, 10u64.pow(decimals)) < 10 {
-        decimals += 1;
-    }
-    let scaled = time.scaled_of(scale, 10u64.pow(decimals));
-    format!("0.{scaled:0width$}", width = decimals as usize)
-}
 
 fn xml_escape(input: &str) -> String {
     let mut escaped = String::with_capacity(input.len());
@@ -7439,6 +4527,7 @@ fn xml_escape(input: &str) -> String {
 mod harness_tests;
 mod b3sum;
 mod chart;
+mod map;
 
 #[cfg(test)]
 mod correctness_tests {
@@ -7467,7 +4556,7 @@ mod correctness_tests {
     /// hand (and the ratio against exact integer division).
     #[test]
     fn fixed_point_rounds_once_and_late() {
-        let t = |ns, units| Measured::new(ns, units).per_unit();
+        let t = |ns, units| Fixed(clocks::summary::mean([(ns, units)]));
         assert_eq!(t(3, 1), Fixed(3 << 64));
         assert_eq!(t(1, 3), Fixed(((1u128 << 64) + 1) / 3)); // 2^64 / 3 rounds up
         assert_eq!(t(2, 3), Fixed(((2u128 << 64) + 1) / 3));
@@ -7509,7 +4598,6 @@ mod correctness_tests {
         assert_eq!(Fixed::ONE.cmp_permille(1000), std::cmp::Ordering::Equal);
         assert!(t(1049, 1000).cmp_permille(1050).is_lt() && t(1051, 1000).cmp_permille(1050).is_gt());
         assert_eq!(t(1, 3).permille(), 333);
-        assert_eq!(t(6, 1).tenths_of(1), 2); // 1 / 6 GB/s: 0.1667, two tenths
     }
 
     fn point(label: &str, use_case: UseCase) -> usize {
@@ -7606,22 +4694,6 @@ mod correctness_tests {
             frozen_contract(),
             "the benchmark's contract with the fork changed: change FROZEN.md with it, with Zooko's decision and its reason"
         );
-    }
-
-    /// Axis ticks below 1 keep two significant digits, so neighbouring
-    /// ticks read apart; zoom labels name sizes the way the script does.
-    #[test]
-    fn tick_and_size_labels() {
-        let ticks: Vec<String> = [70.0, 10.0, 7.0, 1.5, 1.0, 0.7, 0.2, 0.15, 0.1, 0.05, 0.015].iter().map(|&v| format_gbps_tick(v)).collect();
-        assert_eq!(ticks, ["70", "10", "7.0", "1.5", "1.0", "0.7", "0.2", "0.15", "0.1", "0.05", "0.015"]);
-        let sizes: Vec<String> = [64, 192, 1024, 1025, 1536, 2304, 3072, 1 << 20, 3 << 20, 16 << 20].iter().map(|&b| format_bytes(b)).collect();
-        assert_eq!(sizes, ["64 B", "192 B", "1 KiB", "1025 B", "1536 B", "2304 B", "3 KiB", "1 MiB", "3 MiB", "16 MiB"]);
-        /* Value labels: ns per byte (ns, bytes) to GB/s, two significant digits below 1. */
-        let values: Vec<String> = [(1, 10), (10, 100), (1, 1), (476, 100), (80, 1), (2155, 100), (1000, 1)]
-            .iter()
-            .map(|&(ns, bytes)| format_rate_value(Measured::new(ns, bytes).per_unit(), UseCase::OneMessage))
-            .collect();
-        assert_eq!(values, ["10", "10", "1.0", "0.21", "0.013", "0.046", "0.0010"]);
     }
 
     #[test]
@@ -7721,7 +4793,7 @@ mod correctness_tests {
         assert!(guide.contains("\\u003c/script>\\u003cb>"));
         assert_eq!(guide.matches("</script>").count(), 1, "only the template closes the outer script");
         assert!(!guide.contains("@DATA@") && !guide.contains("@EXAMPLES@"));
-        assert!(guide.contains("\"lat\":["), "each series carries per-call latency");
+        assert!(guide.contains("\"map\":\"solo|"), "each plot names its chart on the map");
     }
 
     #[test]
