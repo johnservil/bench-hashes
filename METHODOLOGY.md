@@ -546,7 +546,9 @@ lines beside each run's time.
 
 **Inputs.** Single files of 4 KiB, 64 KiB, 1 MiB, 16 MiB, 256 MiB, and
 1 GiB; a tree of 1000 files of 16 KiB passed together, as `b3sum $(find
-src -type f)` passes them; and a mixed tree of 1000 files, 74 MiB in all,
+src -type f)` passes them, and the same files with a b3sum process each,
+one after another, as `for F in $(find src -type f); do b3sum $F; done`
+runs them (its time the processes' sum); and a mixed tree of 1000 files, 74 MiB in all,
 as a source checkout holds them (300 of 1 KiB, 300 of 4 KiB, 200 of
 16 KiB, 120 of 64 KiB, 60 of 256 KiB, 15 of 1 MiB, 4 of 4 MiB, one of
 16 MiB, their sizes interleaved), hashed in one run as `find . -type f

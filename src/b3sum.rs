@@ -27,6 +27,9 @@ struct Input {
     label: String,
     files: Vec<PathBuf>,
     bytes: u64,
+    /// One b3sum process per file, one after another, as `for F in ...; do
+    /// b3sum $F; done` runs them; else one process for all the files.
+    each: bool,
 }
 
 /// The inputs: single files from a page to a gigabyte (b3sum maps files of
@@ -42,11 +45,14 @@ fn inputs(dir: &Path, quick: bool) -> Vec<Input> {
         .map(|&len| {
             let name = format!("file-{len}");
             ensure_file(dir, &name, len);
-            Input { label: size_label(len), files: vec![dir.join(name)], bytes: len }
+            Input { label: size_label(len), files: vec![dir.join(name)], bytes: len, each: false }
         })
         .collect();
     let uniform: &[(u64, u64)] = if quick { &[(100, 16 * KIB)] } else { &[(1000, 16 * KIB)] };
-    inputs.push(tree(dir, &format!("tree-{}x{}", uniform[0].0, uniform[0].1), uniform, format!("{} x {}", uniform[0].0, size_label(uniform[0].1))));
+    let uniform_tree = tree(dir, &format!("tree-{}x{}", uniform[0].0, uniform[0].1), uniform, format!("{} x {}", uniform[0].0, size_label(uniform[0].1)));
+    let each = Input { label: format!("{} x {}, a process each", uniform[0].0, size_label(uniform[0].1)), files: uniform_tree.files.clone(), bytes: uniform_tree.bytes, each: true };
+    inputs.push(uniform_tree);
+    inputs.push(each);
     let mixed: &[(u64, u64)] = if quick { MIXED_QUICK } else { MIXED };
     let count: u64 = mixed.iter().map(|&(n, _)| n).sum();
     let bytes: u64 = mixed.iter().map(|&(n, len)| n * len).sum();
@@ -75,7 +81,7 @@ fn tree(dir: &Path, name: &str, classes: &[(u64, u64)], label: String) -> Input 
         ensure_file(dir, &file, len);
         files.push(dir.join(file));
     }
-    Input { label, files, bytes: lengths.iter().sum() }
+    Input { label, files, bytes: lengths.iter().sum(), each: false }
 }
 
 fn gcd(a: u64, b: u64) -> u64 {
@@ -346,16 +352,34 @@ pub fn command(args: &[String]) {
     let mut machine = machine_metadata();
 
     let mut buffer = vec![0u8; MIB as usize];
-    let run_once = |c: &Contender, input: &Input| -> clocks::child::Run {
+    let run_files = |c: &Contender, input: &Input, files: &[PathBuf]| -> clocks::child::Run {
         let mut command = Command::new(&c.program);
-        command.args(&c.args).args(&input.files).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+        command.args(&c.args).args(files).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
         let run = clocks::child::run(&mut command);
         if !run.success {
             // Show what it said, then stop: a failing contender measures nothing.
-            let _ = Command::new(&c.program).args(&c.args).args(&input.files).stdout(Stdio::null()).status();
+            let _ = Command::new(&c.program).args(&c.args).args(files).stdout(Stdio::null()).status();
             panic!("contender {} failed on {}", c.name, input.label);
         }
         run
+    };
+    let run_once = |c: &Contender, input: &Input| -> clocks::child::Run {
+        if !input.each {
+            return run_files(c, input, &input.files);
+        }
+        // A process per file: the runs' sums (their peak memory, the largest).
+        let runs: Vec<_> = input.files.iter().map(|f| run_files(c, input, std::slice::from_ref(f))).collect();
+        let sum = |f: fn(&clocks::child::Run) -> Option<u64>| runs.iter().map(f).sum::<Option<u64>>();
+        clocks::child::Run {
+            started_ns: runs[0].started_ns,
+            wall_ns: runs.iter().map(|r| r.wall_ns).sum(),
+            success: true,
+            cpu_ns: sum(|r| r.cpu_ns),
+            max_rss_bytes: runs.iter().map(|r| r.max_rss_bytes).max().flatten(),
+            storage_read_bytes: sum(|r| r.storage_read_bytes),
+            major_faults: sum(|r| r.major_faults),
+            counts: runs.iter().map(|r| r.counts).reduce(|a, b| a.zip(b).map(|(a, b)| a.plus(b))).flatten(),
+        }
     };
     // Every contender once on every input, untimed, so the executables and
     // the files start in the page cache.

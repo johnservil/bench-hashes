@@ -26,6 +26,10 @@ documents that explain the benchmark (README, METHODOLOGY, CONTRIBUTING,
 the notes) may still change, to say it better.
 
 **Changes since 0.13.0** (Zooko, October 3, 2026), for the next release:
+- `bench-hashes b3sum` adds the tree of 1000 files of 16 KiB hashed with a
+  b3sum process each, one after another, as a shell loop runs them: what
+  a process's start-up (the self-test, the pool) costs beside its hashing
+  (docs/api-design.md, "The measurements that settle them", 1).
 - **Many messages at once replaces a message in pieces.** A server
   receiving many messages from its connections at once, each in pieces,
   interleaved, on a fixed schedule (`INTERLEAVED`): 256 messages open,
