@@ -1,0 +1,15 @@
+  10025 .libra/libra.db
+  10021 .libra/object-index-repair-tmp/.tmp*
+  10008 .libraignore
+  10005 .gitignore
+  10000 files/FILE
+   5030 .libra
+   5024 .libra/libra.db-journal
+   5020 .libra/objects/XX/.tmp*
+   5010 .libra/objects/pack
+    922 /var/tmp/libra-bench-tmp/libra-benchmark.vYMkqs/prof-add
+     46 .libra/object-index-repair-locks/object-index-repair-generation.lock
+     21 .libra/objects/OBJ
+      9 .libra/worktree_id
+      7 .libra/index
+      6 .libra/object-index-repair-locks/d9cc.lock

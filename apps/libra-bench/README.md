@@ -43,3 +43,15 @@ same Mac, `perf` and `/usr/bin/time` show where the time goes: `add .` on
 `fsck` over about 3,000 objects 989,764 (about 330 per object), with the
 kernel's thread wake-ups 14% and 34% of their samples; BLAKE3 was 2% of
 `add`'s.
+
+### Where `libra add .` spends its time (Linux VM, `strace`, 5,000 files; `results/vm/`)
+
+Per file: two opens of the SQLite database (a fresh connection for each
+object's index update), one transaction (the rollback journal opened 5,024
+times) with four `fsync`s (20,098 in all), two opens each of `.gitignore` and
+`.libraignore`, two of the file itself, one of `objects/pack`, two repair-marker
+temporaries written and renamed, 354 failing `readlinkat` calls, about 190
+`stat` calls, and two new threads. The consumer that updates the object index
+(`run_index_update_consumer`) opens a connection and commits per message, while
+`update_object_index_batch` (a multi-row upsert, used by marker replay) would take
+a command's updates in one transaction.
