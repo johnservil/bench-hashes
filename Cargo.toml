@@ -16,6 +16,12 @@ version = "1"
 default-features = false
 features = ["std", "rayon"]
 
+# iroh-blobs' outboards (pre-order, 16 KiB blocks), on crates.io BLAKE3:
+# the BLAKE3 contender's call for a message's outboard.
+[dependencies.bao-tree]
+version = "=0.16.1"
+default-features = false
+
 # Machine metadata does not need sysinfo's multithread feature.
 [dependencies.sysinfo]
 version = "0.30"
