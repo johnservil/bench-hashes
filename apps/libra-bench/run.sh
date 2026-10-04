@@ -6,6 +6,9 @@
 #   L2  L1 with BLAKE3 object IDs hashed in place: no "<type> <size>\\0"
 #       header, a key-derivation context per object type instead
 #       (gi-noheader.patch, libra-noheader.patch).
+#   L3  L2 with `add` replaying its object-index markers in batches at its end
+#       instead of one queued update (a connection, a transaction, its syncs)
+#       per object (libra-batch-index.patch).
 # The runner gains --object-format and an add_all scenario (libra-runner.patch).
 #   sh apps/libra-bench/run.sh FORK WORK OUT [RUNS]
 # FORK: a checkout of github.com/johnservil/BLAKE3; WORK: a directory for the
@@ -48,19 +51,19 @@ build L0
 build L1 "$work/gi-servil"
 git -C "$work/libra" apply "$here/libra-noheader.patch"
 build L2 "$work/gi-noheader"
+git -C "$work/libra" apply "$here/libra-batch-index.patch"
+build L3 "$work/gi-noheader"
+git -C "$work/libra" apply -R "$here/libra-batch-index.patch"
 git -C "$work/libra" apply -R "$here/libra-noheader.patch"
 [ "${LIBRA_BENCH_BUILD_ONLY:-}" = 1 ] && { echo "libra-bench: built $work/L0/libra, L1, L2"; exit 0; }
-scenarios="--scenario status_clean --scenario status_dirty --scenario log_history --scenario fsck_history --scenario add_all"
+scenarios="--scenario status_dirty --scenario fsck_history --scenario add_all"
 bench() { # NAME FORMAT PASS
     (cd "$work/libra" && benchmark/run.sh --binary "$work/$1/libra" $scenarios --object-format "$2" --runs $runs --warmup 1 --output "$out/$1-$2-$3.json")
 }
-# SHA-1 once, as Libra's default; then BLAKE3 in the order L0 L1 L2 L2 L1 L0,
-# so drift over the run falls on every build alike.
-bench L0 sha1 1
-bench L0 blake3 1
-bench L1 blake3 1
-bench L2 blake3 1
-bench L2 blake3 2
-bench L1 blake3 2
-bench L0 blake3 2
+# BLAKE3 in the order L0 L2 L3 L3 L2 L0 (L1, the fork's kernels alone,
+# measured level with L0 in job 1202), so drift falls on every build alike.
+for pass in 1 2; do
+    case $pass in 1) order="L0 L2 L3" ;; 2) order="L3 L2 L0" ;; esac
+    for build in $order; do bench $build blake3 $pass; done
+done
 echo "libra-bench: results in $out"
