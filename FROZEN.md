@@ -26,6 +26,14 @@ documents that explain the benchmark (README, METHODOLOGY, CONTRIBUTING,
 the notes) may still change, to say it better.
 
 **Changes since 0.13.0** (Zooko, October 3, 2026), for the next release:
+- **Every cell charges the program's write and the use of each hash**
+  (docs/api-design.md, decisions 1 and 5): after a gap, the write of the
+  input is part of the sample, as it is in every nonstop cell; and every
+  cell uses each hash the same way, storing it in the program's slot for
+  its message (an array of 1024 slots, kept), wherever the design delivers
+  it. A design that overlaps writing with hashing, or that adds latency or
+  handovers before a hash reaches the program, shows it. Cells after a gap
+  read slower than in 0.13.0 by their write (a copy of the input).
 - **Messages with their outboards, for verified streaming** (Zooko,
   October 4, 2026): messages of 1 MiB and 64 MiB one after another, each
   written into a kept buffer, then hashed with its outboard: the tree's
@@ -135,9 +143,9 @@ their users seldom make):
   sample's first: Zooko, September 30, 2026), since a gap leaves some of
   what ran before it in the caches, and the benchmark's own schedule
   would otherwise decide what that was (bench-hashes NOTES, "Shared
-  after a gap"). The producer writes the input after the gap, before the
-  call; its write is timed separately and excluded from the hashing
-  sample (Zooko, September 28, evening).
+  after a gap"). The program writes the input after the gap, before the
+  call, and the write is part of the sample (Zooko, October 3, 2026,
+  replacing September 28's exclusion).
 - **Continuous load, buffers owned**: the queue, one message or batch
   after another, with about 1 MiB or 1024 buffers in flight, whichever
   is fewer. Messages up to 64 KiB arrive in one buffer, longer messages

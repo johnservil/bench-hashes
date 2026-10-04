@@ -636,9 +636,9 @@ impl UseCase {
     /// the tables' names.
     fn pattern(self) -> &'static str {
         if self.idle() {
-            "the program hashes, sleeps 1 ms, and hashes again, as a server handles a request, waits, and handles the next; the second call is timed"
+            "the program hashes, sleeps 1 ms, and hashes again, as a server handles a request, waits, and handles the next; the second call, with the write of its input, is timed"
         } else if self.after_gap() {
-            "the program hashes, runs other code and reads 128 MiB of memory (at least 1 ms), and hashes again, as a program hashes between its other tasks; the second call is timed"
+            "the program hashes, runs other code and reads 128 MiB of memory (at least 1 ms), and hashes again, as a program hashes between its other tasks; the second call, with the write of its input, is timed"
         } else {
             "the program hashes one input after another, as fast as it can, alone and with a second program doing the same at once"
         }
@@ -2031,7 +2031,26 @@ fn make_input_seeded(size: usize, seed: u64) -> Vec<u8> {
 }
 
 fn run_batch(algorithm: Algorithm, input: &[u8], point: Point, iterations: usize) {
-    hash_batch(algorithm, input, point, iterations, |digest| { black_box(digest); });
+    hash_batch(algorithm, input, point, iterations, use_digest);
+}
+
+/*
+ * The use of each hash, the same in every cell (FROZEN.md, Zooko, October
+ * 3, 2026): the program stores it in its slot for the message, in a kept
+ * array of DIGEST_SLOTS slots, wherever the design delivers it.
+ */
+const DIGEST_SLOTS: usize = 1024;
+
+thread_local! {
+    static DIGESTS: std::cell::RefCell<(Vec<[u8; 32]>, usize)> = std::cell::RefCell::new((vec![[0; 32]; DIGEST_SLOTS], 0));
+}
+
+fn use_digest(digest: &[u8]) {
+    DIGESTS.with_borrow_mut(|(slots, next)| {
+        let slot = &mut slots[*next % DIGEST_SLOTS];
+        slot[..digest.len().min(32)].copy_from_slice(&digest[..digest.len().min(32)]);
+        *next += 1;
+    });
 }
 
 /*
@@ -2092,7 +2111,10 @@ fn take_prepared_sample(input: &[u8], iterations: usize, idle: bool, mut call: i
             produced.as_mut_slice(),
             |produced| produced.copy_from_slice(black_box(input)),
             |produced| call(black_box(produced)));
-        DuoCopy { elapsed_ns: measured.calls.wall_ns, counts: measured.calls.counts, preparation: Some(measured.preparation), started_ns }
+        // The write and the call, both the program's work (FROZEN.md, Zooko,
+        // October 3, 2026); the trace keeps the write's own share.
+        let counts = measured.calls.counts.zip(measured.preparation.counts).map(|(call, write)| call.plus(write));
+        DuoCopy { elapsed_ns: measured.calls.wall_ns + measured.preparation.wall_ns, counts, preparation: Some(measured.preparation), started_ns }
     })
 }
 
@@ -2110,19 +2132,19 @@ fn observe_call(call: &'static str) {
 /// once, before the gap; every result remains observable to the optimizer.
 fn one_message_call(algorithm: Algorithm) -> fn(&[u8]) {
     match algorithm {
-        Algorithm::Blake3 => |input| { black_box(blake3::hash(input)); },
+        Algorithm::Blake3 => |input| use_digest(blake3::hash(input).as_bytes()),
         Algorithm::Blake3ServilSt => |input| {
             #[cfg(test)]
             observe_call("hash");
-            black_box(blake3_servil::hash(input));
+            use_digest(blake3_servil::hash(input).as_bytes());
         },
-        Algorithm::Blake3ServilMt => |input| { black_box(blake3_servil::hash_multithreaded(input)); },
-        Algorithm::Sha256 => |input| { black_box(Sha256::digest(input)); },
-        Algorithm::Sha256Ring => |input| { black_box(ring::digest::digest(&ring::digest::SHA256, input)); },
-        Algorithm::Sha256CommonCrypto => |input| { black_box(common_crypto::sha256(input)); },
-        Algorithm::Sha3_256 => |input| { black_box(sha3::Sha3_256::digest(input)); },
-        Algorithm::Sha1Dc => |input| { black_box(sha1_checked::Sha1::try_digest(input)); },
-        Algorithm::Blake3Rayon => |input| { black_box(blake3::Hasher::new().update_rayon(input).finalize()); },
+        Algorithm::Blake3ServilMt => |input| use_digest(blake3_servil::hash_multithreaded(input).as_bytes()),
+        Algorithm::Sha256 => |input| use_digest(&Sha256::digest(input)),
+        Algorithm::Sha256Ring => |input| use_digest(ring::digest::digest(&ring::digest::SHA256, input).as_ref()),
+        Algorithm::Sha256CommonCrypto => |input| use_digest(&common_crypto::sha256(input)),
+        Algorithm::Sha3_256 => |input| use_digest(&sha3::Sha3_256::digest(input)),
+        Algorithm::Sha1Dc => |input| use_digest(sha1_checked::Sha1::try_digest(input).hash()),
+        Algorithm::Blake3Rayon => |input| use_digest(blake3::Hasher::new().update_rayon(input).finalize().as_bytes()),
     }
 }
 
@@ -5318,10 +5340,10 @@ fn generate_svg(
         "The strip at the top narrows every plot to part of its inputs: drag an end of its band, or use the arrows at its ends.".to_owned(),
     ];
     if plots.iter().any(|plot| plot.use_case.after_gap() && !plot.use_case.idle()) {
-        howto.push("After other work: the program calls the hash, runs a fixed other program (about 1 MiB of code) and reads 128 MiB of data, at least 1 ms in all, writes the input, and calls again; the second call is timed. So a program works that hashes between its other tasks.".to_owned());
+        howto.push("After other work: the program calls the hash, runs a fixed other program (about 1 MiB of code) and reads 128 MiB of data, at least 1 ms in all, writes the input, and calls again; the write and the second call are timed. So a program works that hashes between its other tasks.".to_owned());
     }
     if plots.iter().any(|plot| plot.use_case.idle()) {
-        howto.push("After idling: the program calls the hash, sleeps 1 ms, writes the input, and calls again; the second call is timed. So a server works that waits for its next request.".to_owned());
+        howto.push("After idling: the program calls the hash, sleeps 1 ms, writes the input, and calls again; the write and the second call are timed. So a server works that waits for its next request.".to_owned());
     }
     if plots.iter().any(|plot| !plot.use_case.after_gap()) {
         howto.push("Nonstop, each input (each piece, for many messages at once) is first read into memory, a memory copy, the cheapest read, inside the time.".to_owned());

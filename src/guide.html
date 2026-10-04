@@ -302,8 +302,8 @@ function methodText(plot) {
   if (use.startsWith("Lent"))
     return `Measured ${where}, ${sc}. The program read each input into a buffer (a memory copy) and called the function, one input after another with nothing between; the read is inside the time. Every contender ran the same loop.`;
   if (use.startsWith("Idle"))
-    return `Measured ${where}, ${sc}. The program called the function, slept a millisecond, as a server waits for its next request, wrote the next input, and called again; the function found helper threads asleep and a core that may have slowed or powered down. The second call alone is timed.`;
-  return `Measured ${where}, ${sc}. The program called the function, then ran a fixed other program (about 1 MiB of code) and read 128 MiB of data, at least a millisecond in all, wrote the next input, and called again: the function found its code and data out of the caches and its helper threads asleep, as in a program that hashes between its other tasks. The second call alone is timed.`;
+    return `Measured ${where}, ${sc}. The program called the function, slept a millisecond, as a server waits for its next request, wrote the next input, and called again; the function found helper threads asleep and a core that may have slowed or powered down. The write of the next input and the second call are timed.`;
+  return `Measured ${where}, ${sc}. The program called the function, then ran a fixed other program (about 1 MiB of code) and read 128 MiB of data, at least a millisecond in all, wrote the next input, and called again: the function found its code and data out of the caches and its helper threads asleep, as in a program that hashes between its other tasks. The write of the next input and the second call are timed.`;
 }
 
 el("back").onclick = () => { const last = history.pop(); delete answers[last.key]; show(); };

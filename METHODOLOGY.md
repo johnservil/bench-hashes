@@ -201,13 +201,15 @@ untimed call, gap and all. A gap leaves some of what ran before it in
 the caches, so without that call the benchmark's own schedule (another
 contender, another size) would decide what the first found. Either way
 the thread then writes the input, as a read or producer would, before the hash call.
-That write is measured separately and excluded from the hash sample.
+That write is part of the sample, as it is in every nonstop use case: a
+program's data has to arrive before it is hashed. Every use case uses each
+hash the same way, storing it in the program's slot for its message.
 The working buffer's pages are written when it is made, so operating
 systems that share untouched zero pages give it real physical memory.
 Each thread keeps one work buffer and one producer buffer across samples.
 `--trace-clocks` records the producer's wall time and counts on rows
 labelled `preparation solo`; the
-hashing rows describe the call alone. In both, a pool's workers have
+hashing rows describe the write and the call together. In both, a pool's workers have
 fallen asleep. After other work the caller's core is busy and its caches
 hold the other program's code and data. After idling the core may have
 slowed or powered down, or the thread may wake on another core: an
