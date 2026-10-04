@@ -1,0 +1,127 @@
+diff --git a/src/hash.rs b/src/hash.rs
+index 3749e3f..5ddafe3 100644
+--- a/src/hash.rs
++++ b/src/hash.rs
+@@ -430,11 +430,7 @@ impl ObjectHash {
+                 actual: 0,
+                 payload_len: data.len(),
+             })?;
+-        let mut hasher = HashAlgorithm::new_for_kind(kind);
+-        hasher.update(type_bytes);
+-        hasher.update(b" ");
+-        hasher.update(data.len().to_string().as_bytes());
+-        hasher.update(b"\x00");
++        let mut hasher = HashAlgorithm::for_object(kind, type_bytes, data.len());
+         hasher.update(data);
+         Ok(hasher.finalize_object_hash())
+     }
+@@ -448,6 +444,9 @@ impl ObjectHash {
+     /// [`ObjectHash::from_type_and_data_for_kind`], which is fallible and
+     /// streams the header instead of copying the payload.
+     pub fn from_type_and_data(object_type: ObjectType, data: &[u8]) -> ObjectHash {
++        if get_hash_kind() == HashKind::Blake3 {
++            return Self::from_type_and_data_for_kind(HashKind::Blake3, object_type, data).expect("a type with a loose-object header");
++        }
+         let mut d: Vec<u8> = Vec::new();
+         d.extend(object_type.to_data().unwrap());
+         d.push(b' ');
+diff --git a/src/internal/pack/decode.rs b/src/internal/pack/decode.rs
+index f2990f0..8f686a1 100644
+--- a/src/internal/pack/decode.rs
++++ b/src/internal/pack/decode.rs
+@@ -659,11 +659,7 @@ impl Pack {
+                 "{obj_type} has no loose-object header and cannot be hashed as a base object"
+             ))
+         })?;
+-        let mut hasher = HashAlgorithm::new_for_kind(kind);
+-        hasher.update(type_bytes);
+-        hasher.update(b" ");
+-        hasher.update(expected_size.to_string().as_bytes());
+-        hasher.update(b"\0");
++        let mut hasher = HashAlgorithm::for_object(kind, type_bytes, expected_size);
+ 
+         let mut counting_reader = CountingReader::new(pack);
+         let mut deflate = ZlibDecoder::new(&mut counting_reader);
+diff --git a/src/internal/pack/utils.rs b/src/internal/pack/utils.rs
+index e11c8d3..2f29b24 100644
+--- a/src/internal/pack/utils.rs
++++ b/src/internal/pack/utils.rs
+@@ -278,14 +278,8 @@ fn decimal_usize_bytes(mut value: usize, buf: &mut [u8; 20]) -> &[u8] {
+ 
+ /// Stream `"<type> <size>\0<content>"` through `hasher` without allocating and
+ /// finalize it into an [`ObjectHash`] of the hasher's own kind.
+-fn hash_loose_object(mut hasher: HashAlgorithm, type_bytes: &[u8], data: &[u8]) -> ObjectHash {
+-    let mut len_buf = [0; 20];
+-    let len_bytes = decimal_usize_bytes(data.len(), &mut len_buf);
+-    // Header: "<type> <size>\0"
+-    hasher.update(type_bytes);
+-    hasher.update(b" ");
+-    hasher.update(len_bytes);
+-    hasher.update(b"\0");
++fn hash_loose_object(hasher: HashAlgorithm, type_bytes: &[u8], data: &[u8]) -> ObjectHash {
++    let mut hasher = HashAlgorithm::for_object(hasher.kind(), type_bytes, data.len());
+     // Decompressed data(raw content)
+     hasher.update(data);
+     hasher.finalize_object_hash()
+diff --git a/src/internal/zlib/stream/inflate.rs b/src/internal/zlib/stream/inflate.rs
+index fb09ef6..73cdd5a 100644
+--- a/src/internal/zlib/stream/inflate.rs
++++ b/src/internal/zlib/stream/inflate.rs
+@@ -33,11 +33,8 @@ where
+     R: BufRead,
+ {
+     /// Seed `hash` with the loose-object header `<type> <size>\0` and build the reader.
+-    fn with_header(inner: R, mut hash: HashAlgorithm, type_bytes: &[u8], size: usize) -> Self {
+-        hash.update(type_bytes);
+-        hash.update(b" ");
+-        hash.update(size.to_string().as_bytes());
+-        hash.update(b"\0");
++    fn with_header(inner: R, hash: HashAlgorithm, type_bytes: &[u8], size: usize) -> Self {
++        let hash = HashAlgorithm::for_object(hash.kind(), type_bytes, size);
+         ReadBoxed {
+             inner,
+             hash,
+diff --git a/src/utils.rs b/src/utils.rs
+index 1f07615..e8d136b 100644
+--- a/src/utils.rs
++++ b/src/utils.rs
+@@ -111,6 +111,39 @@ impl HashAlgorithm {
+     pub fn new() -> Self {
+         Self::new_for_kind(get_hash_kind())
+     }
++    /// A hasher ready for the content of an object of type `type_bytes` and
++    /// `size` bytes: for SHA-1 and SHA-256, seeded with Git's header
++    /// `<type> <size>\0`; for BLAKE3, in key-derivation mode with a context
++    /// per object type, and nothing fed. BLAKE3 binds the length itself, and
++    /// the context separates the types, so an object's ID is the hash of its
++    /// content in place (benchmark variant: bench-hashes apps/libra-bench).
++    pub fn for_object(kind: HashKind, type_bytes: &[u8], size: usize) -> Self {
++        match kind {
++            HashKind::Blake3 => {
++                use blake3::hazmat::HasherExt;
++                static KEYS: std::sync::OnceLock<Vec<(Vec<u8>, [u8; 32])>> = std::sync::OnceLock::new();
++                let keys = KEYS.get_or_init(|| {
++                    ["blob", "tree", "commit", "tag", "ai"]
++                        .iter()
++                        .map(|t| (t.as_bytes().to_vec(), blake3::hazmat::hash_derive_key_context(&format!("libra-tools git-internal 2026-09-04 {t}"))))
++                        .collect()
++                });
++                let key = match keys.iter().find(|(t, _)| t == type_bytes) {
++                    Some((_, key)) => *key,
++                    None => blake3::hazmat::hash_derive_key_context(&format!("libra-tools git-internal 2026-09-04 {}", String::from_utf8_lossy(type_bytes))),
++                };
++                HashAlgorithm::Blake3(Box::new(blake3::Hasher::new_from_context_key(&key)))
++            }
++            _ => {
++                let mut hasher = Self::new_for_kind(kind);
++                hasher.update(type_bytes);
++                hasher.update(b" ");
++                hasher.update(size.to_string().as_bytes());
++                hasher.update(b"\0");
++                hasher
++            }
++        }
++    }
+     /// The [`HashKind`] this hasher produces.
+     pub fn kind(&self) -> HashKind {
+         match self {

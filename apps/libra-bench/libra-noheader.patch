@@ -1,0 +1,111 @@
+diff --git a/src/command/fsck.rs b/src/command/fsck.rs
+index 2e5c977..e355522 100644
+--- a/src/command/fsck.rs
++++ b/src/command/fsck.rs
+@@ -2321,11 +2321,9 @@ async fn verify_object(
+     // Verify hash integrity: type + ' ' + size + '\0' + content under the
+     // repository kind (sha1 / sha256 / blake3) via `object_format::digest`.
+     let kind = git_internal::hash::get_hash_kind();
+-    let header = format!("{} {}\0", obj_type.to_string().to_lowercase(), size);
+-    let mut payload = Vec::with_capacity(header.len() + data.len());
+-    payload.extend_from_slice(header.as_bytes());
+-    payload.extend_from_slice(&data);
+-    let computed = crate::internal::object_format::digest(kind, &payload);
++    let mut hasher = git_internal::utils::HashAlgorithm::for_object(kind, obj_type.to_string().to_lowercase().as_bytes(), size);
++    hasher.update(&data);
++    let computed = hasher.finalize_object_hash();
+     let computed_bytes = computed.as_ref();
+ 
+     // Compare with stored hash
+diff --git a/src/command/mod.rs b/src/command/mod.rs
+index a20c098..d8e09e6 100644
+--- a/src/command/mod.rs
++++ b/src/command/mod.rs
+@@ -489,11 +489,7 @@ pub(crate) fn stream_file_blob_hash_bounded(
+     // byte past it. Reading cap+1 would overrun the very bound this function
+     // exists to enforce, exactly when the caller is at its limit.
+     let mut reader = io::BufReader::new(file).take(len);
+-    let mut hasher = HashAlgorithm::new_for_kind(git_internal::hash::get_hash_kind());
+-
+-    hasher.update(b"blob ");
+-    hasher.update(len.to_string().as_bytes());
+-    hasher.update(b"\0");
++    let mut hasher = HashAlgorithm::for_object(git_internal::hash::get_hash_kind(), b"blob", len as usize);
+ 
+     let mut buffer = [0_u8; 64 * 1024];
+     let mut total: u64 = 0;
+@@ -523,11 +519,7 @@ fn stream_file_blob_hash(path: impl AsRef<Path>) -> io::Result<ObjectHash> {
+     let file = File::open(path)?;
+     let len = file.metadata()?.len();
+     let mut reader = io::BufReader::new(file);
+-    let mut hasher = HashAlgorithm::new_for_kind(git_internal::hash::get_hash_kind());
+-
+-    hasher.update(b"blob ");
+-    hasher.update(len.to_string().as_bytes());
+-    hasher.update(b"\0");
++    let mut hasher = HashAlgorithm::for_object(git_internal::hash::get_hash_kind(), b"blob", len as usize);
+ 
+     let mut buffer = [0_u8; 64 * 1024];
+     loop {
+diff --git a/src/utils/object.rs b/src/utils/object.rs
+index cd71542..e9a30f4 100644
+--- a/src/utils/object.rs
++++ b/src/utils/object.rs
+@@ -563,7 +563,16 @@ fn decode_and_validate_object_buffer(
+     expected_hash: &ObjectHash,
+     buffer: Vec<u8>,
+ ) -> Result<(String, Vec<u8>), GitError> {
+-    let actual_hash = ObjectHash::new_for_kind(git_internal::hash::get_hash_kind(), &buffer);
++    let actual_hash = match buffer.iter().position(|&b| b == 0) {
++        Some(nul) => {
++            let header = &buffer[..nul];
++            let object_type = header.split(|&b| b == b' ').next().unwrap_or(header);
++            let mut hasher = HashAlgorithm::for_object(git_internal::hash::get_hash_kind(), object_type, buffer.len() - nul - 1);
++            hasher.update(&buffer[nul + 1..]);
++            hasher.finalize_object_hash()
++        }
++        None => ObjectHash::new_for_kind(git_internal::hash::get_hash_kind(), &buffer),
++    };
+     if &actual_hash != expected_hash {
+         return Err(GitError::InvalidObjectInfo(format!(
+             "loose object content hashes to {actual_hash}, expected {expected_hash}"
+@@ -804,9 +813,7 @@ pub(crate) fn validate_git_object_streaming_file(
+         )));
+     }
+ 
+-    let mut hasher = HashAlgorithm::new_for_kind(hash.kind());
+-    hasher.update(&header);
+-    hasher.update(&[0]);
++    let mut hasher = HashAlgorithm::for_object(hash.kind(), object_type.as_bytes(), declared_size as usize);
+     let mut remaining = declared_size;
+     let mut buffer = [0_u8; STREAM_BUFFER_BYTES];
+     while remaining > 0 {
+@@ -979,10 +986,9 @@ pub fn write_git_object(
+ /// Writers that need crash-durable ownership can persist this id before the
+ /// corresponding object becomes visible in the shared object database.
+ pub(crate) fn git_object_hash(object_type: &str, data: &[u8]) -> ObjectHash {
+-    let header = format!("{} {}\0", object_type, data.len());
+-    let mut content = header.into_bytes();
+-    content.extend_from_slice(data);
+-    ObjectHash::new_for_kind(git_internal::hash::get_hash_kind(), &content)
++    let mut hasher = HashAlgorithm::for_object(git_internal::hash::get_hash_kind(), object_type.as_bytes(), data.len());
++    hasher.update(data);
++    hasher.finalize_object_hash()
+ }
+ 
+ /// Write one loose object and report whether this call created its payload.
+diff --git a/src/utils/storage/tiered.rs b/src/utils/storage/tiered.rs
+index 15cb93d..68d55ec 100644
+--- a/src/utils/storage/tiered.rs
++++ b/src/utils/storage/tiered.rs
+@@ -63,8 +63,8 @@ pub(crate) fn verify_fetched_object(
+             ObjectHash::Sha256(Sha256::digest(&framed).into())
+         }
+         HashKind::Blake3 => {
+-            let mut hasher = git_internal::utils::HashAlgorithm::new_for_kind(HashKind::Blake3);
+-            hasher.update(&framed);
++            let mut hasher = git_internal::utils::HashAlgorithm::for_object(HashKind::Blake3, &type_bytes, data.len());
++            hasher.update(data);
+             hasher.finalize_object_hash()
+         }
+     };
