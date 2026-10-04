@@ -1,0 +1,66 @@
+diff --git a/src/command/add.rs b/src/command/add.rs
+index d7f5832..8a27223 100644
+--- a/src/command/add.rs
++++ b/src/command/add.rs
+@@ -2103,7 +2103,10 @@ pub async fn run_add(args: &AddArgs) -> CliResult<AddOutput> {
+     };
+ 
+     // Stage each file (`--renormalize` force-rewrites instead of diffing).
+-    for file in &files {
++    for (position, file) in files.iter().enumerate() {
++        if position % PREHASH_BATCH == 0 {
++            prehash_blobs(&workdir, &files[position..(position + PREHASH_BATCH).min(files.len())]);
++        }
+         let staged = if args.renormalize {
+             renormalize_entry(file, &mut index, &workdir, file_mode)
+         } else {
+@@ -2993,9 +2996,49 @@ fn check_file_status(
+ /// - Reads the exact bytes Git would store for a worktree blob: regular file
+ ///   content, generated LFS pointer content, or symlink target bytes.
+ fn gen_blob_from_file(path: impl AsRef<Path>) -> io::Result<Blob> {
++    if let Some((data, id)) = PREHASHED.lock().unwrap_or_else(|p| p.into_inner()).remove(path.as_ref()) {
++        return Ok(Blob { id, data });
++    }
+     read_worktree_blob_bytes(path).map(Blob::from_content_bytes)
+ }
+ 
++/// libra-bench L4: blobs read and hashed ahead, a batch at a time, by one
++/// `ObjectHash::each_for_kind` call (short files side by side in BLAKE3's SIMD
++/// lanes); `gen_blob_from_file` takes each file's from here.
++static PREHASHED: std::sync::Mutex<std::collections::BTreeMap<PathBuf, (Vec<u8>, git_internal::hash::ObjectHash)>> =
++    std::sync::Mutex::new(std::collections::BTreeMap::new());
++
++/// Files read and hashed ahead at a time.
++const PREHASH_BATCH: usize = 256;
++
++/// Read and hash `files` (worktree-relative) ahead, BLAKE3 repositories only:
++/// regular files, not LFS-tracked; any other path is left to the usual path.
++fn prehash_blobs(workdir: &Path, files: &[PathBuf]) {
++    let kind = git_internal::hash::get_hash_kind();
++    if kind != git_internal::hash::HashKind::Blake3 {
++        return;
++    }
++    let mut read = Vec::with_capacity(files.len());
++    for file in files {
++        let abs = workdir.join(file);
++        let regular = abs.symlink_metadata().map(|m| m.file_type().is_file()).unwrap_or(false);
++        if !regular || crate::utils::lfs::is_lfs_tracked(&abs) {
++            continue;
++        }
++        if let Ok(data) = std::fs::read(&abs) {
++            read.push((abs, data));
++        }
++    }
++    let items: Vec<&[u8]> = read.iter().map(|(_, data)| data.as_slice()).collect();
++    let Ok(ids) = git_internal::hash::ObjectHash::each_for_kind(kind, git_internal::internal::object::types::ObjectType::Blob, &items) else {
++        return;
++    };
++    let mut kept = PREHASHED.lock().unwrap_or_else(|p| p.into_inner());
++    for ((abs, data), id) in read.into_iter().zip(ids) {
++        kept.insert(abs, (data, id));
++    }
++}
++
+ #[cfg(test)]
+ mod test {
+     use super::*;

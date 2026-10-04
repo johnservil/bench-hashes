@@ -9,6 +9,10 @@
 #   L3  L2 with `add` replaying its object-index markers in batches at its end
 #       instead of one queued update (a connection, a transaction, its syncs)
 #       per object (libra-batch-index.patch).
+#   L4  L3 with `add` reading its files 256 at a time and hashing each batch
+#       in one call of the fork's hash_each_with, short files side by side
+#       in the SIMD lanes (gi-each.patch, libra-each.patch). FORK must have
+#       hash_each_with (the fork's probe/hash-each).
 # The runner gains --object-format and an add_all scenario (libra-runner.patch).
 #   sh apps/libra-bench/run.sh FORK WORK OUT [RUNS]
 # FORK: a checkout of github.com/johnservil/BLAKE3; WORK: a directory for the
@@ -36,6 +40,7 @@ for gi in gi-servil gi-noheader; do
     grep -q blake3-servil "$work/$gi/Cargo.toml"
 done
 git -C "$work/gi-noheader" apply "$here/gi-noheader.patch"
+git -C "$work/gi-noheader" apply "$here/gi-each.patch"
 target=$work/target
 build() { # NAME [git-internal dir]
     if [ $# -gt 1 ]; then
@@ -53,6 +58,9 @@ git -C "$work/libra" apply "$here/libra-noheader.patch"
 build L2 "$work/gi-noheader"
 git -C "$work/libra" apply "$here/libra-batch-index.patch"
 build L3 "$work/gi-noheader"
+git -C "$work/libra" apply "$here/libra-each.patch"
+build L4 "$work/gi-noheader"
+git -C "$work/libra" apply -R "$here/libra-each.patch"
 git -C "$work/libra" apply -R "$here/libra-batch-index.patch"
 git -C "$work/libra" apply -R "$here/libra-noheader.patch"
 [ "${LIBRA_BENCH_BUILD_ONLY:-}" = 1 ] && { echo "libra-bench: built $work/L0/libra, L1, L2"; exit 0; }
@@ -60,10 +68,10 @@ scenarios="--scenario status_dirty --scenario fsck_history --scenario add_all"
 bench() { # NAME FORMAT PASS
     (cd "$work/libra" && benchmark/run.sh --binary "$work/$1/libra" $scenarios --object-format "$2" --runs $runs --warmup 1 --output "$out/$1-$2-$3.json")
 }
-# BLAKE3 in the order L0 L2 L3 L3 L2 L0 (L1, the fork's kernels alone,
+# BLAKE3 in the order L0 L2 L3 L4 L4 L3 L2 L0 (L1, the fork's kernels alone,
 # measured level with L0 in job 1202), so drift falls on every build alike.
 for pass in 1 2; do
-    case $pass in 1) order="L0 L2 L3" ;; 2) order="L3 L2 L0" ;; esac
+    case $pass in 1) order="L0 L2 L3 L4" ;; 2) order="L4 L3 L2 L0" ;; esac
     for build in $order; do bench $build blake3 $pass; done
 done
 echo "libra-bench: results in $out"

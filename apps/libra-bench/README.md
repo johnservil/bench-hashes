@@ -55,3 +55,17 @@ temporaries written and renamed, 354 failing `readlinkat` calls, about 190
 (`run_index_update_consumer`) opens a connection and commits per message, while
 `update_object_index_batch` (a multi-row upsert, used by marker replay) would take
 a command's updates in one transaction.
+
+## L3 (Apple M4 Max, mains power, October 4, 2026; `results/AppleM4Max-L3/`, job 1203)
+
+Medians of 5 runs, ms, BLAKE3 fixtures, order L0 L2 L3 L3 L2 L0:
+
+| Build | status_dirty | fsck_history | add_all |
+|---|---|---|---|
+| L0 | 435, 421 | 5,548, 5,589 | 9,709, 9,782 |
+| L2 | 424, 423 | 5,180, 5,203 | 8,317, 8,312 |
+| L3 | 418, 419 | 5,192, 5,216 | 7,378, 7,353 |
+
+The branch johnservil/libra `faster-add` holds L3 as commits, building on
+johnservil/git-internal `in-place-ids`. `gi-each.patch` and `libra-each.patch`
+(L4, `hash_each_with`) are drafts, never built or measured.

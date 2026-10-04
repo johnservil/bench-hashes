@@ -1,0 +1,39 @@
+{
+  "schema_version":1,
+  "revision":"external-binary",
+  "binary_origin":"override",
+  "control_binary_origin":"not-needed",
+  "control_build_elapsed_ms":0,
+  "build_elapsed_ms":0,
+  "runs":5,
+  "warmup_runs":1,
+  "fixture_scale":{"files":5000,"history_commits":1000,"refs":10000},
+  "object_format":"blake3",
+  "platform":"Darwin 25.6.0 arm64",
+  "scenarios":[
+    {
+      "scenario":"status_dirty",
+      "command":"status --short",
+      "samples":5,
+      "elapsed_ms":{"min":414.659,"median":418.851,"mean":418.568,"max":420.910},
+      "max_rss_bytes":{"min":38797312,"median":38912000.000,"mean":39115161.600,"max":39976960}
+    }
+,
+    {
+      "scenario":"fsck_history",
+      "command":"fsck",
+      "samples":5,
+      "elapsed_ms":{"min":5166.746,"median":5215.705,"mean":5223.718,"max":5285.799},
+      "max_rss_bytes":{"min":39878656,"median":40157184.000,"mean":40203059.200,"max":40501248}
+    }
+,
+    {
+      "scenario":"add_all",
+      "command":"add .",
+      "samples":5,
+      "elapsed_ms":{"min":7308.706,"median":7352.993,"mean":7368.642,"max":7427.734},
+      "max_rss_bytes":{"min":51363840,"median":51838976.000,"mean":51743948.800,"max":52068352}
+    }
+
+  ]
+}

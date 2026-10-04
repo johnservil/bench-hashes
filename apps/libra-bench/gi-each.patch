@@ -1,0 +1,37 @@
+diff --git a/src/hash.rs b/src/hash.rs
+index 5ddafe3..0be4161 100644
+--- a/src/hash.rs
++++ b/src/hash.rs
+@@ -435,6 +435,32 @@ impl ObjectHash {
+         Ok(hasher.finalize_object_hash())
+     }
+ 
++    /// The IDs of many objects of one type: for BLAKE3, one call of the servil
++    /// fork's `hash_each_with`, short objects side by side in the SIMD lanes
++    /// (benchmark variant: bench-hashes apps/libra-bench, L4); otherwise one
++    /// [`Self::from_type_and_data_for_kind`] each.
++    pub fn each_for_kind(
++        kind: HashKind,
++        object_type: ObjectType,
++        items: &[&[u8]],
++    ) -> Result<Vec<ObjectHash>, HashError> {
++        if kind == HashKind::Blake3 {
++            let type_bytes = object_type.to_bytes().ok_or(HashError::UnsupportedObjectType {
++                operation: "each_for_kind",
++                kind,
++                object_type,
++                expected: kind.size(),
++                actual: 0,
++                payload_len: 0,
++            })?;
++            let context = format!("libra-tools git-internal 2026-09-04 {}", String::from_utf8_lossy(type_bytes));
++            let mut out = vec![[0u8; 32]; items.len()];
++            blake3::hash_each_with(blake3::Mode::DeriveKey(&context), items, &mut out);
++            return Ok(out.into_iter().map(ObjectHash::Blake3).collect());
++        }
++        items.iter().map(|data| Self::from_type_and_data_for_kind(kind, object_type, data)).collect()
++    }
++
+     /// Create ObjectHash from object type and data using the thread-local `HashKind`.
+     ///
+     /// Legacy entry point; the header assembly below is the pre-refactor code
