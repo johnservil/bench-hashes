@@ -12,43 +12,41 @@ before touching kernels or the pool); this repository's are in `NOTES.md`.
 Every open item, from every block below, is in one list: the fork's
 NOTES "Future work"; the blocks below are history.
 
-## Resume here (October 5, 2026, morning): two new APIs in servil, three new cells, the map
+## Resume here (October 5, 2026, later): 0.14.0 released, the map is the output
 
-**State.** Fork `servil` = 840930e (promoted three times on October 4, perf
-notes on each): no lingering; `hash_each_with` (collections of messages of
-any lengths, short ones side by side in the SIMD lanes);
-`outboard_with`, `outboard_multithreaded_with`, `verify_range_with`
-(verified streaming and range reads, byte for byte bao-tree's pre-order
-outboard with 16 KiB groups). bench-hashes `candidate/no-linger` (CI green
-on 3666452), lock at servil 840930e, holds for 0.14.0 (FROZEN "Changes
-since 0.13.0"): many messages at once (the pieces row gone); a collection
-cell (git and Nix sizes; servil st through `hash_each_with`); an outboard
-cell (bao-tree against `outboard_with` and its multithreaded form); one
-b3sum process per file; every cell charging the write and the use of each
-hash. `tools/map-mockup/make_map.py` draws the map (mock-up 3) from a
-run's graph and b3sum samples; `/workspace/tmp/map-mockup/map3.html` is
-drawn from Mac job 1212 (the first full Mac run of all of it) and Zooko's
-own b3sum run of October 4 (kept in /workspace/tmp/zooko-run-2026-10-04).
+**State.** bench-hashes 0.14.0 released (tag v0.14.0+b3d53bf, main =
+candidate/no-linger): the map (`bench-hashes.map.html`, src/map.rs and
+src/map.html) replaces the graph, the guide's chart, and b3sum's bar chart
+(Zooko, October 5); every call's name links to the fork's docs, published
+at johnservil.github.io/BLAKE3 by the fork's docs workflow; records for the
+Mac (jobs 1213, 1214) and the VM, each map with a b3sum section. Fork
+`servil` = 83069ad: hash_each_with, the outboard functions, no lingering,
+and small batches of one-block messages prefetching their code after a
+pause (batches of 4-8 after other work about twice as fast, Mac jobs
+1216-1219; perf_regress jobs 1221, 1222).
 
-**Mac, job 1212 (mains, quiet).** Collections: servil st 0.226 and 0.218
-ns/B against SHA-256 0.293. Outboards of 64 MiB: servil mt 0.041 ns/B
-against bao-tree's 0.410. Many messages at once: servil 0.504 against
-SHA-256 0.309, still the one cell BLAKE3 loses.
+**Decided (on Zooko's request, api-design.md):** the stream does not
+replace the queue; the queue's long-message gap is its own to close (fork
+NOTES, Future work).
 
-**Waiting for Zooko.** The map (mock-up 3): its layout, its words, and
-whether it replaces the graph, the guide's chart, and b3sum's bar chart
-(all presentation, so his decision and a release). Then release 0.14.0.
+**Waiting for Zooko:** many messages at once flips when each message's
+pieces reach `Hasher::update` in whole 16 KiB from a 16 KiB boundary (Mac
+job 1215: 0.283 ns/B against SHA-256's 0.309, from 0.484): the caller's job
+(docs, and the benchmark's servil contenders gathering, a change to what
+the benchmark asks) or the Hasher's (a 16 KiB staging buffer in every
+Hasher). api-design.md, "Many messages at once".
 
-**Next.**
-1. Many messages at once: the remaining loss (fork NOTES, "16 KiB per
-   update" to measure; or lanes across messages' chunks).
-2. Outboards: a stream verifier keeping checked parents (groups one at a
-   time cost twice building); range proofs for a reader without the
-   outboard.
-3. `hash_each_with`: one-chunk items in lanes; a multithreaded form.
-4. b3sum on native Linux with io_uring (fork NOTES, Future work).
+**Cells BLAKE3 servil still loses on the Mac (job 1213):** single messages
+up to 8 KiB after a gap and up to 1 KiB nonstop (one chunk's sixteen
+dependent compressions against SHA-256's instructions, and cold code
+after other work); batches of 1-6 one-block messages after a gap (closer
+now); 64-byte messages through the queue (the handover).
 
-The next runner job number is 1213.
+**Next.** The queue's long messages (round trips with sleeping workers;
+Little's law at the benchmark's 1 MiB in flight); a stream verifier for
+outboards; hash_each_with for one-chunk items.
+
+The next runner job number is 1223.
 
 ## Resume here (October 2, 2026, evening UTC): one summary, one gate, one tool
 
