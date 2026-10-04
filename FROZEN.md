@@ -26,6 +26,17 @@ documents that explain the benchmark (README, METHODOLOGY, CONTRIBUTING,
 the notes) may still change, to say it better.
 
 **Changes since 0.13.0** (Zooko, October 3, 2026), for the next release:
+- **A collection of items of different lengths, each hashed once**: a
+  program naming every item of a collection by its hash, as git, Bazel,
+  Nix, and the content-addressed stores do, all in memory, one item after
+  another, through each contender's one-message call. Two collections,
+  each 2048 items in the shares of real ones by octave of size
+  (`COLLECTIONS`): git/git's objects (422,404 at c46c1e3) and the files
+  under 1 MiB of 1000 nixos-25.05 store paths (192,213 files); within an
+  octave every item has one length, one and a half times its lower bound.
+  No cell hashed many small items of different lengths, the main work of
+  these programs (docs/api-design.md, "The measurements that settle
+  them", 2).
 - `bench-hashes b3sum` adds the tree of 1000 files of 16 KiB hashed with a
   b3sum process each, one after another, as a shell loop runs them: what
   a process's start-up (the self-test, the pool) costs beside its hashing
@@ -171,9 +182,10 @@ use case ContinuousMessages: 64 B, 256 B, 1 KiB, 4 KiB, 16 KiB, 64 KiB, 256 KiB,
 use case ContinuousBatches: 16, 64, 256, 1024, 4096, 16384, 65536
 use case LentMessages: 64 B, 256 B, 1 KiB, 4 KiB, 16 KiB, 64 KiB, 256 KiB, 1 MiB, 4 MiB, 16 MiB, 64 MiB
 use case Interleaved: 256 open
+use case Collection: git objects, Nix files
 use case LentBatches: 16, 64, 256, 1024, 4096, 16384, 65536
 scenarios: solo, shared
-shared measures: ContinuousMessages, ContinuousBatches, LentMessages, Interleaved, LentBatches
+shared measures: ContinuousMessages, ContinuousBatches, LentMessages, Interleaved, Collection, LentBatches
 blake3-servil-st OneMessage: hash(input), each call after other work
 blake3-servil-st ManyMessages: hash_many(batch, 64, out), the padded batch contract, each call after other work
 blake3-servil-mt OneMessage: hash_multithreaded(input), each call after other work
@@ -182,9 +194,11 @@ blake3-servil-mt ContinuousMessages: Queue::messages(Mode::Hash) for messages of
 blake3-servil-mt ContinuousBatches: Queue::fixed(64, Mode::Hash), one batch after another, each read into a free buffer of the program's, submitted with its digests' space, about 1 MiB or 1024 buffers in flight, whichever is fewer, cycled through the handler and a bounded channel with room for all of them (std::sync::mpsc::sync_channel, allocated when made), the queue and the channel made once and kept
 blake3-servil-st LentMessages: hash(input), one message after another, each read into a kept buffer and lent until the call returns
 blake3-servil-st Interleaved: a Hasher per open message, Hasher::update per piece, then finalize, 256 messages open at once, each piece read into a kept buffer and lent until the update returns
+blake3-servil-st Collection: hash(item) for each item of the collection, one after another, in memory
 blake3-servil-st LentBatches: hash_many(batch, 64, out), the padded batch contract, batches one after another, each read into a kept buffer and lent with kept digests until the call returns
 blake3-servil-mt LentMessages: hash_multithreaded(input), one message after another, each read into a kept buffer and lent until the call returns
 blake3-servil-mt Interleaved: a Hasher per open message, Hasher::update_multithreaded per piece, then finalize, 256 messages open at once, each piece read into a kept buffer and lent until the update returns
+blake3-servil-mt Collection: hash_multithreaded(item) for each item of the collection, one after another, in memory
 blake3-servil-mt LentBatches: hash_many_multithreaded(batch, 64, out), the padded batch contract, batches one after another, each read into a kept buffer and lent with kept digests until the call returns
 blake3-servil-st IdleOneMessage: hash(input), each call after idling
 blake3-servil-st IdleManyMessages: hash_many(batch, 64, out), the padded batch contract, each call after idling
