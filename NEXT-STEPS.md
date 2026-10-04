@@ -23,7 +23,7 @@ Mac (jobs 1213, 1214) and the VM, each map with a b3sum section. Fork
 `servil` = 83069ad: hash_each_with, the outboard functions, no lingering,
 and small batches of one-block messages prefetching their code after a
 pause (batches of 4-8 after other work about twice as fast, Mac jobs
-1216-1219; perf_regress jobs 1221, 1222).
+1216-1219; perf_regress job 1221, no cell slower; 1222 no verdict, busy).
 
 **Decided (on Zooko's request, api-design.md):** the stream does not
 replace the queue; the queue's long-message gap is its own to close (fork
