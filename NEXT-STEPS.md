@@ -50,9 +50,6 @@ johnservil/git-internal `in-place-ids`, fork `probe/hash-each`
 4. The map of small plots for the graph (tmp/map-mockup; Zooko's notes:
    one layout for small and full plots, zoom only, greying by header,
    batch glyph three stacked squares, tooltips and contender toggles back).
-5. VM environment: run `sh /workspace/vm/setup.sh` after every restart; set
-   `TMPDIR=/var/tmp/libra-bench-tmp` for builds (the inherited TMPDIR is the
-   host's macOS path); Libra builds need `-j4` and `/var/tmp` space.
 
 The next runner job number is 1204.
 
