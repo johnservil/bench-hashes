@@ -82,8 +82,9 @@ side moved 3%); a `&dyn` call had cost it 4-7%, now generic.
 **Round 5: one SME2 entry for a turn's groups** (4841926): a chunk kernel
 entry point with a counter for each group (`hash16_chunks_at`, a mode bit
 in the chunk kernel's flags). Many messages at once, Mac (jobs 1276-1279):
-0.257 -> 0.250 ns/B (-3%), VM -1-2%. A judgement call: 3% on a streaming
-API for a short entry point; kept, open to your veto.
+0.257 -> 0.250 ns/B (-3%), VM -1-2%. Kept (Zooko, October 5, 2026,
+after weighing 3% on a streaming API against 37 lines of assembly and a
+mode bit in the chunk kernel).
 
 **Round 6: 16 KiB messages share queue tasks** (the commit after 4841926):
 messages shorter than a task (64 KiB) go several to a task, as batches
