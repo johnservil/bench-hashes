@@ -33,7 +33,25 @@ jobs 1242-1245): a whole message in one update, 64 B +7% (about 4 ns),
 1.5-15 KiB +4-5% (the copy), 1 KiB and 16 KiB+ level; the docs say so and
 point at `hash`. Mac tests pass (job 1250); the gate gave no verdict three
 times (jobs 1251-1253: one half-second window of each run busy with about
-3 CPUs, something on the Mac); promotion waits for a clean gate.
+3 CPUs, something on the Mac); job 1254 passed: promoted, servil 1352c21.
+
+**Round 2: the Verifier checks a piece's nodes together** (b97c15f): the
+groups a piece holds whole hash in one batch. VM probe, Verifier alone over
+64 MiB (building costs 0.174 ns/B): pieces of 64 KiB 0.25 -> 0.237, 256 KiB
+-> 0.214, 1 MiB -> 0.178 (building's cost). What stays at 64 KiB is SME2's
+fixed cost per batch of 3-4 groups; the NEON hybrids instead are slower
+(0.263).
+
+**Round 3: lanes across messages, no new kernel** (96767ed): `update_each`
+holds every stage that fills a whole group and hashes the turn's groups
+together, chunks back to back (the SME unit stays fast), parents level by
+level across all of them. Many messages at once: VM 0.308 -> 0.272 ns/B;
+Mac (jobs 1255-1258) st 0.309 -> 0.286, mt 0.310 -> 0.298, against ring's
+0.318 and SHA-256's 0.367; verify 3-7% faster too. Mac tests pass (job
+1259). The Mac gate gives no verdict since (jobs 1260-1264: one window of
+one run busy, 1.3-3.8 CPUs; a 10 s wait after the builds did not help, so
+it is not the builds; likely macOS's own idle-time work while you are
+out). Promotion waits; I retry between rounds.
 
 ## Resume here (October 5, 2026, later): 0.14.0 released, the map is the output
 
