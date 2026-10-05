@@ -25,6 +25,13 @@ release, so results of different benchmarks are never read as alike. The
 documents that explain the benchmark (README, METHODOLOGY, CONTRIBUTING,
 the notes) may still change, to say it better.
 
+**Changes in 0.15.2** (Zooko, October 6, 2026), the map's words alone;
+the measurements are 0.15.0's:
+- **The first column reads "now and then, after other work"**, as the
+  second reads "now and then, after a pause": both calls come now and
+  then, and the column says what came before (Zooko: "why does one use
+  between and the other after").
+
 **Changes in 0.15.1** (Zooko, October 5, 2026), the regression check
 alone; the benchmark's measurements and the map are 0.15.0's:
 - **A pair with a run that is no evidence runs again**, up to three

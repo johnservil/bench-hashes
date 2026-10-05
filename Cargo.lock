@@ -60,7 +60,7 @@ dependencies = [
 [[package]]
 name = "blake3-servil"
 version = "0.3.0+2e4fa821f9db07b945dbb2b0d02eb76cb19617b5"
-source = "git+https://github.com/johnservil/BLAKE3?branch=servil#bab4b86ceabc04491bb86f05744a7d346d516383"
+source = "git+https://github.com/johnservil/BLAKE3?branch=servil#081ffcd12baa0ff378364e85784bbf62089da1be"
 dependencies = [
  "arrayvec",
  "cc",
@@ -113,7 +113,7 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 [[package]]
 name = "clocks"
 version = "0.1.0"
-source = "git+https://github.com/johnservil/BLAKE3?branch=servil#bab4b86ceabc04491bb86f05744a7d346d516383"
+source = "git+https://github.com/johnservil/BLAKE3?branch=servil#081ffcd12baa0ff378364e85784bbf62089da1be"
 
 [[package]]
 name = "const-oid"

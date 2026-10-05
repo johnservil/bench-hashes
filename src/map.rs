@@ -182,7 +182,7 @@ fn hashing(path: &Path) -> Section {
         rows: vec![("one", "one message"), ("batch", "a batch of short messages"), ("many", "many messages at once, in pieces"),
                    ("coll", "a collection of items"), ("outb", "a message with its outboard, for verified streaming"),
                    ("recv", "a message received, verified as it arrives")],
-        cols: vec![("busy", "now and then, between other work"), ("idle", "now and then, after a pause"),
+        cols: vec![("busy", "now and then, after other work"), ("idle", "now and then, after a pause"),
                    ("lent", "nonstop, waiting for each call"), ("piped", "nonstop, pipelined")],
         layers: vec![("solo", "one program", ""), ("shared", "two programs at once", "measured nonstop")],
         names: algorithms.iter().map(|a| a.name()).chain([BAO_TREE]).map(str::to_owned).collect(),

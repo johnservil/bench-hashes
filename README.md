@@ -61,7 +61,7 @@ what the program hashes: one message, a batch of 64-byte messages (a
 Merkle tree's nodes), many messages at once arriving in pieces (a
 server's uploads), a collection of items of every size (a repository's
 objects, a store's files), a message with its outboard, for verified
-streaming, and a message received in that form, verified as it arrives. Its columns say how the program calls: now and then, *between
+streaming, and a message received in that form, verified as it arrives. Its columns say how the program calls: now and then, *after
 other work* or *after a pause*, and nonstop, *waiting for each call* or
 *pipelined*. Higher lines are faster. Click a chart to open it, with the
 exact values under the pointer; click a row, a column, or a hash's name
