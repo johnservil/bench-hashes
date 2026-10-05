@@ -103,7 +103,8 @@ const INTERLEAVED_COUNT: usize = 1;
 const COLLECTION_COUNT: usize = 2;
 /// A message's outboard, at two lengths (FROZEN.md).
 const OUTBOARD_COUNT: usize = 2;
-const POINT_COUNT: usize = 2 * (INPUT_COUNT + BATCH_COUNT) + 2 * CONTINUOUS_MESSAGE_COUNT + INTERLEAVED_COUNT + COLLECTION_COUNT + OUTBOARD_COUNT + 2 * CONTINUOUS_BATCH_COUNT;
+const VERIFY_COUNT: usize = 2;
+const POINT_COUNT: usize = 2 * (INPUT_COUNT + BATCH_COUNT) + 2 * CONTINUOUS_MESSAGE_COUNT + INTERLEAVED_COUNT + COLLECTION_COUNT + OUTBOARD_COUNT + VERIFY_COUNT + 2 * CONTINUOUS_BATCH_COUNT;
 /// A long message reaches a contender in pieces of this many bytes (a
 /// typical read buffer), the last one shorter.
 const PIECE_LEN: usize = 64 * 1024;
@@ -393,6 +394,8 @@ const POINTS: [Point; POINT_COUNT] = [
     Point::collection(1),
     Point::outboard("1 MiB", 1024 * 1024),
     Point::outboard("64 MiB", 64 * 1024 * 1024),
+    Point::verify("1 MiB", 1024 * 1024),
+    Point::verify("64 MiB", 64 * 1024 * 1024),
     Point::lent_batch("16", 16),
     Point::lent_batch("64", 64),
     Point::lent_batch("256", 256),
@@ -460,13 +463,18 @@ enum UseCase {
     /// hashed with its outboard (the tree's parent nodes above 16 KiB
     /// groups), as a server adds a file for verified streaming.
     Outboard,
+    /// Messages one after another, each received as its encoding (its
+    /// groups and parent nodes, as iroh-blobs sends them) in pieces read
+    /// into a kept buffer, verified as they arrive, each verified group
+    /// written into the message's buffer.
+    Verify,
     LentBatches,
 }
 
 impl UseCase {
-    const ALL: [UseCase; 11] = [UseCase::OneMessage, UseCase::ManyMessages, UseCase::IdleOneMessage,
+    const ALL: [UseCase; 12] = [UseCase::OneMessage, UseCase::ManyMessages, UseCase::IdleOneMessage,
         UseCase::IdleManyMessages, UseCase::ContinuousMessages, UseCase::ContinuousBatches,
-        UseCase::LentMessages, UseCase::Interleaved, UseCase::Collection, UseCase::Outboard, UseCase::LentBatches];
+        UseCase::LentMessages, UseCase::Interleaved, UseCase::Collection, UseCase::Outboard, UseCase::Verify, UseCase::LentBatches];
 
     /// Whether each call comes after a gap (the synchronous use cases:
     /// after other work, or after idling), or one follows another (the
@@ -504,7 +512,7 @@ impl UseCase {
     fn message_len(self) -> usize {
         match self {
             Self::ManyMessages | Self::IdleManyMessages | Self::ContinuousBatches | Self::LentBatches => MESSAGE_LEN,
-            Self::OneMessage | Self::IdleOneMessage | Self::ContinuousMessages | Self::LentMessages | Self::Interleaved | Self::Collection | Self::Outboard => panic!("{self:?} hashes messages of their own lengths"),
+            Self::OneMessage | Self::IdleOneMessage | Self::ContinuousMessages | Self::LentMessages | Self::Interleaved | Self::Collection | Self::Outboard | Self::Verify => panic!("{self:?} hashes messages of their own lengths"),
         }
     }
 
@@ -528,6 +536,7 @@ impl UseCase {
             Self::Interleaved => "Many messages at once, each arriving in pieces, buffers lent",
             Self::Collection => "A collection's items, each hashed once, in memory",
             Self::Outboard => "Messages with their outboards, for verified streaming, buffers lent",
+            Self::Verify => "Messages received in their encodings, verified as they arrive",
             Self::LentBatches => "Batches one after another, buffers lent",
         }
     }
@@ -545,6 +554,7 @@ impl UseCase {
             Self::Interleaved => "many at once, lent buffers",
             Self::Collection => "a collection, in memory",
             Self::Outboard => "outboards, lent buffers",
+            Self::Verify => "verified as received",
             Self::LentBatches => "batches, lent buffers",
         }
     }
@@ -554,7 +564,7 @@ impl UseCase {
         match self {
             Self::OneMessage | Self::IdleOneMessage | Self::ContinuousMessages | Self::LentMessages | Self::Interleaved => "size",
             Self::Collection => "collection",
-            Self::Outboard => "size",
+            Self::Outboard | Self::Verify => "size",
             Self::ManyMessages | Self::IdleManyMessages | Self::ContinuousBatches | Self::LentBatches => "messages",
         }
     }
@@ -567,7 +577,7 @@ impl UseCase {
      */
     fn units(self, point: Point, iterations: usize) -> u64 {
         match self {
-            Self::OneMessage | Self::IdleOneMessage | Self::ContinuousMessages | Self::LentMessages | Self::Interleaved | Self::Collection | Self::Outboard => point.bytes as u64 * iterations as u64,
+            Self::OneMessage | Self::IdleOneMessage | Self::ContinuousMessages | Self::LentMessages | Self::Interleaved | Self::Collection | Self::Outboard | Self::Verify => point.bytes as u64 * iterations as u64,
             Self::ManyMessages | Self::IdleManyMessages | Self::ContinuousBatches | Self::LentBatches => point.messages as u64 * iterations as u64,
         }
     }
@@ -606,6 +616,7 @@ impl UseCase {
             Self::Interleaved => "interleaved ",
             Self::Collection => "collection ",
             Self::Outboard => "outboard ",
+            Self::Verify => "verify ",
             Self::LentBatches => "lent batch ",
         }
     }
@@ -654,6 +665,10 @@ impl Point {
 
     const fn outboard(label: &'static str, bytes: usize) -> Self {
         Self { label, bytes, messages: 1, use_case: UseCase::Outboard }
+    }
+
+    const fn verify(label: &'static str, bytes: usize) -> Self {
+        Self { label, bytes, messages: 1, use_case: UseCase::Verify }
     }
 
     const fn collection(index: usize) -> Self {
@@ -758,6 +773,7 @@ impl Algorithm {
             UseCase::ContinuousMessages => !matches!(self, Self::Blake3ServilSt),
             UseCase::OneMessage | UseCase::IdleOneMessage | UseCase::LentMessages | UseCase::Interleaved | UseCase::Collection => true,
             UseCase::Outboard => matches!(self, Self::Blake3 | Self::Blake3ServilSt | Self::Blake3ServilMt),
+            UseCase::Verify => matches!(self, Self::Blake3 | Self::Blake3ServilSt | Self::Blake3ServilMt),
         }
     }
 
@@ -2071,6 +2087,7 @@ fn hash_batch(
         UseCase::Interleaved => return hash_interleaved(algorithm, input, iterations, consume),
         UseCase::Collection => return hash_collection(algorithm, input, point, iterations, consume),
         UseCase::Outboard => return hash_outboard(algorithm, input, iterations, consume),
+        UseCase::Verify => return hash_verify(algorithm, input, iterations, consume),
         UseCase::ContinuousMessages => return hash_continuous_messages(algorithm, input, iterations, consume),
         UseCase::ContinuousBatches => return hash_continuous_batches(algorithm, input, point, iterations, consume),
         UseCase::LentMessages | UseCase::LentBatches => return hash_lent(algorithm, input, point, iterations, consume),
@@ -2155,6 +2172,89 @@ fn hash_outboard(algorithm: Algorithm, input: &[u8], iterations: usize, mut cons
         }
     }
     keep_buffers(1, input.len(), buffers);
+}
+
+/*
+ * Messages received in their encodings (UseCase::Verify): `iterations`
+ * messages, each `input`'s encoding as iroh-blobs sends a whole blob (its
+ * 16 KiB groups and the parent nodes above them, in pre-order; bao-tree's
+ * encode_ranges, made once per input outside the timed calls, the
+ * sender's work), received in pieces of up to PIECE_LEN read into a kept
+ * buffer, verified as they arrive against the message's hash, each
+ * verified group written into the message's kept buffer; then the hash
+ * to `consume`. BLAKE3 decodes with bao-tree's decode_ranges (its reads
+ * from the received bytes, its writes into the message's buffer), the
+ * servil fork with a Verifier fed each piece. Both copy each received
+ * byte in and each verified byte out once.
+ */
+fn hash_verify(algorithm: Algorithm, input: &[u8], iterations: usize, mut consume: impl FnMut(&[u8])) {
+    let (hash, encoded) = encoding(input);
+    let mut buffers = take_buffers(1, input.len());
+    let mut piece = STREAM_BUFFER.with(|kept| std::mem::take(&mut *kept.borrow_mut()));
+    if piece.len() < PIECE_LEN {
+        piece = written(PIECE_LEN, 1u8);
+    }
+    for _ in 0..iterations {
+        let message = &mut buffers[0];
+        message.resize(input.len(), 0);
+        let received = black_box(&encoded[..]);
+        match algorithm {
+            Algorithm::Blake3 => {
+                // The received bytes, read PIECE_LEN at most at a time through the kept buffer.
+                struct Received<'a> { rest: &'a [u8], piece: &'a mut [u8] }
+                impl std::io::Read for Received<'_> {
+                    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+                        let n = out.len().min(self.rest.len()).min(self.piece.len());
+                        self.piece[..n].copy_from_slice(&self.rest[..n]);
+                        out[..n].copy_from_slice(&self.piece[..n]);
+                        self.rest = &self.rest[n..];
+                        Ok(n)
+                    }
+                }
+                let tree = bao_tree::BaoTree::new(input.len() as u64, bao_tree::BlockSize::from_chunk_log(4));
+                let root = bao_tree::blake3::Hash::from_bytes(hash);
+                let outboard = bao_tree::io::outboard::EmptyOutboard { tree, root };
+                let target: &mut [u8] = &mut message[..];
+                bao_tree::io::sync::decode_ranges(Received { rest: received, piece: &mut piece }, &bao_tree::ChunkRanges::all(), target, outboard)
+                    .unwrap_or_else(|e| panic!("bao-tree refused its own encoding: {e}"));
+            }
+            // A Verifier has no multithreaded form: both servil contenders use it.
+            Algorithm::Blake3ServilSt | Algorithm::Blake3ServilMt => {
+                let mut verifier = blake3_servil::Verifier::new(blake3_servil::Mode::Hash, &blake3_servil::Hash::from_bytes(hash), input.len() as u64);
+                let mut at = 0;
+                for part in received.chunks(PIECE_LEN) {
+                    piece[..part.len()].copy_from_slice(part);
+                    let ok = verifier.update(&piece[..part.len()], |group| {
+                        message[at..at + group.len()].copy_from_slice(group);
+                        at += group.len();
+                    });
+                    black_box(ok);
+                }
+            }
+            other => unreachable!("{} takes no part in verifying", other.key()),
+        }
+        consume(black_box(&hash));
+        black_box(&message[..]);
+    }
+    keep_buffers(1, input.len(), buffers);
+    STREAM_BUFFER.with(|kept| *kept.borrow_mut() = piece);
+}
+
+/// `input`'s hash and whole encoding (bao-tree's pre-order, 16 KiB
+/// groups), made once for each input, for every thread.
+fn encoding(input: &[u8]) -> ([u8; 32], std::sync::Arc<Vec<u8>>) {
+    static MADE: std::sync::Mutex<Vec<((usize, [u8; 8]), [u8; 32], std::sync::Arc<Vec<u8>>)>> = std::sync::Mutex::new(Vec::new());
+    let id = (input.len(), input[..8].try_into().expect("a message of 8 bytes or more"));
+    let mut made = MADE.lock().unwrap();
+    if let Some((_, hash, encoded)) = made.iter().find(|(k, _, _)| *k == id) {
+        return (*hash, encoded.clone());
+    }
+    let outboard = bao_tree::io::outboard::PreOrderMemOutboard::create(input, bao_tree::BlockSize::from_chunk_log(4));
+    let mut encoded = Vec::with_capacity(input.len() + outboard.data.len());
+    bao_tree::io::sync::encode_ranges_validated(input, &outboard, &bao_tree::ChunkRanges::all(), &mut encoded).expect("an encoding");
+    let hash = *outboard.root.as_bytes();
+    made.push((id, hash, std::sync::Arc::new(encoded)));
+    (hash, made.last().unwrap().2.clone())
 }
 
 /*
@@ -2711,7 +2811,7 @@ thread_local! {
  * these.
  */
 #[cfg(test)]
-const SERVIL_CALLS: [(Algorithm, UseCase, &str); 20] = [
+const SERVIL_CALLS: [(Algorithm, UseCase, &str); 22] = [
     (Algorithm::Blake3ServilSt, UseCase::OneMessage, "hash(input), each call after other work"),
     (Algorithm::Blake3ServilSt, UseCase::ManyMessages, "hash_many(batch, 64, out), the padded batch contract, each call after other work"),
     (Algorithm::Blake3ServilMt, UseCase::OneMessage, "hash_multithreaded(input), each call after other work"),
@@ -2722,11 +2822,13 @@ const SERVIL_CALLS: [(Algorithm, UseCase, &str); 20] = [
     (Algorithm::Blake3ServilSt, UseCase::Interleaved, "a Hasher per open message, Hasher::update per piece, then finalize, 256 messages open at once, each piece read into a kept buffer and lent until the update returns"),
     (Algorithm::Blake3ServilSt, UseCase::Collection, "hash_each_with(Mode::Hash, items, out), every item of the collection in one call, in memory"),
     (Algorithm::Blake3ServilSt, UseCase::Outboard, "outboard_with(Mode::Hash, message), messages one after another, each written into a kept buffer and lent until the call returns"),
+    (Algorithm::Blake3ServilSt, UseCase::Verify, "Verifier::new(Mode::Hash, hash, len), then Verifier::update per piece, messages one after another, each received as its encoding (bao-tree's pre-order, 16 KiB groups) in pieces of up to 64 KiB read into a kept buffer, each verified group copied into the message's kept buffer"),
     (Algorithm::Blake3ServilSt, UseCase::LentBatches, "hash_many(batch, 64, out), the padded batch contract, batches one after another, each read into a kept buffer and lent with kept digests until the call returns"),
     (Algorithm::Blake3ServilMt, UseCase::LentMessages, "hash_multithreaded(input), one message after another, each read into a kept buffer and lent until the call returns"),
     (Algorithm::Blake3ServilMt, UseCase::Interleaved, "a Hasher per open message, Hasher::update_multithreaded per piece, then finalize, 256 messages open at once, each piece read into a kept buffer and lent until the update returns"),
     (Algorithm::Blake3ServilMt, UseCase::Collection, "hash_multithreaded(item) for each item of the collection, one after another, in memory"),
     (Algorithm::Blake3ServilMt, UseCase::Outboard, "outboard_multithreaded_with(Mode::Hash, message), messages one after another, each written into a kept buffer and lent until the call returns"),
+    (Algorithm::Blake3ServilMt, UseCase::Verify, "Verifier::new(Mode::Hash, hash, len), then Verifier::update per piece (it has no multithreaded form), messages one after another, each received as its encoding (bao-tree's pre-order, 16 KiB groups) in pieces of up to 64 KiB read into a kept buffer, each verified group copied into the message's kept buffer"),
     (Algorithm::Blake3ServilMt, UseCase::LentBatches, "hash_many_multithreaded(batch, 64, out), the padded batch contract, batches one after another, each read into a kept buffer and lent with kept digests until the call returns"),
     (Algorithm::Blake3ServilSt, UseCase::IdleOneMessage, "hash(input), each call after idling"),
     (Algorithm::Blake3ServilSt, UseCase::IdleManyMessages, "hash_many(batch, 64, out), the padded batch contract, each call after idling"),
@@ -3325,7 +3427,7 @@ fn continuous_min_inputs(input: &[u8], point: Point) -> usize {
             2 * in_flight(input.len().min(PIECE_LEN)).div_ceil(pieces)
         }
         UseCase::ContinuousBatches => 2 * in_flight(input.len()),
-        UseCase::OneMessage | UseCase::IdleOneMessage | UseCase::ManyMessages | UseCase::IdleManyMessages | UseCase::LentMessages | UseCase::Interleaved | UseCase::Collection | UseCase::Outboard | UseCase::LentBatches => 1,
+        UseCase::OneMessage | UseCase::IdleOneMessage | UseCase::ManyMessages | UseCase::IdleManyMessages | UseCase::LentMessages | UseCase::Interleaved | UseCase::Collection | UseCase::Outboard | UseCase::Verify | UseCase::LentBatches => 1,
     }
 }
 
@@ -3613,6 +3715,10 @@ fn detect_kernels(algorithm: Algorithm, use_case: UseCase) -> Kernels {
     // Queue and incremental MT APIs have no kernel-report entry point.
     // Their known API boundaries remain useful; their schedules stay
     // explicitly unreported instead of inheriting one-shot thresholds.
+    if use_case == UseCase::Verify {
+        let api = if algorithm == Algorithm::Blake3 { "bao-tree decode_ranges" } else { "Verifier::update" };
+        return Kernels::new("API (kernel unreported)", vec![Kernel { first: 0, name: api.to_owned() }]);
+    }
     if use_case == UseCase::Outboard {
         let api = match algorithm {
             Algorithm::Blake3 => "bao-tree PreOrderMemOutboard::create",
@@ -3650,7 +3756,7 @@ fn detect_kernels(algorithm: Algorithm, use_case: UseCase) -> Kernels {
     match use_case {
         /* An idle use case makes its twin's call. */
         UseCase::IdleOneMessage | UseCase::IdleManyMessages => detect_kernels(algorithm, use_case.call()),
-        UseCase::OneMessage | UseCase::LentMessages | UseCase::Collection | UseCase::Outboard => one_message,
+        UseCase::OneMessage | UseCase::LentMessages | UseCase::Collection | UseCase::Outboard | UseCase::Verify => one_message,
         /* Pieces run the one-message kernels, so those that start past the longest piece never run. */
         UseCase::Interleaved => one_message.up_to(16 * 1024),
         /* A message of up to PIECE_LEN is one call's input; a longer one arrives in pieces. */
@@ -4815,7 +4921,9 @@ mod correctness_tests {
         assert_eq!(UseCase::Collection.points(), collection..collection + COLLECTION_COUNT);
         let outboard = collection + COLLECTION_COUNT;
         assert_eq!(UseCase::Outboard.points(), outboard..outboard + OUTBOARD_COUNT);
-        assert_eq!(UseCase::LentBatches.points(), outboard + OUTBOARD_COUNT..POINT_COUNT);
+        let verify = outboard + OUTBOARD_COUNT;
+        assert_eq!(UseCase::Verify.points(), verify..verify + VERIFY_COUNT);
+        assert_eq!(UseCase::LentBatches.points(), verify + VERIFY_COUNT..POINT_COUNT);
         for (k, point) in POINTS[UseCase::Collection.points()].iter().enumerate() {
             assert_eq!((point.label, point.messages), (COLLECTIONS[k].0, 2048), "each collection is 2048 items");
         }

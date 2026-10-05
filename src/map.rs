@@ -27,6 +27,7 @@ fn place(use_case: UseCase) -> (&'static str, &'static str, &'static str, &'stat
         UseCase::Interleaved => ("many", "lent", "update_multithreaded per piece", "struct.Hasher.html#method.update_multithreaded"),
         UseCase::Collection => ("coll", "lent", "hash_multithreaded per item", "fn.hash_multithreaded.html"),
         UseCase::Outboard => ("outb", "lent", "outboard_multithreaded_with", "fn.outboard_multithreaded_with.html"),
+        UseCase::Verify => ("recv", "lent", "Verifier::update", "struct.Verifier.html#method.update"),
     }
 }
 
@@ -159,10 +160,10 @@ fn hashing(path: &Path) -> Section {
                 continue;
             }
             let mut series: Vec<Option<Vec<f64>>> = algorithms.iter().map(|a| measured.iter().map(|p| mean(a, p.label)).collect()).collect();
-            // The BLAKE3 contender builds outboards with bao-tree (iroh-blobs'
-            // crate), so its line there carries bao-tree's name, as its own contender.
+            // The BLAKE3 contender builds and verifies outboards with bao-tree
+            // (iroh-blobs' crate), so its line there carries bao-tree's name, as its own contender.
             let official = algorithms.iter().position(|a| *a == Algorithm::Blake3);
-            let bao_tree = if use_case == UseCase::Outboard { official.and_then(|i| series[i].take()) } else { None };
+            let bao_tree = if matches!(use_case, UseCase::Outboard | UseCase::Verify) { official.and_then(|i| series[i].take()) } else { None };
             series.push(bao_tree);
             cells.push((cell_key(scenario, use_case), Chart {
                 sizes: measured.iter().map(|p| p.label.to_owned()).collect(),
@@ -179,7 +180,8 @@ fn hashing(path: &Path) -> Section {
     Section {
         title: "How fast each hash runs, by what a program hashes and how it calls",
         rows: vec![("one", "one message"), ("batch", "a batch of short messages"), ("many", "many messages at once, in pieces"),
-                   ("coll", "a collection of items"), ("outb", "a message with its outboard, for verified streaming")],
+                   ("coll", "a collection of items"), ("outb", "a message with its outboard, for verified streaming"),
+                   ("recv", "a message received, verified as it arrives")],
         cols: vec![("busy", "now and then, between other work"), ("idle", "now and then, after a pause"),
                    ("lent", "nonstop, waiting for each call"), ("piped", "nonstop, pipelined")],
         layers: vec![("solo", "one program", ""), ("shared", "two programs at once", "measured nonstop")],

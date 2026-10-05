@@ -25,6 +25,25 @@ release, so results of different benchmarks are never read as alike. The
 documents that explain the benchmark (README, METHODOLOGY, CONTRIBUTING,
 the notes) may still change, to say it better.
 
+**Changes in 0.15.0** (Zooko, October 5, 2026), the benchmark for the
+optimisation pass that follows it: its maps before and after the fork's
+changes are drawn by one benchmark.
+- **A message received, verified as it arrives** (Zooko, "14. Yes"): a
+  receiver of iroh-blobs' wire format. Messages of 1 MiB and 64 MiB one
+  after another, each arriving as its encoding (its 16 KiB groups and the
+  parent nodes above them in pre-order, as bao-tree's `encode_ranges`
+  writes a whole blob; made once per input, the sender's work, outside
+  the timed calls), in pieces of up to 64 KiB read into a kept buffer,
+  verified against the message's hash as they arrive, each verified group
+  copied into the message's kept buffer. BLAKE3 decodes with bao-tree
+  0.16.1 (`decode_ranges`, no outboard kept), drawn as bao-tree
+  (iroh-blobs); both BLAKE3 servil contenders with a `Verifier`, on the
+  calling thread (it has no multithreaded form). Each copies
+  every received byte in and every verified byte out once.
+- **No change to many messages at once:** the Hasher gathers each
+  message's pieces into whole 16 KiB itself (Zooko, October 5), so the
+  cell's callers stay as they are.
+
 **Changes in 0.14.1** (Zooko, October 5, 2026), the map only; the measurements are 0.14.0's:
 - **The map's charts share one rate axis per section, in GB/s** (Zooko,
   "so I could tell at a glance how the columns affect the rows"): a
@@ -226,9 +245,10 @@ use case LentMessages: 64 B, 256 B, 1 KiB, 4 KiB, 16 KiB, 64 KiB, 256 KiB, 1 MiB
 use case Interleaved: 256 open
 use case Collection: git objects, Nix files
 use case Outboard: 1 MiB, 64 MiB
+use case Verify: 1 MiB, 64 MiB
 use case LentBatches: 16, 64, 256, 1024, 4096, 16384, 65536
 scenarios: solo, shared
-shared measures: ContinuousMessages, ContinuousBatches, LentMessages, Interleaved, Collection, Outboard, LentBatches
+shared measures: ContinuousMessages, ContinuousBatches, LentMessages, Interleaved, Collection, Outboard, Verify, LentBatches
 blake3-servil-st OneMessage: hash(input), each call after other work
 blake3-servil-st ManyMessages: hash_many(batch, 64, out), the padded batch contract, each call after other work
 blake3-servil-mt OneMessage: hash_multithreaded(input), each call after other work
@@ -239,11 +259,13 @@ blake3-servil-st LentMessages: hash(input), one message after another, each read
 blake3-servil-st Interleaved: a Hasher per open message, Hasher::update per piece, then finalize, 256 messages open at once, each piece read into a kept buffer and lent until the update returns
 blake3-servil-st Collection: hash_each_with(Mode::Hash, items, out), every item of the collection in one call, in memory
 blake3-servil-st Outboard: outboard_with(Mode::Hash, message), messages one after another, each written into a kept buffer and lent until the call returns
+blake3-servil-st Verify: Verifier::new(Mode::Hash, hash, len), then Verifier::update per piece, messages one after another, each received as its encoding (bao-tree's pre-order, 16 KiB groups) in pieces of up to 64 KiB read into a kept buffer, each verified group copied into the message's kept buffer
 blake3-servil-st LentBatches: hash_many(batch, 64, out), the padded batch contract, batches one after another, each read into a kept buffer and lent with kept digests until the call returns
 blake3-servil-mt LentMessages: hash_multithreaded(input), one message after another, each read into a kept buffer and lent until the call returns
 blake3-servil-mt Interleaved: a Hasher per open message, Hasher::update_multithreaded per piece, then finalize, 256 messages open at once, each piece read into a kept buffer and lent until the update returns
 blake3-servil-mt Collection: hash_multithreaded(item) for each item of the collection, one after another, in memory
 blake3-servil-mt Outboard: outboard_multithreaded_with(Mode::Hash, message), messages one after another, each written into a kept buffer and lent until the call returns
+blake3-servil-mt Verify: Verifier::new(Mode::Hash, hash, len), then Verifier::update per piece (it has no multithreaded form), messages one after another, each received as its encoding (bao-tree's pre-order, 16 KiB groups) in pieces of up to 64 KiB read into a kept buffer, each verified group copied into the message's kept buffer
 blake3-servil-mt LentBatches: hash_many_multithreaded(batch, 64, out), the padded batch contract, batches one after another, each read into a kept buffer and lent with kept digests until the call returns
 blake3-servil-st IdleOneMessage: hash(input), each call after idling
 blake3-servil-st IdleManyMessages: hash_many(batch, 64, out), the padded batch contract, each call after idling

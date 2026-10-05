@@ -467,7 +467,8 @@ check, calibrated").
 a small chart, its lines through each contender's means on log scales,
 higher faster. The charts sit in a grid: its rows are what the program
 hashes (one message; a batch of 64-byte messages; many messages at once,
-in pieces; a collection of items; a message with its outboard), its
+in pieces; a collection of items; a message with its outboard; a message
+received, verified as it arrives), its
 columns how the program calls (now and then, between other work or after
 a pause; nonstop, waiting for each call or pipelined), first for one
 program and then for two at once. A cell the run did not measure stays
