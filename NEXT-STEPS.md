@@ -21,8 +21,10 @@ pair kernel 2.9 KB). Batches of 1-8 one-block messages after a pause now
 run two at a time on the pair kernel. Mac, ns per message (three pairs):
 after other work 2: 323 -> 247, 4: 216 -> 153, 8: 104 -> 89, 1: 605 ->
 536; after idling 2: 369 -> 258, 4: 340 -> 161, 8: 162 -> 112, past
-BLAKE3 official (209, 118). Gate passed (job 1339), Mac tests passed
-(1338); CI on its own branch (candidate/pairs).
+BLAKE3 official (209, 118). Promoted: servil = bab4b86 (gate job 1339,
+Mac tests 1338, CI green on 5a68d38, which holds it), bench-hashes pinned
+to it. The published records are still servil 684274a's. The next runner
+job number is 1349.
 
 **Round 8, waiting for your decision: the one-chunk kernel rolled**
 (5a68d38, on candidate/no-linger). The scalar kernel for a chunk or less
