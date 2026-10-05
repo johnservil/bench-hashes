@@ -14,6 +14,23 @@ NOTES "Future work"; the blocks below are history.
 
 ## Progress reports for Zooko (October 5, 2026, evening)
 
+**Summary, before and after the pass, same benchmark (0.15.0), same
+session** (Mac jobs 1296 before, fork 5454196, and 1291 after,
+candidate/no-linger; maps in `/workspace/tmp/before-pass/` and
+`/workspace/tmp/after-pass/`; servil's cells that moved more than 5%,
+one run each, in `tmp/after-pass/changes-mac-same-session.txt`), ns/B:
+- many messages at once: 0.511 -> 0.269 (SHA-256 ring 0.31): now ahead;
+- collections, servil mt: 0.230 -> 0.041 (git objects), 0.218 -> 0.050
+  (Nix files);
+- pipelined 16 KiB messages: 0.155 -> 0.114;
+- verify 1 MiB solo: 0.292 -> 0.267 (A/B, jobs 1297-1300); two programs
+  at once 0.33 -> 0.39-0.40 (+15-20%, recorded; likely the two processes
+  sharing the SME unit for longer batches; open);
+- everything else level: small single messages read +15% in the one-run
+  maps and level or 5% faster in the A/B (jobs 1297-1300); after-a-pause
+  cells move with the machine's state between sessions (A/B, jobs
+  1292-1295: level), so compare maps made in one session.
+
 **Round 0: the freeze.** bench-hashes 0.15.0 released (tag
 v0.15.0+98aaeb0, GitHub Release, Pages): the verify-as-it-arrives row,
 many messages at once in turns of 64, the collection's servil mt in one
