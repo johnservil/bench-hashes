@@ -581,10 +581,6 @@ impl UseCase {
         if self.batch() { "ns/msg" } else { "ns/B" }
     }
 
-    fn rate_unit(self) -> &'static str {
-        if self.batch() { "Mmsg/s" } else { "GB/s" }
-    }
-
     /// How the program calls, for a reader of the results.
     /// How the program calls, for the report's opening: the clause after
     /// the tables' names.

@@ -54,18 +54,26 @@ function glyph(kind, size = 20, color = "#4b5563") {
   }[kind] || "";
   return `<svg width="${size}" height="${size}" viewBox="0 0 22 22">${g}</svg>`;
 }
-/* One chart's lines, rates (units over each mean time) on log scales; the opened one with axes. */
+/* A section's one rate axis: every chart of it, every contender, so a line's
+   height reads the same in every chart, whatever names are set aside. */
+function axisOf(S) {
+  if (!S.axis) {
+    const vals = Object.values(S.cells).flatMap(c => c.series.filter(Boolean).flat()).map(v => 1 / v);
+    S.axis = [Math.log(Math.min(...vals)) - 0.1, Math.log(Math.max(...vals)) + 0.1];
+  }
+  return S.axis;
+}
+/* One chart's lines, rates (bytes over each mean time) on the section's log scale; the opened one with axes. */
 function draw(S, c, w, h, axes) {
   const live = c.series.map((s, i) => s && S.shownNow[i] ? i : -1).filter(i => i >= 0);
-  const all = c.series.map((s, i) => s ? i : -1).filter(i => i >= 0);
-  const vals = all.flatMap(i => c.series[i].map(v => 1 / v));
-  let lo = Math.log(Math.min(...vals)), hi = Math.log(Math.max(...vals));
-  if (hi - lo < 0.2) { lo -= 0.1; hi += 0.1; }
+  const [lo, hi] = axisOf(S);
   const n = c.sizes.length, L = axes ? 70 : 8, R = axes ? 24 : 8, T = axes ? 40 : 8, B = axes ? 40 : 14;
   /* Sizes run edge to edge; separate cases sit in the middles of equal slots. */
   const x = k => n === 1 || c.cases ? L + (k + 0.5) * (w - L - R) / n : L + k * (w - L - R) / (n - 1);
   const y = v => h - B - (Math.log(v) - lo) / (hi - lo) * (h - T - B);
   let s = `<svg width="${w}" height="${h}">`;
+  /* Every chart of a section shares its scale; faint lines at each power of ten show it. */
+  if (!axes) for (let e = Math.ceil(lo / Math.LN10); e <= Math.floor(hi / Math.LN10); e++) s += `<line x1="${L}" x2="${w - R}" y1="${y(10 ** e)}" y2="${y(10 ** e)}" stroke="#f1f1ef"/>`;
   if (axes) {
     for (let e = Math.floor(Math.log10(Math.exp(lo))) - 1; e <= Math.ceil(Math.log10(Math.exp(hi))); e++) for (const m of [1, 2, 5]) {
       const v = m * 10 ** e; if (Math.log(v) < lo || Math.log(v) > hi) continue;

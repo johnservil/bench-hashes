@@ -143,9 +143,12 @@ fn hashing(path: &Path) -> Section {
         let (_, _, call, doc) = place(use_case);
         for scenario in ["solo", "shared"] {
             let points = &POINTS[use_case.points()];
+            // Every chart in bytes per second, so one axis serves them all:
+            // a batch's time per message over its message's bytes.
+            let per_byte = if use_case.batch() { use_case.message_len() as f64 } else { 1.0 };
             let mean = |a: &Algorithm, label: &str| {
                 let key = format!("{}|{scenario}|{use_case:?}|{label}", a.key());
-                file.cells.iter().find(|(k, _)| *k == key).map(|(_, s)| mean_ns(s))
+                file.cells.iter().find(|(k, _)| *k == key).map(|(_, s)| mean_ns(s) / per_byte)
             };
             // The points this run measured for some contender, in axis order.
             let measured: Vec<_> = points.iter().filter(|p| algorithms.iter().any(|a| mean(a, p.label).is_some())).collect();
@@ -158,11 +161,11 @@ fn hashing(path: &Path) -> Section {
             }).collect();
             cells.push((cell_key(scenario, use_case), Chart {
                 sizes: measured.iter().map(|p| p.label.to_owned()).collect(),
-                unit: use_case.rate_unit(),
+                unit: "GB/s",
                 call: call.to_owned(),
                 doc: format!("{DOCS}{doc}"),
                 cases: matches!(use_case, UseCase::Interleaved | UseCase::Collection),
-                per: measured.iter().map(|p| if use_case.batch() { p.messages as u64 } else { p.bytes as u64 }).collect(),
+                per: measured.iter().map(|p| p.bytes as u64).collect(),
                 what: what(use_case),
                 series,
             }));

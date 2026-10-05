@@ -25,6 +25,14 @@ release, so results of different benchmarks are never read as alike. The
 documents that explain the benchmark (README, METHODOLOGY, CONTRIBUTING,
 the notes) may still change, to say it better.
 
+**Changes since 0.14.0** (Zooko, October 5, 2026), for the next release:
+- **The map's charts share one rate axis per section, in GB/s** (Zooko,
+  "so I could tell at a glance how the columns affect the rows"): a
+  section's every chart spans the same range, from all its cells and
+  contenders, with faint lines at each power of ten; a batch's rate is
+  its messages' bytes per second (its time per batch stays in the
+  tooltip).
+
 **Changes in 0.14.0** (Zooko, October 3-5, 2026):
 - **The map replaces the graph, the guide's chart, and b3sum's bar chart**
   (Zooko, October 5, 2026): `bench-hashes.map.html`, every cell a small
