@@ -4056,6 +4056,8 @@ const REGRESS_SUBJECTS: [Algorithm; 2] = [Algorithm::Blake3ServilSt, Algorithm::
 const REGRESS_POINTS: [&str; 5] = ["lent 64 B", "lent 64 KiB", "lent 1 MiB", "lent batch 16", "lent batch 4096"];
 const REGRESS_ROUNDS: usize = 24;
 const REGRESS_PAIRS: usize = 8;
+/// How many times a pair runs again when one of its runs is no evidence.
+const REGRESS_REPEATS: usize = 3;
 
 /// The margin a solo cell's verdict uses.
 const REGRESS_MARGIN_PERMILLE: u64 = 30;
@@ -4087,19 +4089,36 @@ fn regress_command(arguments: &[String]) -> i32 {
     let mut unreliable = Vec::new();
     let mut powers: Vec<String> = Vec::new();
     let mut ratios: std::collections::BTreeMap<String, Vec<u64>> = std::collections::BTreeMap::new();
-    let mut means = |exe: &str| -> std::collections::HashMap<String, u128> {
+    // A run's means, and its load line when clocks found it no evidence
+    // (other programs busy, or no load window).
+    let mut means = |exe: &str| -> (std::collections::HashMap<String, u128>, Option<String>) {
         let file = regress_run(exe);
-        if !file.load.starts_with("quiet") {
-            unreliable.push(file.load.clone());
-        }
         if !powers.contains(&file.power) {
             powers.push(file.power.clone());
         }
-        file.cells.into_iter().map(|(key, samples)| (key, ExactMean::of(&samples).fixed().0)).collect()
+        let busy = (!file.load.starts_with("quiet")).then(|| file.load.clone());
+        (file.cells.into_iter().map(|(key, samples)| (key, ExactMean::of(&samples).fixed().0)).collect(), busy)
     };
     for pair in 0..REGRESS_PAIRS {
         let began = clocks::now();
-        let (old, new) = if pair % 2 == 0 { let o = means(old_exe); (o, means(new_exe)) } else { let n = means(new_exe); (means(old_exe), n) };
+        // A pair with a run that is no evidence runs again, in the same
+        // order, up to REGRESS_REPEATS times (a process launch on macOS
+        // now and then costs other programs about 1.7 CPU-seconds inside
+        // a run's window: fork runner jobs 1304-1305, October 5, 2026).
+        let mut attempt = 0;
+        let (old, new) = loop {
+            let ((old, a), (new, b)) = if pair % 2 == 0 { let o = means(old_exe); (o, means(new_exe)) } else { let n = means(new_exe); (means(old_exe), n) };
+            let busy: Vec<String> = a.into_iter().chain(b).collect();
+            if busy.is_empty() {
+                break (old, new);
+            }
+            attempt += 1;
+            if attempt > REGRESS_REPEATS {
+                unreliable.extend(busy);
+                break (old, new);
+            }
+            eprintln!("regress: pair {} again: {}", pair + 1, busy.join("; "));
+        };
         for (key, old_mean) in &old {
             ratios.entry(key.clone()).or_default().push(clocks::summary::ratio_permille(new[key], *old_mean));
         }

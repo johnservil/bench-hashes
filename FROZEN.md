@@ -25,6 +25,16 @@ release, so results of different benchmarks are never read as alike. The
 documents that explain the benchmark (README, METHODOLOGY, CONTRIBUTING,
 the notes) may still change, to say it better.
 
+**Changes in 0.15.1** (Zooko, October 5, 2026), the regression check
+alone; the benchmark's measurements and the map are 0.15.0's:
+- **A pair with a run that is no evidence runs again**, up to three
+  times, in the same order: on the Mac a process launch now and then
+  costs other programs about 1.7 CPU-seconds inside a run's half-second
+  window (fork runner jobs 1304-1305), so nearly every check had one busy
+  run and gave no verdict. Cells, margins, pairs, and the sign test are
+  unchanged; a pair still busy after its repeats leaves the check without
+  a verdict.
+
 **Changes in 0.15.0** (Zooko, October 5, 2026), the benchmark for the
 optimisation pass that follows it: its maps before and after the fork's
 changes are drawn by one benchmark.
