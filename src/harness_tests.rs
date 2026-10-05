@@ -8,7 +8,7 @@ use super::*;
 fn asynchronous_labels_describe_the_measured_api() {
     for (use_case, api) in [
         (UseCase::ContinuousBatches, "Queue::fixed"),
-        (UseCase::Interleaved, "Hasher::update_multithreaded"),
+        (UseCase::Interleaved, "Hasher::update_each_multithreaded"),
     ] {
         let kernels = detect_kernels(Algorithm::Blake3ServilMt, use_case);
         assert_eq!(kernels.platform, "API (kernel unreported)");

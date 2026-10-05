@@ -40,9 +40,21 @@ changes are drawn by one benchmark.
   (iroh-blobs); both BLAKE3 servil contenders with a `Verifier`, on the
   calling thread (it has no multithreaded form). Each copies
   every received byte in and every verified byte out once.
-- **No change to many messages at once:** the Hasher gathers each
-  message's pieces into whole 16 KiB itself (Zooko, October 5), so the
-  cell's callers stay as they are.
+- **Many messages at once arrive in turns** (Zooko, October 5: "add the
+  lanes across messages before freezing the API"): the pieces come 64 at
+  a time, as one wait of a server's event loop delivers them, each read
+  into its own kept buffer. BLAKE3 servil takes each turn in one call,
+  `Hasher::update_each` (one thread) or `Hasher::update_each_multithreaded`,
+  then `Hasher::finalize_each` for the messages that ended in it; every
+  other contender updates per piece and finishes per message, as before.
+  The Hasher gathers each message's pieces into whole 16 KiB itself
+  (Zooko, October 5), so no contender gathers. Every contender's numbers
+  move from 0.14's: the pieces sit in 64 buffers instead of one.
+- **A collection, multithreaded, in one call:** BLAKE3 servil mt hashes a
+  collection with `hash_each_multithreaded_with`, the multithreaded twin
+  of servil st's `hash_each_with` (Zooko, October 5: each servil
+  contender makes the fastest call under its choice of threads, one
+  thread or many).
 
 **Changes in 0.14.1** (Zooko, October 5, 2026), the map only; the measurements are 0.14.0's:
 - **The map's charts share one rate axis per section, in GB/s** (Zooko,
@@ -256,14 +268,14 @@ blake3-servil-mt ManyMessages: hash_many_multithreaded(batch, 64, out), the padd
 blake3-servil-mt ContinuousMessages: Queue::messages(Mode::Hash) for messages of up to 64 KiB, Queue::pieces(Mode::Hash) in 64 KiB pieces for longer ones, one message after another, each read into free buffers of the program's, about 1 MiB or 1024 buffers in flight, whichever is fewer, cycled through the handler and a bounded channel with room for all of them (std::sync::mpsc::sync_channel, allocated when made), the queue and the channel made once and kept
 blake3-servil-mt ContinuousBatches: Queue::fixed(64, Mode::Hash), one batch after another, each read into a free buffer of the program's, submitted with its digests' space, about 1 MiB or 1024 buffers in flight, whichever is fewer, cycled through the handler and a bounded channel with room for all of them (std::sync::mpsc::sync_channel, allocated when made), the queue and the channel made once and kept
 blake3-servil-st LentMessages: hash(input), one message after another, each read into a kept buffer and lent until the call returns
-blake3-servil-st Interleaved: a Hasher per open message, Hasher::update per piece, then finalize, 256 messages open at once, each piece read into a kept buffer and lent until the update returns
+blake3-servil-st Interleaved: a Hasher per open message, 256 messages open at once, the pieces arriving in turns of 64, each read into its own kept buffer; Hasher::update_each per turn, then Hasher::finalize_each for the messages that ended in it, each buffer lent until the calls return
 blake3-servil-st Collection: hash_each_with(Mode::Hash, items, out), every item of the collection in one call, in memory
 blake3-servil-st Outboard: outboard_with(Mode::Hash, message), messages one after another, each written into a kept buffer and lent until the call returns
 blake3-servil-st Verify: Verifier::new(Mode::Hash, hash, len), then Verifier::update per piece, messages one after another, each received as its encoding (bao-tree's pre-order, 16 KiB groups) in pieces of up to 64 KiB read into a kept buffer, each verified group copied into the message's kept buffer
 blake3-servil-st LentBatches: hash_many(batch, 64, out), the padded batch contract, batches one after another, each read into a kept buffer and lent with kept digests until the call returns
 blake3-servil-mt LentMessages: hash_multithreaded(input), one message after another, each read into a kept buffer and lent until the call returns
-blake3-servil-mt Interleaved: a Hasher per open message, Hasher::update_multithreaded per piece, then finalize, 256 messages open at once, each piece read into a kept buffer and lent until the update returns
-blake3-servil-mt Collection: hash_multithreaded(item) for each item of the collection, one after another, in memory
+blake3-servil-mt Interleaved: a Hasher per open message, 256 messages open at once, the pieces arriving in turns of 64, each read into its own kept buffer; Hasher::update_each_multithreaded per turn, then Hasher::finalize_each for the messages that ended in it, each buffer lent until the calls return
+blake3-servil-mt Collection: hash_each_multithreaded_with(Mode::Hash, items, out), every item of the collection in one call, in memory
 blake3-servil-mt Outboard: outboard_multithreaded_with(Mode::Hash, message), messages one after another, each written into a kept buffer and lent until the call returns
 blake3-servil-mt Verify: Verifier::new(Mode::Hash, hash, len), then Verifier::update per piece (it has no multithreaded form), messages one after another, each received as its encoding (bao-tree's pre-order, 16 KiB groups) in pieces of up to 64 KiB read into a kept buffer, each verified group copied into the message's kept buffer
 blake3-servil-mt LentBatches: hash_many_multithreaded(batch, 64, out), the padded batch contract, batches one after another, each read into a kept buffer and lent with kept digests until the call returns

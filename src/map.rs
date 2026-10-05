@@ -24,8 +24,8 @@ fn place(use_case: UseCase) -> (&'static str, &'static str, &'static str, &'stat
         UseCase::IdleManyMessages => ("batch", "idle", "hash_many_multithreaded", "fn.hash_many_multithreaded.html"),
         UseCase::LentBatches => ("batch", "lent", "hash_many_multithreaded", "fn.hash_many_multithreaded.html"),
         UseCase::ContinuousBatches => ("batch", "piped", "Queue::fixed", "struct.Queue.html#method.fixed"),
-        UseCase::Interleaved => ("many", "lent", "update_multithreaded per piece", "struct.Hasher.html#method.update_multithreaded"),
-        UseCase::Collection => ("coll", "lent", "hash_multithreaded per item", "fn.hash_multithreaded.html"),
+        UseCase::Interleaved => ("many", "lent", "Hasher::update_each_multithreaded", "struct.Hasher.html#method.update_each_multithreaded"),
+        UseCase::Collection => ("coll", "lent", "hash_each_multithreaded_with", "fn.hash_each_multithreaded_with.html"),
         UseCase::Outboard => ("outb", "lent", "outboard_multithreaded_with", "fn.outboard_multithreaded_with.html"),
         UseCase::Verify => ("recv", "lent", "Verifier::update", "struct.Verifier.html#method.update"),
     }
