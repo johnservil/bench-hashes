@@ -34,10 +34,15 @@ NOTES (the optimisation pass's section). None held up:
   12 KB), at about 16 bytes a nanosecond; the big kernels are limited by
   the instructions they can issue, so rolling them costs nonstop speed.
 
+- **Wake two workers at once** for multithreaded calls: slower at 1-4 MiB
+  (a woken worker arrives 15-45 us after its wake).
+- **Hash small queue tasks on the delivery thread** (no wake): VM 16%
+  faster for 64-byte messages, Mac 76% slower. Dropped.
+
 The one-chunk kernel's cheaper loop is in the fork's NOTES, Future work
-(one variant tried: slower). Mac jobs 1351-1362 ran on battery, every side
+(two variants tried: slower). Mac jobs 1351-1362 ran on battery, every side
 of each comparison alike; the rest on mains. The next runner job number is
-1378.
+1384.
 
 ## Night of October 5-6, 2026: reports for Zooko
 
