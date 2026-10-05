@@ -76,7 +76,18 @@ did. Mac (jobs 1282-1285): pipelined 16 KiB 0.148 -> 0.111 ns/B, shared
 queue's cells switch speeds between processes (1 KiB here: 0.108 and
 0.146 on one side), so these need more runs to judge.
 
-**The Mac gate** has given no verdict since round 3 (jobs 1260-1281):
+**CI was red** on the fork since round 1: CI builds with warnings as errors,
+and an unused import in queue's tests reached servil 1352c21 (the local
+suites and the Mac's test job build without `-D warnings`). Fixed on the
+candidate (a9ae1d5); PROCEDURES now asks for the fork's CI on the
+candidate's tip before a promotion. servil's CI stays red until the next
+promotion.
+
+**The Mac gate** has given no verdict since round 3 (jobs 1260-1290; job
+1290 compared servil with itself and found the same: the cause is the
+machine or the harness, not the code; exactly one busy window in every
+check, about one every ten seconds, so likely a periodic task of an idle
+Mac):
 one half-second window in each check with 1.3-3.8 CPUs of other programs.
 Not the builds (a 10 s wait did not help), not the VM's polling (a check
 with the VM asleep failed too), not the runner. Most likely macOS's
