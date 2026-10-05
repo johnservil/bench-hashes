@@ -25,7 +25,7 @@ release, so results of different benchmarks are never read as alike. The
 documents that explain the benchmark (README, METHODOLOGY, CONTRIBUTING,
 the notes) may still change, to say it better.
 
-**Changes since 0.14.0** (Zooko, October 5, 2026), for the next release:
+**Changes in 0.14.1** (Zooko, October 5, 2026), the map only; the measurements are 0.14.0's:
 - **The map's charts share one rate axis per section, in GB/s** (Zooko,
   "so I could tell at a glance how the columns affect the rows"): a
   section's every chart spans the same range, from all its cells and
