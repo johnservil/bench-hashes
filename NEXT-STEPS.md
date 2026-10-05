@@ -14,6 +14,9 @@ NOTES "Future work"; the blocks below are history.
 
 ## Night of October 5-6, 2026: reports for Zooko
 
+The next runner job number is 1351. servil = 081ffcd, bench-hashes 0.15.2
+released with its records.
+
 **Round 7: small batches after a pause on the pair kernel** (bab4b86).
 After other work or idling a small batch's time is mostly its kernels'
 code from memory (the plans for 3-16 messages run up to 17 KB of code, the
@@ -23,11 +26,12 @@ after other work 2: 323 -> 247, 4: 216 -> 153, 8: 104 -> 89, 1: 605 ->
 536; after idling 2: 369 -> 258, 4: 340 -> 161, 8: 162 -> 112, past
 BLAKE3 official (209, 118). Promoted: servil = bab4b86 (gate job 1339,
 Mac tests 1338, CI green on 5a68d38, which holds it), bench-hashes pinned
-to it. The published records are still servil 684274a's. The next runner
-job number is 1349.
+to it.
 
-**Round 8, waiting for your decision: the one-chunk kernel rolled**
-(5a68d38, on candidate/no-linger). The scalar kernel for a chunk or less
+**Round 8: the one-chunk kernel rolled** (promoted with Zooko's
+acceptance, October 6: servil 081ffcd; records with bench-hashes 0.15.2,
+Mac jobs 1349-1350 and the VM; next: a cheaper loop, to win back the
+nonstop percent). The scalar kernel for a chunk or less
 was 3.9 KB, its seven rounds unrolled; a cold call's extra time is that
 code (probe, job 1340: 64 B 338 ns after other work, 52 with its code
 warm). It is now 1.0 KB: one round in a loop, each message word's offset
