@@ -12,6 +12,29 @@ before touching kernels or the pool); this repository's are in `NOTES.md`.
 Every open item, from every block below, is in one list: the fork's
 NOTES "Future work"; the blocks below are history.
 
+## Progress reports for Zooko (October 5, 2026, evening)
+
+**Round 0: the freeze.** bench-hashes 0.15.0 released (tag
+v0.15.0+98aaeb0, GitHub Release, Pages): the verify-as-it-arrives row,
+many messages at once in turns of 64, the collection's servil mt in one
+call. Fork API for the pass: `Verifier`, `Hasher::update_each`,
+`update_each_multithreaded`, `finalize_each`, `hash_each_multithreaded_with`
+(servil 5454196). Baseline records: Mac jobs 1228-1229, the VM; a copy in
+`/workspace/tmp/baseline-015/`. Mac baseline, ns/B (lower is faster):
+many messages at once servil 0.516 vs SHA-256 0.361, ring 0.311;
+collections 0.229/0.218 vs ring 0.297/0.293; verify 64 MiB 0.286 vs
+bao-tree 0.440; outboard 64 MiB mt 0.041 vs bao-tree 0.418.
+
+**Round 1: the Hasher gathers 16 KiB** (candidate/no-linger 7a2967e and the
+next commit). Many messages at once: 0.519 -> 0.306 ns/B on the Mac (jobs
+1246-1249, both servil contenders), past SHA-256 (0.359) and level with
+ring (0.311); every other cell level. Cost, measured (probe/one-update,
+jobs 1242-1245): a whole message in one update, 64 B +7% (about 4 ns),
+1.5-15 KiB +4-5% (the copy), 1 KiB and 16 KiB+ level; the docs say so and
+point at `hash`. Mac tests pass (job 1250); the gate gave no verdict three
+times (jobs 1251-1253: one half-second window of each run busy with about
+3 CPUs, something on the Mac); promotion waits for a clean gate.
+
 ## Resume here (October 5, 2026, later): 0.14.0 released, the map is the output
 
 **State.** bench-hashes 0.14.0 released (tag v0.14.0+b3d53bf, main =
