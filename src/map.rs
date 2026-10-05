@@ -123,6 +123,9 @@ impl Section {
     }
 }
 
+/// The name of the outboards' line the BLAKE3 contender draws with bao-tree.
+const BAO_TREE: &str = "bao-tree (iroh-blobs)";
+
 fn header<'a>(headers: &'a [(String, String)], key: &str) -> &'a str {
     headers.iter().find(|(k, _)| k == key).map_or("", |(_, v)| v.as_str())
 }
@@ -155,10 +158,12 @@ fn hashing(path: &Path) -> Section {
             if measured.is_empty() {
                 continue;
             }
-            let series = algorithms.iter().map(|a| {
-                let v: Option<Vec<f64>> = measured.iter().map(|p| mean(a, p.label)).collect();
-                v
-            }).collect();
+            let mut series: Vec<Option<Vec<f64>>> = algorithms.iter().map(|a| measured.iter().map(|p| mean(a, p.label)).collect()).collect();
+            // The BLAKE3 contender builds outboards with bao-tree (iroh-blobs'
+            // crate), so its line there carries bao-tree's name, as its own contender.
+            let official = algorithms.iter().position(|a| *a == Algorithm::Blake3);
+            let bao_tree = if use_case == UseCase::Outboard { official.and_then(|i| series[i].take()) } else { None };
+            series.push(bao_tree);
             cells.push((cell_key(scenario, use_case), Chart {
                 sizes: measured.iter().map(|p| p.label.to_owned()).collect(),
                 unit: "GB/s",
@@ -178,9 +183,9 @@ fn hashing(path: &Path) -> Section {
         cols: vec![("busy", "now and then, between other work"), ("idle", "now and then, after a pause"),
                    ("lent", "nonstop, waiting for each call"), ("piped", "nonstop, pipelined")],
         layers: vec![("solo", "one program", ""), ("shared", "two programs at once", "measured nonstop")],
-        names: algorithms.iter().map(|a| a.name().to_owned()).collect(),
-        colors: algorithms.iter().map(|a| a.color().to_owned()).collect(),
-        shown: algorithms.iter().map(|a| SHOWN_AT_FIRST.contains(a)).collect(),
+        names: algorithms.iter().map(|a| a.name()).chain([BAO_TREE]).map(str::to_owned).collect(),
+        colors: algorithms.iter().map(|a| a.color()).chain(["#15803d"]).map(str::to_owned).collect(),
+        shown: algorithms.iter().map(|a| SHOWN_AT_FIRST.contains(a)).chain([true]).collect(),
         cells,
         about: about(&file.headers, &file.load, &file.power),
     }

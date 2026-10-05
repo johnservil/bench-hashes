@@ -32,6 +32,9 @@ the notes) may still change, to say it better.
   contenders, with faint lines at each power of ten; a batch's rate is
   its messages' bytes per second (its time per batch stays in the
   tooltip).
+- **The outboards' BLAKE3 line is named "bao-tree (iroh-blobs)"**, its
+  own contender in its own colour: the BLAKE3 contender builds outboards
+  with bao-tree, Rüdiger Klaehn's and n0's crate, which iroh-blobs uses.
 
 **Changes in 0.14.0** (Zooko, October 3-5, 2026):
 - **The map replaces the graph, the guide's chart, and b3sum's bar chart**
