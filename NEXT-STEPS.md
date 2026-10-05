@@ -53,6 +53,37 @@ one run busy, 1.3-3.8 CPUs; a 10 s wait after the builds did not help, so
 it is not the builds; likely macOS's own idle-time work while you are
 out). Promotion waits; I retry between rounds.
 
+**Round 4: collections over the pool** (3106bce, 88d5a44):
+`hash_each_multithreaded_with` cuts a collection's items into ranges of
+about a thread's share of the bytes, each range through
+`hash_each_with`'s code on a worker. Mac (jobs 1265-1268, 1271-1274):
+servil mt git objects 0.229 -> 0.029 ns/B (7.8x), Nix files 0.218 ->
+0.039 (5.6x), shared 0.25 -> 0.05; SHA-256 ring 0.295. servil st: solo
+level, shared git objects +4% (0.247 -> 0.257; between sessions its old
+side moved 3%); a `&dyn` call had cost it 4-7%, now generic.
+
+**Round 5: one SME2 entry for a turn's groups** (4841926): a chunk kernel
+entry point with a counter for each group (`hash16_chunks_at`, a mode bit
+in the chunk kernel's flags). Many messages at once, Mac (jobs 1276-1279):
+0.257 -> 0.250 ns/B (-3%), VM -1-2%. A judgement call: 3% on a streaming
+API for a short entry point; kept, open to your veto.
+
+**Round 6: 16 KiB messages share queue tasks** (the commit after 4841926):
+messages shorter than a task (64 KiB) go several to a task, as batches
+did. Mac (jobs 1282-1285): pipelined 16 KiB 0.148 -> 0.111 ns/B, shared
+0.205 -> 0.127; VM 0.229 -> 0.118. Two cells moved whose code did not:
+1 MiB solo +7% (0.055 -> 0.059) and shared 64 B +24% (1.19 -> 1.47); the
+queue's cells switch speeds between processes (1 KiB here: 0.108 and
+0.146 on one side), so these need more runs to judge.
+
+**The Mac gate** has given no verdict since round 3 (jobs 1260-1281):
+one half-second window in each check with 1.3-3.8 CPUs of other programs.
+Not the builds (a 10 s wait did not help), not the VM's polling (a check
+with the VM asleep failed too), not the runner. Most likely macOS's
+idle-time maintenance while you are away. servil stays at 1352c21 (round
+1) until a check passes; rounds 2-6 are on candidate/no-linger, each with
+its Mac A/B, the VM gate passing on every commit, and Mac tests passing.
+
 ## Resume here (October 5, 2026, later): 0.14.0 released, the map is the output
 
 **State.** bench-hashes 0.14.0 released (tag v0.14.0+b3d53bf, main =
