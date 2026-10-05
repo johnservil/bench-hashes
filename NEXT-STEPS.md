@@ -12,6 +12,43 @@ before touching kernels or the pool); this repository's are in `NOTES.md`.
 Every open item, from every block below, is in one list: the fork's
 NOTES "Future work"; the blocks below are history.
 
+## Night of October 5-6, 2026: reports for Zooko
+
+**Round 7: small batches after a pause on the pair kernel** (bab4b86).
+After other work or idling a small batch's time is mostly its kernels'
+code from memory (the plans for 3-16 messages run up to 17 KB of code, the
+pair kernel 2.9 KB). Batches of 1-8 one-block messages after a pause now
+run two at a time on the pair kernel. Mac, ns per message (three pairs):
+after other work 2: 323 -> 247, 4: 216 -> 153, 8: 104 -> 89, 1: 605 ->
+536; after idling 2: 369 -> 258, 4: 340 -> 161, 8: 162 -> 112, past
+BLAKE3 official (209, 118). Gate passed (job 1339), Mac tests passed
+(1338); CI on its own branch (candidate/pairs).
+
+**Round 8, waiting for your decision: the one-chunk kernel rolled**
+(5a68d38, on candidate/no-linger). The scalar kernel for a chunk or less
+was 3.9 KB, its seven rounds unrolled; a cold call's extra time is that
+code (probe, job 1340: 64 B 338 ns after other work, 52 with its code
+warm). It is now 1.0 KB: one round in a loop, each message word's offset
+from a 112-byte schedule table. Mac (jobs 1341-1346, three pairs, ns/B):
+after other work 64 B 13.1 -> 8.8, past SHA-256 ring (9.6-9.8); 256 B
+3.79 -> 2.86 (ring 2.78); 1 KiB 1.48 -> 1.29; after idling 64 B 9.96 ->
+7.99 (ring 8.3-9.2), 256 B 4.04 -> 3.47. The cost: nonstop 64 B +2.3%
+(st) and +2.7% (mt), 1 KiB +1.7-2.3%; the Mac gate holds it (job 1348:
+servil mt lent 64 B +3.5%, over the 3% margin). Both sides are `hash`'s
+own cells (an ease-of-use API): a quarter to a third faster now and then,
+a few percent slower nonstop. Accept it, or I look for a cheaper loop
+(the extra table loads add about 12% more instructions per round, at
+about 6 per cycle on the chain's 24 cycles).
+
+**Pipelined 64-byte messages** (where official still leads on the VM and
+on the Mac with two programs): not fixed; the probes are in the fork's
+NOTES (submit costs 60 ns on the VM; not the slots, the wakes, the
+orderings, or the returned list; the delivery thread's polling is part).
+
+**Tried and reverted:** single messages one at a time in small batches
+after a pause (slower after other work); longer polling pauses in the
+queue (stalled 16 KiB messages).
+
 ## Resume here (October 5, 2026, night): the pass is on servil, records published
 
 bench-hashes 0.15.1 (the gate repeats a busy pair; measurements and map
