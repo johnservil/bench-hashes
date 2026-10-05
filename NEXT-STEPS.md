@@ -12,6 +12,16 @@ before touching kernels or the pool); this repository's are in `NOTES.md`.
 Every open item, from every block below, is in one list: the fork's
 NOTES "Future work"; the blocks below are history.
 
+## Resume here (October 5, 2026, night): the pass is on servil, records published
+
+bench-hashes 0.15.1 (the gate repeats a busy pair; measurements and map
+0.15.0's) is released with records of servil 684274a, the whole pass
+promoted (gate job 1306, tests 1307, CI green); Mac jobs 1308-1309, the
+VM. The 0.15.0 baseline stays in its tag and in `/workspace/tmp/
+baseline-015/`. Open: verify 1 MiB with two programs at once +15-20%; the
+queue's long messages; the queue's 64 B messages. The next runner job
+number is 1310.
+
 ## Progress reports for Zooko (October 5, 2026, evening)
 
 **Summary, before and after the pass, same benchmark (0.15.0), same
