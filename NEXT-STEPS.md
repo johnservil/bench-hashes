@@ -12,6 +12,33 @@ before touching kernels or the pool); this repository's are in `NOTES.md`.
 Every open item, from every block below, is in one list: the fork's
 NOTES "Future work"; the blocks below are history.
 
+## October 6, 2026, day: the breakthrough hunt (reports for Zooko)
+
+Zooko's challenge: a change that improves performance and simplicity
+dramatically. Every candidate was measured; the numbers are in the fork's
+NOTES (the optimisation pass's section). None held up:
+- **Delete SME2** (the largest piece of mechanism): it buys 1.5-1.9x on
+  one thread and for batches; it stays.
+- **A queue in rounds** (one engine thread, each round of pending
+  submissions one pool job: -516 lines, every test passing, zero
+  allocations kept): 1.5-2.6x slower pipelined; between rounds the pool's
+  workers sleep, and each round wakes them in a chain. The queue's
+  dispatch at submission is what its complexity buys.
+- **Delete the partial-chunk kernels** (over half the generated NEON
+  code): they buy 12-27% nonstop at lengths with a partial chunk.
+- **Roll the one-pair kernels too** (2-3x smaller): nonstop 4-18% slower,
+  no clear gain after a pause.
+- **Shorten the scalar chain** by folding rotations into eor: on this core
+  that eor takes two cycles; no gain.
+- **Where cold 2-8 KiB calls wait**: their own kernels' code (k4 10 KB, k8
+  12 KB), at about 16 bytes a nanosecond; the big kernels are limited by
+  the instructions they can issue, so rolling them costs nonstop speed.
+
+The one-chunk kernel's cheaper loop is in the fork's NOTES, Future work
+(one variant tried: slower). Mac jobs 1351-1362 ran on battery, every side
+of each comparison alike; the rest on mains. The next runner job number is
+1378.
+
 ## Night of October 5-6, 2026: reports for Zooko
 
 The next runner job number is 1351. servil = 081ffcd, bench-hashes 0.15.2
