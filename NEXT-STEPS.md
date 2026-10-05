@@ -96,9 +96,9 @@ queue's cells switch speeds between processes (1 KiB here: 0.108 and
 **CI was red** on the fork since round 1: CI builds with warnings as errors,
 and an unused import in queue's tests reached servil 1352c21 (the local
 suites and the Mac's test job build without `-D warnings`). Fixed on the
-candidate (a9ae1d5); PROCEDURES now asks for the fork's CI on the
-candidate's tip before a promotion. servil's CI stays red until the next
-promotion.
+candidate (a9ae1d5, CI green: 74 of 74 jobs); PROCEDURES now asks for
+the fork's CI on the candidate's tip before a promotion. servil's CI
+stays red until the next promotion.
 
 **The Mac gate** has given no verdict since round 3 (jobs 1260-1290; job
 1290 compared servil with itself and found the same: the cause is the
@@ -146,7 +146,9 @@ now); 64-byte messages through the queue (the handover).
 Little's law at the benchmark's 1 MiB in flight); a stream verifier for
 outboards; hash_each_with for one-chunk items.
 
-The next runner job number is 1223.
+The next runner job number is 1303. To promote rounds 2-6: a Mac gate
+that passes (`perf_regress` servil against candidate/no-linger; jobs
+1260-1302 found one busy window each), then the usual note.
 
 ## Resume here (October 2, 2026, evening UTC): one summary, one gate, one tool
 
