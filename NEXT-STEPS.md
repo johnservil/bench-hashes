@@ -12,6 +12,28 @@ before touching kernels or the pool); this repository's are in `NOTES.md`.
 Every open item, from every block below, is in one list: the fork's
 NOTES "Future work"; the blocks below are history.
 
+## October 6, 2026, evening: the queue's wakes, 0.15.3 (reports for Zooko)
+
+servil = 6d9cac3; bench-hashes 0.15.3 released with its records (Mac jobs
+1419-1420, the VM). The comparison with 0.15.2's records is in the
+release's notes; the Mac, servil's better contender:
+- **The queue's wakes halved** (a5e0351): each push wanted a worker awake
+  per task in flight, so workers slept and woke between tasks. Pipelined
+  batches 1.4-1.8x faster, messages from 64 B to 64 MiB 1.3-1.5x, two
+  programs alike; the queue now beats waiting for each call at 64 MiB.
+  Slower: two programs' 4 KiB (+29%).
+- **Against SHA-256** pipelined 64-byte messages changed hands for good
+  (0.516 against 0.579); the other switches were ties within noise.
+- **Also:** update_each no longer searches its turn (quadratic); the
+  outboard calls and the Verifier take the SME2 turn (two copies at once:
+  outboard +10-13%, the Verifier -11-12%); ThreadSanitizer clean (job
+  1416); CI's Wasmtime pinned (the installer broke); the map's taps on a
+  touch screen (0.15.3).
+- **Measured, not taken:** several SME2 units at once (level or slower:
+  power-bound with every core busy).
+
+The next runner job number is 1421.
+
 ## October 6, 2026, day: the breakthrough hunt (reports for Zooko)
 
 Zooko's challenge: a change that improves performance and simplicity
