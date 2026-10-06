@@ -15,14 +15,16 @@ h1 { font-size: 20px; margin: 0 0 4px; } h2 { font-size: 17px; margin: 34px 0 6p
 .legend button { font: 12px inherit; border: 1px solid #d1d5db; background: #fff; border-radius: 12px; padding: 3px 10px 3px 8px; cursor: pointer; }
 .legend button::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; background: var(--c); vertical-align: -1px; }
 .legend button.off { opacity: .35; }
-.layer { font-size: 13px; color: #374151; display: flex; align-items: center; gap: 6px; margin: 14px 0 4px; cursor: pointer; user-select: none; width: max-content; padding: 2px 6px; border-radius: 6px; }
-.layer:hover { background: #ede9fe; } .layer.dim { opacity: .35; } .layer .note { color: #9ca3af; }
+.layer { font-size: 13px; color: #374151; display: flex; align-items: center; gap: 6px; margin: 14px 0 4px; cursor: help; user-select: none; width: max-content; padding: 2px 6px; border-radius: 6px; position: relative; }
+.layer:hover, .layer.show { background: #ede9fe; }
 .grid { position: relative; display: grid; grid-template-columns: 170px repeat(var(--cols), 210px); gap: 6px; width: max-content; }
-.h { font-size: 12px; color: #4b5563; text-align: center; padding: 4px; border-radius: 6px; cursor: pointer; user-select: none; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-.h:hover, .h.lit { background: #ede9fe; color: #111827; } .h.dim { opacity: .35; }
+.h { font-size: 12px; color: #4b5563; text-align: center; padding: 4px; border-radius: 6px; cursor: help; user-select: none; display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; }
+.h:hover, .h.show, .h.lit { background: #ede9fe; color: #111827; }
+/* A header's meaning: under it while the pointer rests on it, or after a click or tap. */
+.means { display: none; position: absolute; top: 100%; left: 0; margin-top: 4px; width: 240px; z-index: 7; background: #111827; color: #fff; font-size: 12px; line-height: 1.4; text-align: left; padding: 7px 9px; border-radius: 6px; }
+.h:hover .means, .h.show .means, .layer:hover .means, .layer.show .means { display: block; }
 .h.row { flex-direction: row; gap: 6px; justify-content: flex-start; text-align: left; }
 .cell { height: 96px; border-radius: 8px; background: #fff; border: 1px solid #e5e7eb; position: relative; cursor: zoom-in; transition: opacity .15s; }
-.cell.dim { opacity: .2; }
 .cell.empty { background: #fafaf9; border-color: #f1f1ef; cursor: default; }
 .cell .note { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; color: #9ca3af; text-align: center; padding: 6px; }
 .cell .call { position: absolute; left: 6px; bottom: 3px; font: 10px ui-monospace, Menlo, monospace; color: #6b7280; }
@@ -34,7 +36,7 @@ a.doc { color: inherit; text-decoration: underline dotted #9ca3af; text-underlin
 #tip .sw { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; }
 </style></head><body>
 <h1>How fast BLAKE3 servil runs, beside other hashes</h1>
-<p class="sub">Each small chart is one measurement: its row is what a program hashes, its column how it calls. Higher lines are faster. Open a chart to read its values under the pointer or where you tap; a row, a column, or a name sets them aside.</p>
+<p class="sub">Each small chart is one measurement: its row is what a program hashes, its column how it calls. Higher lines are faster. Point at a row's or a column's name to see what it means. Open a chart to read its values under the pointer or where you tap; a hash's name below a title hides or shows its lines.</p>
 <div id="sections"></div>
 <div id="tip"></div>
 <script>
@@ -102,7 +104,7 @@ function draw(S, c, w, h, axes) {
 function render() {
   const root = document.getElementById("sections"); root.innerHTML = "";
   SECTIONS.forEach((S, si) => {
-    S.shownNow = S.shownNow || S.shown.slice(); S.dim = S.dim || new Set();
+    S.shownNow = S.shownNow || S.shown.slice();
     const box = document.createElement("div");
     const esc = t => t.replace(/&/g, "&amp;").replace(/</g, "&lt;");
     const rows = S.details.map(([k, v, a]) => `<dt>${esc(k)}</dt><dd>${a ? `<a href="${esc(a)}">${esc(v)}</a>` : esc(v)}</dd>`).join("");
@@ -118,28 +120,26 @@ function render() {
     for (const [layer, lname, lnote] of S.layers) {
       if (S.layers.length > 1) {
         const lay = document.createElement("div");
-        lay.className = "layer" + (S.dim.has("layer:" + layer) ? " dim" : "");
-        lay.innerHTML = glyph(layer, 18) + lname + (lnote ? ` <span class="note">· ${lnote}</span>` : "");
-        lay.onclick = () => flip(S, "layer:" + layer);
+        lay.className = "layer";
+        lay.innerHTML = glyph(layer, 18) + lname + `<span class="means">${lnote}</span>`;
+        lay.onclick = () => lay.classList.toggle("show");
         box.appendChild(lay);
       }
       const g = document.createElement("div"); g.className = "grid"; g.style.setProperty("--cols", S.cols.length); box.appendChild(g);
       g.appendChild(document.createElement("div"));
-      for (const [c, cname] of S.cols) {
-        const h = document.createElement("div"); h.className = "h" + (S.dim.has("col:" + c) ? " dim" : "");
-        h.innerHTML = glyph(c) + cname; h.dataset.key = "col:" + c; h.onclick = () => flip(S, "col:" + c); g.appendChild(h);
+      for (const [c, cname, cmeans] of S.cols) {
+        const h = document.createElement("div"); h.className = "h";
+        h.innerHTML = glyph(c) + cname + `<span class="means">${cmeans}</span>`; h.dataset.key = "col:" + c; h.onclick = () => h.classList.toggle("show"); g.appendChild(h);
       }
-      for (const [r, rname] of S.rows) {
-        const h = document.createElement("div"); h.className = "h row" + (S.dim.has("row:" + r) ? " dim" : "");
-        h.innerHTML = glyph(r) + `<span>${rname}</span>`; h.dataset.key = "row:" + r; h.onclick = () => flip(S, "row:" + r); g.appendChild(h);
+      for (const [r, rname, rmeans] of S.rows) {
+        const h = document.createElement("div"); h.className = "h row";
+        h.innerHTML = glyph(r) + `<span>${rname}</span><span class="means">${rmeans}</span>`; h.dataset.key = "row:" + r; h.onclick = () => h.classList.toggle("show"); g.appendChild(h);
         for (const [c] of S.cols) {
           const cell = document.createElement("div"); cell.className = "cell";
           const key = `${layer}|${r}|${c}`, q = S.cells[key];
-          const off = S.dim.has("row:" + r) || S.dim.has("col:" + c) || S.dim.has("layer:" + layer);
           if (q) {
             cell.innerHTML = draw(S, q, 208, 94, false).svg + `<span class="call"><a class="doc" href="${q.doc}" target="_blank" title="${q.call}: its documentation">${q.call}</a></span>`;
             cell.querySelector("a.doc").onclick = e => e.stopPropagation();
-            if (off) cell.classList.add("dim");
             cell.dataset.key = si + ":" + key;
             cell.onclick = () => open(S, g, cell, q, r, c, layer);
           } else {
@@ -152,7 +152,6 @@ function render() {
     root.appendChild(box);
   });
 }
-function flip(S, key) { S.dim.has(key) ? S.dim.delete(key) : S.dim.add(key); render(); }
 /* Opening: the chart grows from its own cell over the cells' area, the headers in view, and shrinks back into it. */
 function open(S, grid, cell, q, row, col, layer) {
   const gr = grid.getBoundingClientRect(), cr = cell.getBoundingClientRect();

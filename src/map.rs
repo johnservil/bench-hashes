@@ -101,8 +101,9 @@ impl Chart {
 
 struct Section {
     title: &'static str,
-    rows: Vec<(&'static str, &'static str)>,
-    cols: Vec<(&'static str, &'static str)>,
+    /// Rows, columns, and layers: (key, name, what it means).
+    rows: Vec<(&'static str, &'static str, &'static str)>,
+    cols: Vec<(&'static str, &'static str, &'static str)>,
     layers: Vec<(&'static str, &'static str, &'static str)>,
     names: Vec<String>,
     colors: Vec<String>,
@@ -115,15 +116,14 @@ struct Section {
 
 impl Section {
     fn json(&self) -> String {
-        let pairs = |v: &[(&str, &str)]| v.iter().map(|(a, b)| format!("[{},{}]", json(a), json(b))).collect::<Vec<_>>().join(",");
-        let layers = self.layers.iter().map(|(a, b, c)| format!("[{},{},{}]", json(a), json(b), json(c))).collect::<Vec<_>>().join(",");
+        let triples = |v: &[(&str, &str, &str)]| v.iter().map(|(a, b, c)| format!("[{},{},{}]", json(a), json(b), json(c))).collect::<Vec<_>>().join(",");
         let names = self.names.iter().map(|n| json(n)).collect::<Vec<_>>().join(",");
         let colors = self.colors.iter().map(|n| json(n)).collect::<Vec<_>>().join(",");
         let shown = self.shown.iter().map(bool::to_string).collect::<Vec<_>>().join(",");
         let cells = self.cells.iter().map(|(k, c)| format!("{}:{}", json(k), c.json())).collect::<Vec<_>>().join(",");
         let details = self.details.iter().map(|(a, b, c)| format!("[{},{},{}]", json(a), json(b), json(c))).collect::<Vec<_>>().join(",");
         format!("{{\"title\":{},\"rows\":[{}],\"cols\":[{}],\"layers\":[{}],\"names\":[{}],\"colors\":[{}],\"shown\":[{}],\"cells\":{{{}}},\"about\":{},\"details\":[{}]}}",
-            json(self.title), pairs(&self.rows), pairs(&self.cols), layers, names, colors, shown, cells, json(&self.about), details)
+            json(self.title), triples(&self.rows), triples(&self.cols), triples(&self.layers), names, colors, shown, cells, json(&self.about), details)
     }
 }
 
@@ -239,12 +239,24 @@ fn hashing(path: &Path) -> Section {
     }
     Section {
         title: "How fast each hash runs, by what a program hashes and how it calls",
-        rows: vec![("one", "one message"), ("batch", "a batch of short messages"), ("many", "many messages at once, in pieces"),
-                   ("coll", "a collection of items"), ("outb", "a message with its outboard, for verified streaming"),
-                   ("recv", "a message received, verified as it arrives")],
-        cols: vec![("busy", "now and then, after other work"), ("idle", "now and then, after a pause"),
-                   ("lent", "nonstop, waiting for each call"), ("piped", "nonstop, pipelined")],
-        layers: vec![("solo", "one program", ""), ("shared", "two programs at once", "measured nonstop")],
+        rows: vec![
+            ("one", "one message", "One message in memory, of the length along the chart's axis."),
+            ("batch", "a batch of short messages", "Many 64-byte messages hashed together, such as a Merkle tree's nodes; the axis counts the messages."),
+            ("many", "many messages at once, in pieces", "64 messages in progress at once, each arriving in pieces, as a server's uploads arrive."),
+            ("coll", "a collection of items", "A collection of items of every size, such as a repository's objects or a store's files, hashed together."),
+            ("outb", "a message with its outboard, for verified streaming", "A message's hash and its outboard: the hash tree's nodes, kept beside the message so that any part of it can be verified when it is sent (Bao, iroh-blobs)."),
+            ("recv", "a message received, verified as it arrives", "A message received with its hash tree's nodes, each part verified as it arrives (iroh-blobs)."),
+        ],
+        cols: vec![
+            ("busy", "now and then, after other work", "The program hashes now and then and does other work in between, which pushes the hash's code and data out of the CPU's caches."),
+            ("idle", "now and then, after a pause", "The program hashes now and then and waits in between (for the network, say), so the core rests and starts the next hash slowly."),
+            ("lent", "nonstop, waiting for each call", "The program hashes input after input as fast as it can, reading each input once the hash before it has returned."),
+            ("piped", "nonstop, pipelined", "The program hashes input after input as fast as it can, and reads the next inputs while earlier ones hash: it hands its buffers to BLAKE3 servil's Queue, which hashes them on other threads. The other hashes have no such call and hash on the program's thread."),
+        ],
+        layers: vec![
+            ("solo", "one program", "One program hashes; the machine is otherwise quiet."),
+            ("shared", "two programs at once", "Two programs hash at the same moment, nonstop, sharing the machine."),
+        ],
         names: algorithms.iter().map(|a| a.name()).chain([BAO_TREE]).map(str::to_owned).collect(),
         colors: algorithms.iter().map(|a| a.color()).chain(["#15803d"]).map(str::to_owned).collect(),
         shown: algorithms.iter().map(|a| SHOWN_AT_FIRST.contains(a)).chain([true]).collect(),
@@ -292,9 +304,15 @@ fn b3sum(path: &Path) -> Section {
     }
     Section {
         title: "How fast b3sum hashes files, from its start to its exit",
-        rows: vec![("file", "a file"), ("tree", "a tree of files")],
-        cols: vec![("cached", "in the page cache"), ("storage", "read from storage")],
-        layers: vec![("solo", "one program", "")],
+        rows: vec![
+            ("file", "a file", "One file, of the size along the chart's axis."),
+            ("tree", "a tree of files", "Many files, given to b3sum in one run."),
+        ],
+        cols: vec![
+            ("cached", "in the page cache", "Each file was read moments before, so the operating system holds it in memory."),
+            ("storage", "read from storage", "Each file was dropped from the operating system's memory before the run, so b3sum reads it from the disk."),
+        ],
+        layers: vec![("solo", "one program", "One program hashes; the machine is otherwise quiet.")],
         colors: (0..names.len()).map(|i| palette[i % palette.len()].to_owned()).collect(),
         shown: names.iter().map(|_| true).collect(),
         names,

@@ -475,8 +475,9 @@ program and then for two at once. A cell the run did not measure stays
 empty, in its place. Clicking a chart opens it over the cells, its row's
 and column's headers lit, with its axes and, under the pointer, each
 contender's rate and time per message (or batch, or run) at that point;
-clicking again puts it back. A row's or column's header greys its charts,
-and a hash's name in the legend hides or shows its lines in every chart.
+clicking again, or Escape, puts it back. A row's or column's name shows
+what it means while the pointer rests on it, or after a click or tap, and
+a hash's name in the legend hides or shows its lines in every chart.
 Each chart names the call BLAKE3 servil mt makes there, a link to that
 call's documentation. A link to `bench-hashes.map.html#solo|one|lent`
 opens that chart; the guide links its answers so. When the folder also

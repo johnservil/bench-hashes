@@ -63,9 +63,10 @@ server's uploads), a collection of items of every size (a repository's
 objects, a store's files), a message with its outboard, for verified
 streaming, and a message received in that form, verified as it arrives. Its columns say how the program calls: now and then, *after
 other work* or *after a pause*, and nonstop, *waiting for each call* or
-*pipelined*. Higher lines are faster. Open a chart to read its values
-under the pointer or where you tap; a row, a column, or a hash's name
-sets them aside; each call's name links to its documentation.
+*pipelined*; point at a row's or a column's name, or tap it, to see
+what it means. Higher lines are faster. Open a chart to read its values
+under the pointer or where you tap; a hash's name hides or shows its
+lines; each call's name links to its documentation.
 
 Under each section's title the map says where and when the run was made,
 and whether other programs kept the computer busy; "About this run" says
