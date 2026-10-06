@@ -1,7 +1,9 @@
 // Drives a generated bench-hashes.map.html in Chromium: no script error;
 // every chart opens in place and closes; its row and column headers light
 // while it is open; a header greys its charts; every call name links to its
-// documentation; a link to one chart (#solo|one|lent) opens it.
+// documentation; a link to one chart (#solo|one|lent) opens it; on a touch
+// screen a tap shows the values at its point, the chart open, and the
+// button puts it back.
 // npm install playwright; node map.js MAP.html [CHROMIUM]
 const path = require('path');
 const assert = require('assert');
@@ -43,7 +45,21 @@ const { chromium } = require('playwright');
   await page.goto(url + '#' + encodeURIComponent(first.split(':').slice(1).join(':')));
   await page.waitForTimeout(300);
   assert.equal(await page.locator('.zoom').count(), 1, 'a link to one chart opens it');
+  // A touch screen: tap a chart open, tap it for its values, tap the button.
+  const phone = await browser.newPage({ viewport: { width: 420, height: 860 }, hasTouch: true, isMobile: true });
+  phone.on('pageerror', e => errors.push(e.message));
+  await phone.goto(url);
+  await phone.locator('.cell:not(.empty)').first().tap();
+  await phone.waitForTimeout(300);
+  const zoom = await phone.locator('.zoom').boundingBox();
+  await phone.touchscreen.tap(zoom.x + zoom.width * 0.6, zoom.y + zoom.height * 0.5);
+  await phone.waitForTimeout(150);
+  assert.equal(await phone.locator('.zoom').count(), 1, 'a tap on an open chart keeps it open');
+  assert(await phone.locator('#tip').isVisible(), 'a tap shows the values at its point');
+  await phone.locator('.zoom .close').tap();
+  await phone.waitForTimeout(300);
+  assert.equal(await phone.locator('.zoom').count(), 0, 'the button puts the chart back');
   assert.deepEqual(errors, []);
-  console.log(`${charts} charts opened and closed, ${docs.length} documentation links, headers, a chart's link: pass`);
+  console.log(`${charts} charts opened and closed, ${docs.length} documentation links, headers, a chart's link, touch: pass`);
   await browser.close();
 })().catch(e => { console.error(e); process.exit(1); });

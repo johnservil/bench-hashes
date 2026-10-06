@@ -23,12 +23,12 @@ h1 { font-size: 20px; margin: 0 0 4px; } h2 { font-size: 17px; margin: 34px 0 6p
 a.doc { color: inherit; text-decoration: underline dotted #9ca3af; text-underline-offset: 2px; } a.doc:hover { color: #6d28d9; text-decoration-color: #6d28d9; }
 .zoom { position: absolute; background: #fff; border: 1px solid #c4b5fd; border-radius: 10px; box-shadow: 0 8px 30px rgba(0,0,0,.12); z-index: 5; overflow: hidden; transition: left .2s, top .2s, width .2s, height .2s; cursor: zoom-out; }
 .zoom .title { position: absolute; left: 14px; top: 10px; font-size: 13px; color: #374151; display: flex; gap: 6px; align-items: center; }
-.zoom .close { position: absolute; right: 12px; top: 8px; font-size: 12px; color: #6b7280; }
+.zoom .close { position: absolute; right: 8px; top: 6px; font-size: 12px; color: #4b5563; background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 12px; padding: 3px 10px; cursor: pointer; }
 #tip { position: fixed; pointer-events: none; background: #111827; color: #fff; font-size: 12px; padding: 6px 8px; border-radius: 6px; display: none; z-index: 9; white-space: nowrap; }
 #tip .sw { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; }
 </style></head><body>
 <h1>How fast BLAKE3 servil runs, beside other hashes</h1>
-<p class="sub">Each small chart is one measurement: its row says what the program hashes, its column how it works. Higher lines are faster. Click a chart to open it, with the exact values under the pointer; click again to put it back. Click a row, a column, or a name to set it aside.</p>
+<p class="sub">Each small chart is one measurement: its row says what the program hashes, its column how it works. Higher lines are faster. Click a chart to open it, with the exact values under the pointer; click again to put it back (on a touch screen, tap the chart for the values at that point, and ✕ to put it back). Click a row, a column, or a name to set it aside.</p>
 <div id="sections"></div>
 <div id="tip"></div>
 <script>
@@ -158,13 +158,17 @@ function open(S, grid, cell, q, row, col, layer) {
   const d = draw(S, q, W, H, true);
   const rn = S.rows.find(r => r[0] === row)[1], cn = S.cols.find(c => c[0] === col)[1];
   const ln = S.layers.length > 1 ? ", " + S.layers.find(l => l[0] === layer)[1] : "";
-  z.innerHTML = d.svg + `<div class="title">${glyph(row, 16)}${glyph(col, 16)} ${rn}, ${cn}${ln}: <code><a class="doc" href="${q.doc}" target="_blank" title="its documentation">${q.call}</a></code></div><div class="close">click to put back</div>`;
+  z.innerHTML = d.svg + `<div class="title">${glyph(row, 16)}${glyph(col, 16)} ${rn}, ${cn}${ln}: <code><a class="doc" href="${q.doc}" target="_blank" title="its documentation">${q.call}</a></code></div><button class="close">✕ put back</button>`;
   z.querySelector("a.doc").onclick = e => e.stopPropagation();
   requestAnimationFrame(() => place({ left: X0, top: Y0, width: W, height: H }));
   const lit = [...grid.querySelectorAll(".h")].filter(h => h.dataset.key === "row:" + row || h.dataset.key === "col:" + col);
   lit.forEach(h => h.classList.add("lit"));
   const tip = document.getElementById("tip"), cur = z.querySelector(".cursor");
-  z.onmousemove = e => {
+  /* A touch's tap shows the values at its point (the finger moves no
+     pointer); a mouse's click, or the button, puts the chart back. */
+  let touch = false;
+  z.onpointerdown = e => { touch = e.pointerType !== "mouse"; };
+  const show = e => {
     const zr = z.getBoundingClientRect(), mx = e.clientX - zr.left;
     const slot = (d.w - d.L - d.R) / (q.cases ? d.n : Math.max(d.n - 1, 1));
     const k = d.n === 1 ? 0 : Math.max(0, Math.min(d.n - 1, Math.round((mx - d.L) / slot - (q.cases ? 0.5 : 0))));
@@ -172,10 +176,16 @@ function open(S, grid, cell, q, row, col, layer) {
     const rows = q.series.map((s, i) => s && S.shownNow[i] ? [i, 1 / s[k], s[k]] : null).filter(Boolean).sort((a, b) => b[1] - a[1]);
     const time = ns => ns >= 1e6 ? (ns / 1e6).toPrecision(3) + " ms" : ns >= 1e3 ? (ns / 1e3).toPrecision(3) + " µs" : ns.toPrecision(3) + " ns";
     tip.innerHTML = `<b>${q.sizes[k]}</b><br>` + rows.map(([i, rate, t]) => `<span class="sw" style="background:${S.colors[i]}"></span>${S.names[i]}: ${rate.toPrecision(3)} ${q.unit} · ${time(t * q.per[k])} ${q.what}`).join("<br>");
-    tip.style.display = "block"; tip.style.left = (e.clientX + 14) + "px"; tip.style.top = (e.clientY + 10) + "px";
+    tip.style.display = "block";
+    tip.style.left = Math.min(e.clientX + 14, window.innerWidth - tip.offsetWidth - 8) + "px";
+    /* Above a finger, which would hide it; below a mouse pointer. */
+    tip.style.top = (touch ? Math.max(8, e.clientY - tip.offsetHeight - 24) : e.clientY + 10) + "px";
   };
+  z.onmousemove = e => { if (!touch) show(e); };
   z.onmouseleave = () => { tip.style.display = "none"; cur.setAttribute("visibility", "hidden"); };
-  z.onclick = () => { tip.style.display = "none"; lit.forEach(h => h.classList.remove("lit")); place(start); setTimeout(() => z.remove(), 220); };
+  const close = () => { tip.style.display = "none"; lit.forEach(h => h.classList.remove("lit")); place(start); setTimeout(() => z.remove(), 220); };
+  z.querySelector(".close").onclick = e => { e.stopPropagation(); close(); };
+  z.onclick = e => { if (touch) show(e); else close(); };
 }
 render();
 /* A link to one chart (#solo|one|lent, or #1:solo|file|cached for a later section) opens it. */

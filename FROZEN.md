@@ -25,6 +25,13 @@ release, so results of different benchmarks are never read as alike. The
 documents that explain the benchmark (README, METHODOLOGY, CONTRIBUTING,
 the notes) may still change, to say it better.
 
+**Changes in 0.15.3** (Zooko, October 6, 2026), the map's touch alone;
+the measurements are 0.15.0's:
+- **On a touch screen a tap on an open chart shows the values at its
+  point**, as a mouse's pointer does, and the chart's button puts it back
+  (a tap anywhere put it back before: Zooko, "tapping on the plot closes
+  it instead of opening a tooltip"). A mouse works as before.
+
 **Changes in 0.15.2** (Zooko, October 6, 2026), the map's words alone;
 the measurements are 0.15.0's:
 - **The first column reads "now and then, after other work"**, as the
