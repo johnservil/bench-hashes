@@ -1258,9 +1258,10 @@ const DEFAULT_CONTENDERS: [Algorithm; 4] =
  * mt matches servil below its threading threshold), SHA-256 ring (the
  * faster SHA-256 from 256 B up; sha2, faster below and in 64-byte
  * batches, is one click away), and the crates.io BLAKE3 most programs
- * use. A run with none of them opens with every contender shown.
+ * use, and BLAKE3 commonware, which draws in the batch charts alone. A
+ * run with none of them opens with every contender shown.
  */
-const SHOWN_AT_FIRST: [Algorithm; 3] = [Algorithm::Blake3ServilMt, Algorithm::Sha256Ring, Algorithm::Blake3];
+const SHOWN_AT_FIRST: [Algorithm; 4] = [Algorithm::Blake3ServilMt, Algorithm::Sha256Ring, Algorithm::Blake3, Algorithm::Blake3Commonware];
 
 /*
  * Contenders that run only when --contenders names them, left out of
