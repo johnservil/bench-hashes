@@ -24,7 +24,7 @@ dependencies = [
 
 [[package]]
 name = "bench-hashes"
-version = "0.15.2+4992df6b46f8f4972c5a5116aed43026fff990c8"
+version = "0.15.3"
 dependencies = [
  "bao-tree",
  "blake3",
