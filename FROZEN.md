@@ -34,6 +34,7 @@ the measurements are 0.15.0's:
   time, the machine's cores, the power, the load in full, bench-hashes's
   release and commit, BLAKE3 servil's commit, the crates' versions, the
   compiler and target, and the samples file, linked to the exact code.
+- **Escape puts an open chart back** (Zooko).
 
 **Changes in 0.15.3** (Zooko, October 6, 2026), the map's touch alone;
 the measurements are 0.15.0's:

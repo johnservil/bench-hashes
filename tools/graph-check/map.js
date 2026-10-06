@@ -45,6 +45,10 @@ const { chromium } = require('playwright');
   await page.goto(url + '#' + encodeURIComponent(first.split(':').slice(1).join(':')));
   await page.waitForTimeout(300);
   assert.equal(await page.locator('.zoom').count(), 1, 'a link to one chart opens it');
+  // Escape puts the chart the link opened back.
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(300);
+  assert.equal(await page.locator('.zoom').count(), 0, 'Escape puts the chart back');
   // A touch screen: tap a chart open, tap it for its values, tap the button.
   const phone = await browser.newPage({ viewport: { width: 420, height: 860 }, hasTouch: true, isMobile: true });
   phone.on('pageerror', e => errors.push(e.message));
@@ -60,6 +64,6 @@ const { chromium } = require('playwright');
   await phone.waitForTimeout(300);
   assert.equal(await phone.locator('.zoom').count(), 0, 'the button puts the chart back');
   assert.deepEqual(errors, []);
-  console.log(`${charts} charts opened and closed, ${docs.length} documentation links, headers, a chart's link, touch: pass`);
+  console.log(`${charts} charts opened and closed, ${docs.length} documentation links, headers, a chart's link, Escape, touch: pass`);
   await browser.close();
 })().catch(e => { console.error(e); process.exit(1); });

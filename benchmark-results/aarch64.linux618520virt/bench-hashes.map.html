@@ -191,8 +191,11 @@ function open(S, grid, cell, q, row, col, layer) {
   };
   z.onmousemove = e => { if (!touch) show(e); };
   z.onmouseleave = () => { tip.style.display = "none"; cur.setAttribute("visibility", "hidden"); };
-  const close = () => { tip.style.display = "none"; lit.forEach(h => h.classList.remove("lit")); place(start); setTimeout(() => z.remove(), 220); };
+  const close = () => { document.removeEventListener("keydown", onKey); tip.style.display = "none"; lit.forEach(h => h.classList.remove("lit")); place(start); setTimeout(() => z.remove(), 220); };
   z.querySelector(".close").onclick = e => { e.stopPropagation(); close(); };
+  /* Escape puts it back too. */
+  const onKey = e => { if (e.key === "Escape") { document.removeEventListener("keydown", onKey); close(); } };
+  document.addEventListener("keydown", onKey);
   z.onclick = e => { if (touch) show(e); else close(); };
 }
 render();
