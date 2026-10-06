@@ -60,6 +60,11 @@ features = ["std"]
 [dependencies.sha1-checked]
 version = "0.10"
 
+# commonware-cryptography's BLAKE3 batch kernels (pull request #4982),
+# copied unchanged at its commit (contenders/commonware-blake3/Cargo.toml).
+[dependencies.commonware-blake3]
+path = "contenders/commonware-blake3"
+
 [build-dependencies]
 # Used to fingerprint a dirty benchmark working tree.
 [build-dependencies.blake3]

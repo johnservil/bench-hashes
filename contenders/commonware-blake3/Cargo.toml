@@ -1,0 +1,19 @@
+# commonware-cryptography's BLAKE3 batch kernels, as a contender: the files
+# under src/blake3/simd/ are commonwarexyz/monorepo's
+# cryptography/src/blake3/simd/ at commit 3aa183f0592d65e23b6f9435f938ca6659d64bd1
+# (pull request #4982), unchanged; src/blake3/mod.rs keeps that commit's
+# `Digest`, `gather`, and `Blake3::hash_many`, without the rest of the crate.
+[package]
+name = "commonware-blake3"
+version = "0.0.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[features]
+default = ["std"]
+std = []
+
+[dependencies]
+blake3 = { version = "1", default-features = false }
+cfg-if = "1"

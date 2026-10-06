@@ -30,6 +30,7 @@ dependencies = [
  "blake3",
  "blake3-servil",
  "clocks",
+ "commonware-blake3",
  "ring",
  "sha1-checked",
  "sha2",
@@ -114,6 +115,14 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 name = "clocks"
 version = "0.1.0"
 source = "git+https://github.com/johnservil/BLAKE3?branch=servil#6d9cac3af4ac74b1e1e84595e65bf433571fc5b8"
+
+[[package]]
+name = "commonware-blake3"
+version = "0.0.0"
+dependencies = [
+ "blake3",
+ "cfg-if",
+]
 
 [[package]]
 name = "const-oid"

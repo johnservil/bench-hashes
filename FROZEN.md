@@ -25,8 +25,18 @@ release, so results of different benchmarks are never read as alike. The
 documents that explain the benchmark (README, METHODOLOGY, CONTRIBUTING,
 the notes) may still change, to say it better.
 
-**Changes in 0.15.4** (Zooko, October 6, 2026), the map's words alone;
-the measurements are 0.15.0's:
+**Changes in 0.16.0** (Zooko, October 6, 2026):
+- **A new contender, BLAKE3 commonware** (`blake3-commonware`):
+  commonware-cryptography's BLAKE3 batch kernels from its pull request
+  #4982 (commit 3aa183f0), which hash one message per SIMD lane (NEON 4
+  on AArch64; AVX2 8 and AVX-512 16 on x86-64), so that their author can
+  compare them with BLAKE3 servil's on x86-64 machines we lack. It takes
+  part in the batch use cases alone (its other calls are BLAKE3
+  official's), through `Blake3::hash_many` over the batch's 64-byte
+  messages, its digests in a new `Vec` each call; on one thread. Its
+  kernels are copied unchanged into `contenders/commonware-blake3`, which
+  keeps the benchmark's build free of the rest of commonware's crate.
+  `--all` includes it.
 - **A run's line says what every reader needs; its provenance sits
   behind a door** (Zooko: the line was too much information, and the
   provenance missing). The line: the machine, its OS, the day, and how

@@ -87,6 +87,11 @@ The contenders:
   two implementations, since each is fastest at some sizes on some
   computers.
 
+`--all` adds the official BLAKE3 crate, SHA3-256, SHA-1DC, Apple's
+CommonCrypto SHA-256, and **BLAKE3 commonware**: the batch kernels of
+[commonware](https://github.com/commonwarexyz/monorepo/pull/4982)'s
+cryptography crate, measured on batches of 64-byte messages.
+
 ## Which function to use
 
 Programmers who want this speed in their own program open
@@ -99,8 +104,7 @@ a link to its chart on the map. Every
 question has an "I'm not sure" answer that leads to a safe choice.
 
 `cargo run --release -- --all` adds every other hash the benchmark knows
-(the official BLAKE3 crate, SHA3-256, SHA-1DC, and on Apple
-CommonCrypto's SHA-256) and takes longer; `--contenders` picks any set
+(above) and takes longer; `--contenders` picks any set
 by name, including the official crate on its thread pool
 (`blake3-official-mt`), which runs only when named (`--list` shows the
 names).
