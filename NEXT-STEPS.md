@@ -11,31 +11,24 @@ repository's are in `NOTES.md`, its settled questions under "What is
 settled". Every open item is in one list: the fork's NOTES, "Future
 work". This file says where the work stands; its history is in git.
 
-## Where things stand (October 6, 2026)
+## Where things stand (October 6, 2026, evening)
 
-- **The fork**: `servil` = 6d9cac3. `candidate/no-linger` (tip 81fa2b2)
-  holds, each through the VM's check: the API docs rewritten for callers;
-  the startup self-test in `no_std` builds; b3sum hashing several files
-  at once; an unused hidden constructor removed; the runner's
-  `blake3-commonware`. Mac tests and Mac `perf_regress` passed (jobs
-  1421-1422, battery); CI passed on 67a2006 and runs on the tip.
-- **bench-hashes**: 0.16.0 on `main` (tag `v0.16.0+9488c3e…`), its lock
-  at servil 6d9cac3: the contender BLAKE3 commonware (batches), the map's
-  explained headers and provenance door, Escape, `map --beside` (and
-  `beside/0.15.2-0.15.3/`). It has no records of its own yet.
-- **Shared with commonware**: `shares/commonware-2026-10-06/` (Mac job
-  1425, mains), with its link and screenshot.
+- **The fork**: `servil` = 9d9f3d6 (= `candidate/no-linger`): the API
+  docs rewritten for callers; the startup self-test in every build;
+  b3sum hashing several files at once (trees 1.6-3.4x faster on the
+  Mac). A rolled NEON path for calls after a pause was built, measured
+  slower, and reverted (NOTES, "How much of a cold one-shot call is its
+  code"): the cold cost of 2-8 KiB calls is the unrolled kernels' code,
+  and only rolled hybrid kernels beside them could recover it, for about
+  10%.
+- **bench-hashes**: 0.16.1 on `main` with its records (Mac jobs
+  1433-1434, mains, quiet; the VM), its GitHub Release, and
+  `beside/0.15.3-0.16.1/`. The commonware share is in
+  `shares/commonware-2026-10-06/`.
 
-## Next, in order
+## Next
 
-1. Promote `candidate/no-linger` to `servil` once CI passes on its tip;
-   its perf note; pin bench-hashes to it (`cargo update -p
-   blake3-servil`) as 0.16.1.
-2. Records for 0.16.x: the Mac (`--all` and b3sum, on mains, the VM
-   idle) and the VM; `beside/0.15.3-0.16.x/`; the GitHub Release.
-3. The fork's NOTES, "Future work".
-
-The next runner job number is 1426.
+The fork's NOTES, "Future work". The next runner job number is 1435.
 
 ## Commands
 
