@@ -523,7 +523,8 @@ Zooko asked for a historical sanity check: compare similar tasks for
 servil and SHA-256 ring against git's recorded results, distinguish
 implementation changes, defects, fixed old measurements, and correctly
 different workloads. Native job evidence and the detailed comparison
-will follow here and in NEXT-STEPS; each unexplained difference stays
+will follow here and in NEXT-STEPS (its git history, September 30,
+2026); each unexplained difference stays
 open. The first four native jobs (776-779) failed before measurement,
 from installed perf_regress.py's missing speeds.py dependency. The fork's
 setup now copies it; native diagnostics use the checkout's tool tonight.
@@ -621,8 +622,8 @@ branch is based on 9cea065 and has no warm-up. Consequently the nominal
 1820efb/d005716 sides both used that same unwarmed helper. Job 788 gives
 no warm-versus-unwarmed measurement. Combining all eight configurations
 also overstates evidence about one executable's repeatability. The
-current NEXT-STEPS resume block records the corrected scope and next
-experiment; it supersedes prior causal statements here.
+NEXT-STEPS block of that day (its git history) recorded the corrected
+scope and next experiment; it supersedes prior causal statements here.
 
 **Archaeology (jobs 785-787):** v0.1.0, v0.2.0, and v0.3.0 each against
 today's fork under today's benchmark: no slower solo cell for one
@@ -666,9 +667,9 @@ records and current cold-cache cells differ in workload.
 The fork's latest timing-helper warm-up (d005716) is committed and pinned,
 but its native effect needs an experiment that actually varies clocks.
 General regression comparisons intentionally share current clocks across
-sides: keep that purpose separate from clocks A/B experiments. See the
-newest NEXT-STEPS block for branches, raw evidence, UI fidelity issues,
-user decisions, and precise resumption instructions.
+sides: keep that purpose separate from clocks A/B experiments. NEXT-STEPS's
+git history (September 30, 2026) holds that day's branches, raw evidence,
+and decisions.
 
 ### Cold calls: the harness doubles them (jobs 789-791, September 30, evening)
 
