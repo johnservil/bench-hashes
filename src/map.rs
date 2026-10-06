@@ -345,7 +345,7 @@ fn b3sum(path: &Path) -> Section {
 fn run_name(headers: &[(String, String)]) -> String {
     let version = header(headers, "bench-hashes version").split('+').next().unwrap_or("");
     let fork = header(headers, "blake3-servil source").split("commit ").nth(1).map_or("", |c| &c[..c.len().min(7)]);
-    format!("bench-hashes {version}, BLAKE3 servil {fork}")
+    if fork.is_empty() { format!("bench-hashes {version}") } else { format!("bench-hashes {version}, BLAKE3 servil {fork}") }
 }
 
 /// Draw `old`'s runs beside `new`'s: each chart's earlier means, for the
