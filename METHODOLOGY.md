@@ -482,6 +482,12 @@ call's documentation. A link to `bench-hashes.map.html#solo|one|lent`
 opens that chart; the guide links its answers so. When the folder also
 holds a b3sum run's samples, the map adds a section for it in the same
 form: a file or a tree of files, in the page cache or read from storage.
+Under each section's title one line says where and when the run ran and
+whether other programs kept the machine busy; its door, "About this run",
+holds the provenance: the time, the machine, the power and the load in
+full, bench-hashes's release and commit, BLAKE3 servil's commit, the
+crates' versions, the compiler and target, and the samples file, each
+linked where a link exists.
 The map comes from the samples files alone (`bench-hashes map FOLDER`
 draws it again), so a stored record draws the same map its run did.
 

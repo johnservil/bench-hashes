@@ -25,6 +25,16 @@ release, so results of different benchmarks are never read as alike. The
 documents that explain the benchmark (README, METHODOLOGY, CONTRIBUTING,
 the notes) may still change, to say it better.
 
+**Changes in 0.15.4** (Zooko, October 6, 2026), the map's words alone;
+the measurements are 0.15.0's:
+- **A run's line says what every reader needs; its provenance sits
+  behind a door** (Zooko: the line was too much information, and the
+  provenance missing). The line: the machine, its OS, the day, and how
+  many seconds other programs kept it busy. "About this run" opens on the
+  time, the machine's cores, the power, the load in full, bench-hashes's
+  release and commit, BLAKE3 servil's commit, the crates' versions, the
+  compiler and target, and the samples file, linked to the exact code.
+
 **Changes in 0.15.3** (Zooko, October 6, 2026), the map's touch alone;
 the measurements are 0.15.0's:
 - **On a touch screen a tap on an open chart shows the values at its

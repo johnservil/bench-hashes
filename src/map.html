@@ -4,7 +4,13 @@
 body { font: 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; color: #111827; margin: 24px; background: #fdfdfc; }
 h1 { font-size: 20px; margin: 0 0 4px; } h2 { font-size: 17px; margin: 34px 0 6px; }
 .sub { color: #6b7280; margin: 0 0 14px; max-width: 980px; }
-.about { color: #9ca3af; font-size: 12px; margin: 0 0 8px; }
+.about { color: #6b7280; font-size: 12px; margin: 0 0 2px; }
+.run { color: #9ca3af; font-size: 12px; margin: 0 0 8px; }
+.run summary { cursor: pointer; width: max-content; }
+.run dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 6px 0 4px 14px; max-width: 980px; }
+.run dt { color: #6b7280; }
+.run dd { margin: 0; overflow-wrap: anywhere; }
+.run a { color: inherit; }
 .legend { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 6px; }
 .legend button { font: 12px inherit; border: 1px solid #d1d5db; background: #fff; border-radius: 12px; padding: 3px 10px 3px 8px; cursor: pointer; }
 .legend button::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; background: var(--c); vertical-align: -1px; }
@@ -98,7 +104,9 @@ function render() {
   SECTIONS.forEach((S, si) => {
     S.shownNow = S.shownNow || S.shown.slice(); S.dim = S.dim || new Set();
     const box = document.createElement("div");
-    box.innerHTML = `<h2>${S.title}</h2><p class="about">${S.about}</p>`;
+    const esc = t => t.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+    const rows = S.details.map(([k, v, a]) => `<dt>${esc(k)}</dt><dd>${a ? `<a href="${esc(a)}">${esc(v)}</a>` : esc(v)}</dd>`).join("");
+    box.innerHTML = `<h2>${S.title}</h2><p class="about">${esc(S.about)}</p><details class="run"><summary>About this run</summary><dl>${rows}</dl></details>`;
     const legend = document.createElement("div"); legend.className = "legend";
     S.names.forEach((nm, i) => {
       const b = document.createElement("button"); b.textContent = nm; b.style.setProperty("--c", S.colors[i]);

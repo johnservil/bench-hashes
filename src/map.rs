@@ -109,6 +109,8 @@ struct Section {
     shown: Vec<bool>,
     cells: Vec<(String, Chart)>,
     about: String,
+    /// The run's provenance, behind its door: (label, text, link or "").
+    details: Vec<(String, String, String)>,
 }
 
 impl Section {
@@ -119,8 +121,9 @@ impl Section {
         let colors = self.colors.iter().map(|n| json(n)).collect::<Vec<_>>().join(",");
         let shown = self.shown.iter().map(bool::to_string).collect::<Vec<_>>().join(",");
         let cells = self.cells.iter().map(|(k, c)| format!("{}:{}", json(k), c.json())).collect::<Vec<_>>().join(",");
-        format!("{{\"title\":{},\"rows\":[{}],\"cols\":[{}],\"layers\":[{}],\"names\":[{}],\"colors\":[{}],\"shown\":[{}],\"cells\":{{{}}},\"about\":{}}}",
-            json(self.title), pairs(&self.rows), pairs(&self.cols), layers, names, colors, shown, cells, json(&self.about))
+        let details = self.details.iter().map(|(a, b, c)| format!("[{},{},{}]", json(a), json(b), json(c))).collect::<Vec<_>>().join(",");
+        format!("{{\"title\":{},\"rows\":[{}],\"cols\":[{}],\"layers\":[{}],\"names\":[{}],\"colors\":[{}],\"shown\":[{}],\"cells\":{{{}}},\"about\":{},\"details\":[{}]}}",
+            json(self.title), pairs(&self.rows), pairs(&self.cols), layers, names, colors, shown, cells, json(&self.about), details)
     }
 }
 
@@ -131,11 +134,68 @@ fn header<'a>(headers: &'a [(String, String)], key: &str) -> &'a str {
     headers.iter().find(|(k, _)| k == key).map_or("", |(_, v)| v.as_str())
 }
 
-/// The run a samples file holds, in a line: machine, time, version, load.
-fn about(headers: &[(String, String)], load: &str, power: &str) -> String {
-    format!("{}, {} CPUs, {} · {} · bench-hashes {} · {} · {}",
-        header(headers, "cpu type"), header(headers, "cpu count"), header(headers, "os type"),
-        header(headers, "timestamp"), header(headers, "bench-hashes version").split('+').next().unwrap_or(""), load, power)
+/// The run a samples file holds, in a line for every reader: the machine,
+/// the day, and whether other programs kept it busy (the details are
+/// behind the run's door).
+fn about(headers: &[(String, String)], load: &str) -> String {
+    let day = header(headers, "timestamp").split(' ').next().unwrap_or("");
+    let busy = load.split("busy in ").nth(1).and_then(|rest| {
+        let mut words = rest.split_whitespace();
+        Some((words.next()?.to_owned(), words.nth(1)?.to_owned()))
+    });
+    let load = match busy {
+        Some((n, of)) => format!("other programs busy in {n} of {of} seconds"),
+        None if load.starts_with("quiet") => "the machine quiet".to_owned(),
+        None => "load not measured".to_owned(),
+    };
+    let os = header(headers, "os type");
+    let os = if os.starts_with("darwin") { "macOS" } else if os.starts_with("linux") { "Linux" } else { os };
+    format!("{}, {} CPUs, {os} · {day} · {load}", header(headers, "cpu type"), header(headers, "cpu count"))
+}
+
+/// The run's provenance, behind its door, for the readers who want it:
+/// when and where it ran, the software at its exact commits (links to
+/// them), the build, the power and the load, and the samples file.
+fn details(headers: &[(String, String)], load: &str, power: &str, samples: &str) -> Vec<(String, String, String)> {
+    let mut out: Vec<(String, String, String)> = Vec::new();
+    let mut add = |label: &str, text: String, link: String| {
+        if !text.is_empty() {
+            out.push((label.to_owned(), text, link));
+        }
+    };
+    add("Measured", header(headers, "timestamp").to_owned(), String::new());
+    let identity = header(headers, "cpu identity");
+    let cores = |level: &str| identity.split(" · ").find_map(|f| f.strip_prefix(&format!("hw.perflevel{level}.physicalcpu: ")).map(str::to_owned));
+    let machine = match (cores("0"), cores("1")) {
+        (Some(p), Some(e)) => format!("{}, {p} performance and {e} efficiency cores, {}", header(headers, "cpu type"), header(headers, "os type")),
+        _ => format!("{}, {} CPUs, {}", header(headers, "cpu type"), header(headers, "cpu count"), header(headers, "os type")),
+    };
+    add("Machine", machine, String::new());
+    add("Power", power.to_owned(), String::new());
+    add("Other programs", load.to_owned(), String::new());
+    let version = header(headers, "bench-hashes version");
+    let commit = header(headers, "git commit");
+    let clean = header(headers, "git clean status");
+    add("bench-hashes", version.split('+').next().unwrap_or("").to_owned(),
+        format!("https://github.com/johnservil/bench-hashes/releases/tag/v{}", version.replace('+', "%2B")));
+    add("bench-hashes commit", format!("{commit}{}", if clean.is_empty() || clean == "clean" { String::new() } else { format!(" ({clean})") }),
+        format!("https://github.com/johnservil/bench-hashes/tree/{commit}"));
+    let servil = header(headers, "blake3-servil source");
+    if let Some(at) = servil.split("; commit ").nth(1) {
+        let fork = at.split([';', ' ']).next().unwrap_or("");
+        add("BLAKE3 servil", format!("github.com/johnservil/BLAKE3 at {fork}"), format!("https://github.com/johnservil/BLAKE3/tree/{fork}"));
+    }
+    for (label, key) in [("BLAKE3 official", "blake3 source"), ("SHA-256", "sha256 source")] {
+        add(label, header(headers, key).split(';').next().unwrap_or("").to_owned(), String::new());
+    }
+    for (label, key) in [("Compiler", "rust compiler"), ("Target", "build target"), ("Files", "files")] {
+        add(label, header(headers, key).to_owned(), String::new());
+    }
+    for (k, v) in headers.iter().filter(|(k, _)| k.starts_with("contender ")) {
+        add(&format!("b3sum {}", &k["contender ".len()..]), v.rsplit('/').next().unwrap_or(v).to_owned(), String::new());
+    }
+    add("Samples", samples.to_owned(), samples.to_owned());
+    out
 }
 
 fn hashing(path: &Path) -> Section {
@@ -189,7 +249,8 @@ fn hashing(path: &Path) -> Section {
         colors: algorithms.iter().map(|a| a.color()).chain(["#15803d"]).map(str::to_owned).collect(),
         shown: algorithms.iter().map(|a| SHOWN_AT_FIRST.contains(a)).chain([true]).collect(),
         cells,
-        about: about(&file.headers, &file.load, &file.power),
+        about: about(&file.headers, &file.load),
+        details: details(&file.headers, &file.load, &file.power, "bench-hashes.samples.tsv"),
     }
 }
 
@@ -238,7 +299,8 @@ fn b3sum(path: &Path) -> Section {
         shown: names.iter().map(|_| true).collect(),
         names,
         cells,
-        about: about(&file.headers, &file.load, &file.power),
+        about: about(&file.headers, &file.load),
+        details: details(&file.headers, &file.load, &file.power, "b3sum.samples.tsv"),
     }
 }
 
