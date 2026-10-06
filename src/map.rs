@@ -84,6 +84,9 @@ struct Chart {
     per: Vec<u64>,
     what: &'static str,
     series: Vec<Option<Vec<f64>>>,
+    /// An earlier run's means at the same points, by contender (a map
+    /// drawn beside it; empty otherwise): None where it has none.
+    before: Vec<Option<Vec<Option<f64>>>>,
 }
 
 impl Chart {
@@ -94,8 +97,12 @@ impl Chart {
             Some(v) => format!("[{}]", v.iter().map(|x| format!("{x:.6}")).collect::<Vec<_>>().join(",")),
             None => "null".to_owned(),
         }).collect();
-        format!("{{\"sizes\":[{}],\"unit\":{},\"call\":{},\"doc\":{},\"cases\":{},\"per\":[{}],\"what\":{},\"series\":[{}]}}",
-            sizes.join(","), json(self.unit), json(&self.call), json(&self.doc), self.cases, per.join(","), json(self.what), series.join(","))
+        let before: Vec<String> = self.before.iter().map(|s| match s {
+            Some(v) => format!("[{}]", v.iter().map(|x| x.map_or("null".to_owned(), |x| format!("{x:.6}"))).collect::<Vec<_>>().join(",")),
+            None => "null".to_owned(),
+        }).collect();
+        format!("{{\"sizes\":[{}],\"unit\":{},\"call\":{},\"doc\":{},\"cases\":{},\"per\":[{}],\"what\":{},\"series\":[{}],\"before\":[{}]}}",
+            sizes.join(","), json(self.unit), json(&self.call), json(&self.doc), self.cases, per.join(","), json(self.what), series.join(","), before.join(","))
     }
 }
 
@@ -112,6 +119,11 @@ struct Section {
     about: String,
     /// The run's provenance, behind its door: (label, text, link or "").
     details: Vec<(String, String, String)>,
+    /// The run's name, as an earlier run beside a later one is named.
+    run: String,
+    /// The earlier run drawn beside this one, dashed: its name and its
+    /// line (empty when there is none).
+    before: (String, String),
 }
 
 impl Section {
@@ -122,8 +134,8 @@ impl Section {
         let shown = self.shown.iter().map(bool::to_string).collect::<Vec<_>>().join(",");
         let cells = self.cells.iter().map(|(k, c)| format!("{}:{}", json(k), c.json())).collect::<Vec<_>>().join(",");
         let details = self.details.iter().map(|(a, b, c)| format!("[{},{},{}]", json(a), json(b), json(c))).collect::<Vec<_>>().join(",");
-        format!("{{\"title\":{},\"rows\":[{}],\"cols\":[{}],\"layers\":[{}],\"names\":[{}],\"colors\":[{}],\"shown\":[{}],\"cells\":{{{}}},\"about\":{},\"details\":[{}]}}",
-            json(self.title), triples(&self.rows), triples(&self.cols), triples(&self.layers), names, colors, shown, cells, json(&self.about), details)
+        format!("{{\"title\":{},\"rows\":[{}],\"cols\":[{}],\"layers\":[{}],\"names\":[{}],\"colors\":[{}],\"shown\":[{}],\"cells\":{{{}}},\"about\":{},\"details\":[{}],\"run\":{},\"before\":[{},{}]}}",
+            json(self.title), triples(&self.rows), triples(&self.cols), triples(&self.layers), names, colors, shown, cells, json(&self.about), details, json(&self.run), json(&self.before.0), json(&self.before.1))
     }
 }
 
@@ -234,6 +246,7 @@ fn hashing(path: &Path) -> Section {
                 per: measured.iter().map(|p| p.bytes as u64).collect(),
                 what: what(use_case),
                 series,
+                before: Vec::new(),
             }));
         }
     }
@@ -263,6 +276,8 @@ fn hashing(path: &Path) -> Section {
         cells,
         about: about(&file.headers, &file.load),
         details: details(&file.headers, &file.load, &file.power, "bench-hashes.samples.tsv"),
+        run: run_name(&file.headers),
+        before: (String::new(), String::new()),
     }
 }
 
@@ -299,6 +314,7 @@ fn b3sum(path: &Path) -> Section {
                 per: points.iter().map(|p| names.iter().find_map(|n| cell(n, p)).map_or(0, |s| s[0].units)).collect(),
                 what: "a run",
                 series: names.iter().map(|n| points.iter().map(|p| cell(n, p).map(|s| mean_ns(s))).collect()).collect(),
+                before: Vec::new(),
             }));
         }
     }
@@ -319,11 +335,36 @@ fn b3sum(path: &Path) -> Section {
         cells,
         about: about(&file.headers, &file.load),
         details: details(&file.headers, &file.load, &file.power, "b3sum.samples.tsv"),
+        run: run_name(&file.headers),
+        before: (String::new(), String::new()),
     }
 }
 
 /// Draw `directory`'s map from the samples files in it; true if it held any.
-pub fn write(directory: &Path) -> bool {
+/// A run's name: its bench-hashes release and BLAKE3 servil's commit.
+fn run_name(headers: &[(String, String)]) -> String {
+    let version = header(headers, "bench-hashes version").split('+').next().unwrap_or("");
+    let fork = header(headers, "blake3-servil source").split("commit ").nth(1).map_or("", |c| &c[..c.len().min(7)]);
+    format!("bench-hashes {version}, BLAKE3 servil {fork}")
+}
+
+/// Draw `old`'s runs beside `new`'s: each chart's earlier means, for the
+/// contenders and points both runs hold.
+fn beside(new: &mut Section, old: &Section) {
+    // Its day and load; the machine is the run's own.
+    let when = old.about.split_once(" · ").map_or(old.about.as_str(), |(_, rest)| rest);
+    new.before = (old.run.clone(), when.to_owned());
+    for (key, chart) in &mut new.cells {
+        let Some((_, was)) = old.cells.iter().find(|(k, _)| k == key) else { continue };
+        chart.before = new.names.iter().map(|name| {
+            let j = old.names.iter().position(|n| n == name)?;
+            let series = was.series[j].as_ref()?;
+            Some(chart.sizes.iter().map(|size| was.sizes.iter().position(|s| s == size).map(|k| series[k])).collect())
+        }).collect();
+    }
+}
+
+fn sections(directory: &Path) -> Vec<Section> {
     let mut sections = Vec::new();
     let hashing_path = directory.join("bench-hashes.samples.tsv");
     if hashing_path.exists() {
@@ -333,19 +374,48 @@ pub fn write(directory: &Path) -> bool {
     if b3sum_path.exists() {
         sections.push(b3sum(&b3sum_path));
     }
+    sections
+}
+
+/// Write `directory`'s map (`bench-hashes.map.html`), from its samples
+/// files; with `old`, a results directory of an earlier run, its map
+/// beside that run (`bench-hashes.beside.map.html`), the earlier lines
+/// dashed. Whether there was anything to draw.
+pub fn write(directory: &Path, old: Option<&Path>) -> bool {
+    let mut sections = sections(directory);
     if sections.iter().all(|s| s.cells.is_empty()) {
         return false;
     }
+    if let Some(old) = old {
+        let old = sections_of(old);
+        for section in &mut sections {
+            if let Some(was) = old.iter().find(|o| o.title == section.title) {
+                beside(section, was);
+            }
+        }
+    }
     let data = format!("[{}]", sections.iter().map(Section::json).collect::<Vec<_>>().join(","));
     let page = include_str!("map.html").replace("@SECTIONS@", &data);
-    let out = directory.join("bench-hashes.map.html");
+    let out = directory.join(if old.is_some() { "bench-hashes.beside.map.html" } else { "bench-hashes.map.html" });
     std::fs::write(&out, page).unwrap_or_else(|e| panic!("cannot write {}: {e}", out.display()));
     println!("# Map (HTML) is in \"{}\" .", out.display());
     true
 }
 
-/// `bench-hashes map DIR`: draw DIR's map from its samples files.
+fn sections_of(directory: &Path) -> Vec<Section> {
+    let sections = sections(directory);
+    assert!(sections.iter().any(|s| !s.cells.is_empty()), "{} holds no samples file with cells", directory.display());
+    sections
+}
+
+/// `bench-hashes map DIR [--beside OLD_DIR]`: draw DIR's map from its
+/// samples files, or (with --beside) beside an earlier run's.
 pub fn command(args: &[String]) {
-    let [dir] = args else { panic!("usage: bench-hashes map DIR (a results directory)") };
-    assert!(write(Path::new(dir)), "{dir} holds no samples file with cells (bench-hashes.samples.tsv, b3sum.samples.tsv)");
+    let usage = "usage: bench-hashes map DIR [--beside OLD_DIR] (results directories)";
+    let (dir, old) = match args {
+        [dir] => (dir, None),
+        [dir, flag, old] if flag == "--beside" => (dir, Some(Path::new(old))),
+        _ => panic!("{usage}"),
+    };
+    assert!(write(Path::new(dir), old), "{dir} holds no samples file with cells (bench-hashes.samples.tsv, b3sum.samples.tsv)");
 }

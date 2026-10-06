@@ -45,6 +45,9 @@ the notes) may still change, to say it better.
   release and commit, BLAKE3 servil's commit, the crates' versions, the
   compiler and target, and the samples file, linked to the exact code.
 - **Escape puts an open chart back** (Zooko).
+- **Two runs side by side** (Zooko): `bench-hashes map NEW --beside OLD`
+  draws the older run's lines dashed in each chart; the releases'
+  comparisons are in `beside/`.
 - **A row's or column's name says what it means**, while the pointer
   rests on it or after a click or tap; a click no longer greys its charts
   (Zooko: he could find no explanation of the columns, and the greying

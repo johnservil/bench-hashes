@@ -132,6 +132,13 @@ the page cache or read from storage. `bench-hashes compare` reads the
 samples as it reads the hashes'; `bench-hashes map FOLDER` draws a
 folder's map again from its samples files.
 
+To see two runs side by side (before and after a change, or two
+releases), `bench-hashes map NEW_FOLDER --beside OLD_FOLDER` writes
+`bench-hashes.beside.map.html` in the new folder: each chart draws the
+older run's lines dashed under the newer run's, and the values under the
+pointer say how many times faster each hash runs now. The releases'
+comparisons are in [`beside/`](beside/).
+
 The maps above hold b3sum's results too: official b3sum beside the
 fork's.
 

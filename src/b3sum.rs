@@ -447,7 +447,7 @@ pub fn command(args: &[String]) {
     }
     let samples_path = directory.join("b3sum.samples.tsv");
     fs::write(&samples_path, tsv).unwrap();
-    super::map::write(&directory);
+    super::map::write(&directory, None);
     let report = report(&specs, &inputs, &caches, &cells, &machine, &filesystem, quick, rounds);
     fs::write(directory.join("b3sum.result.txt"), &report).unwrap();
     print!("{report}");

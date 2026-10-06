@@ -555,7 +555,11 @@ clock each call ran at.
 
 `bench-hashes chart SAMPLES.tsv` draws a samples file's chart again
 beside it, and `bench-hashes map FOLDER` a folder's map; both come from
-the samples alone, so a stored record draws what its run did.
+the samples alone, so a stored record draws what its run did. `bench-hashes
+map FOLDER --beside OLD_FOLDER` draws the map with an earlier run's means
+dashed under each chart's lines, for the contenders and points both runs
+hold; it judges nothing (a single pair of runs is weak evidence of a
+change: `bench-hashes compare` gives the verdicts).
 
 ## Load from other programs
 
