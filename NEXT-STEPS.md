@@ -11,24 +11,25 @@ repository's are in `NOTES.md`, its settled questions under "What is
 settled". Every open item is in one list: the fork's NOTES, "Future
 work". This file says where the work stands; its history is in git.
 
-## Where things stand (October 6, 2026, evening)
+## Where things stand (October 7, 2026)
 
-- **The fork**: `servil` = 9d9f3d6 (= `candidate/no-linger`): the API
-  docs rewritten for callers; the startup self-test in every build;
-  b3sum hashing several files at once (trees 1.6-3.4x faster on the
-  Mac). A rolled NEON path for calls after a pause was built, measured
-  slower, and reverted (NOTES, "How much of a cold one-shot call is its
-  code"): the cold cost of 2-8 KiB calls is the unrolled kernels' code,
-  and only rolled hybrid kernels beside them could recover it, for about
-  10%.
-- **bench-hashes**: 0.16.1 on `main` with its records (Mac jobs
-  1433-1434, mains, quiet; the VM), its GitHub Release, and
-  `beside/0.15.3-0.16.1/`. The commonware share is in
-  `shares/commonware-2026-10-06/`.
+- **The fork**: `servil` = 9d9f3d6; `candidate/no-linger` adds the proofs
+  (code unchanged but the SME2 message kernel's branch-free last-block
+  length, 285ecf0; Mac jobs 1441-1442, no regression). `tools/verify`
+  proves every AArch64 assembly kernel (hybrid, 327 cases; SME2, 34) and
+  the library's Rust compression code (23) equal to the compression
+  function of the Lean specification in `c2sp/BLAKE3`, taken from Lean
+  through a kernel-checked bridge (`tools/verify/lean`).
+- **C2SP**: `c2sp/BLAKE3/` is a Lean specification of C2SP's BLAKE3,
+  generated and transcribed from it and checked against all of it;
+  `c2sp/pr/` is the pull request, saved for Zooko's review
+  (`docs/c2sp-lean.md`).
+- **bench-hashes**: 0.16.1 on `main` with its records.
 
 ## Next
 
-The fork's NOTES, "Future work". The next runner job number is 1435.
+Promote `candidate/no-linger` once its CI passes; the fork's NOTES,
+"Future work". The next runner job number is 1443.
 
 ## Commands
 
