@@ -11,25 +11,40 @@ repository's are in `NOTES.md`, its settled questions under "What is
 settled". Every open item is in one list: the fork's NOTES, "Future
 work". This file says where the work stands; its history is in git.
 
-## Where things stand (October 7, 2026)
+## Where things stand (October 8, 2026)
 
-- **The fork**: `servil` = 9d9f3d6; `candidate/no-linger` adds the proofs
-  (code unchanged but the SME2 message kernel's branch-free last-block
-  length, 285ecf0; Mac jobs 1441-1442, no regression). `tools/verify`
-  proves every AArch64 assembly kernel (hybrid, 327 cases; SME2, 34) and
-  the library's Rust compression code (23) equal to the compression
-  function of the Lean specification in `c2sp/BLAKE3`, taken from Lean
-  through a kernel-checked bridge (`tools/verify/lean`).
-- **C2SP**: `c2sp/BLAKE3/` is a Lean specification of C2SP's BLAKE3,
-  generated and transcribed from it and checked against all of it;
-  `c2sp/pr/` is the pull request, saved for Zooko's review
-  (`docs/c2sp-lean.md`).
+- **The fork**: `servil` = 9d9f3d6; `candidate/no-linger` (28feeb4) adds
+  the proofs, the library's code unchanged but the SME2 message kernel's
+  branch-free last-block length (285ecf0; Mac jobs 1441-1442, no
+  regression). `tools/verify` proves every AArch64 assembly kernel
+  (hybrid, 327 cases; SME2, 34) and the library's Rust compression code
+  (24, the NEON extended output at every count by induction) equal to the
+  compression function of the Lean specification in `c2sp/BLAKE3`. It
+  proves the instruction models equal to Arm's Sail specification (136
+  of 137 forms, `isla_check.py`), and a safe-Rust version of the
+  library's tree walk equal to the specification's tree (`tools/verify/tree`,
+  Aeneas and Lean). Its README and the fork's NOTES (October 8) have the
+  details.
+- **C2SP**: `c2sp/BLAKE3/` is a Lean specification of C2SP's BLAKE3;
+  `c2sp/pr/` is the pull request, saved for Zooko's review. Filed:
+  C2SP/C2SP#384 (a trace's chunk label), rems-project/isla#107 (the
+  snapshot's `dup` index, Sail's fix now known).
 - **bench-hashes**: 0.16.1 on `main` with its records.
 
 ## Next
 
-Promote `candidate/no-linger` once its CI passes; the fork's NOTES,
-"Future work". The next runner job number is 1443.
+1. The SME2 group loop at every group count: `prove_sme2.prove_chunks_every`,
+   its harness now checking each group reads its own chunks. It proved
+   under the old harness; the run under the new one, and its two loop-step
+   mutants (output pointer, counter), are under way. Then it enters the
+   suite, and the other SME2 kernels follow.
+2. The library on the proved walk (Zooko's decision first): make
+   `compress_subtree_wide` call `tools/verify/tree`'s `widecore`. SME2's
+   flat path and the hybrids' partial chunk become kernels. `update_rayon`
+   still runs the walk through Rayon's `join`; either it moves to the fork's
+   pool, or `widecore` takes a `join`. Measured on the Mac first.
+3. Promote `candidate/no-linger` once its CI passes. The next runner job
+   number is 1443.
 
 ## Commands
 
