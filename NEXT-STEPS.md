@@ -11,40 +11,50 @@ repository's are in `NOTES.md`, its settled questions under "What is
 settled". Every open item is in one list: the fork's NOTES, "Future
 work". This file says where the work stands; its history is in git.
 
-## Where things stand (October 8, 2026)
+## Where things stand (October 9, 2026)
 
-- **The fork**: `servil` = 9d9f3d6; `candidate/no-linger` (28feeb4) adds
-  the proofs, the library's code unchanged but the SME2 message kernel's
-  branch-free last-block length (285ecf0; Mac jobs 1441-1442, no
-  regression). `tools/verify` proves every AArch64 assembly kernel
-  (hybrid, 327 cases; SME2, 34) and the library's Rust compression code
-  (24, the NEON extended output at every count by induction) equal to the
-  compression function of the Lean specification in `c2sp/BLAKE3`. It
-  proves the instruction models equal to Arm's Sail specification (136
-  of 137 forms, `isla_check.py`), and a safe-Rust version of the
-  library's tree walk equal to the specification's tree (`tools/verify/tree`,
-  Aeneas and Lean). Its README and the fork's NOTES (October 8) have the
-  details.
+- **The fork**: `servil` = 9d9f3d6; `candidate/no-linger` adds the proofs
+  (the library's code unchanged but the SME2 message kernel's branch-free
+  last-block length, 285ecf0; Mac jobs 1441-1442, no regression).
+  `tools/verify` proves every AArch64 assembly kernel (hybrid, 327 cases;
+  SME2, 34, and the chunk, parent, extended-output and message kernels at
+  every group count by induction) and the library's Rust compression code
+  (24) equal to the compression function of the Lean specification in
+  `c2sp/BLAKE3`. The instruction models are proved equal to Arm's Sail
+  specification: 136 of 137 NEON and integer forms, 19 of 23 streaming
+  (`isla_check.py`). `tools/verify/tree` proves the tree walk and the
+  Hasher's stack algorithm against the specification's tree, in Lean
+  (Aeneas). Its README and the fork's NOTES (October 8) have the details.
+- **The probe** `probe/wide-walk` (a1341ee, 4214925): the library's
+  single-thread walk is `src/tree_core.rs`, the file `tools/verify/tree`
+  proves, at every buffer size the library builds with. Mac A/B (jobs
+  1443-1446, 1456-1479, mains): single-threaded within 1% everywhere;
+  multithreaded 512 KiB x1.043, median of 14 pairs, 10 slower and 4
+  faster (sign test p 0.18), cause unexplained (open); `perf_regress` on
+  the Mac (1447) and the VM: no regression.
 - **C2SP**: `c2sp/BLAKE3/` is a Lean specification of C2SP's BLAKE3;
   `c2sp/pr/` is the pull request, saved for Zooko's review. Filed:
   C2SP/C2SP#384 (a trace's chunk label), rems-project/isla#107 (the
-  snapshot's `dup` index, Sail's fix now known).
+  snapshot's `dup` index: Sail's fixed unsigned_subrange, not yet in the
+  snapshot).
 - **bench-hashes**: 0.16.1 on `main` with its records.
 
 ## Next
 
-1. The SME2 group loop at every group count: `prove_sme2.prove_chunks_every`,
-   its harness now checking each group reads its own chunks. It proved
-   under the old harness; the run under the new one, and its two loop-step
-   mutants (output pointer, counter), are under way. Then it enters the
-   suite, and the other SME2 kernels follow.
-2. The library on the proved walk (Zooko's decision first): make
-   `compress_subtree_wide` call `tools/verify/tree`'s `widecore`. SME2's
-   flat path and the hybrids' partial chunk become kernels. `update_rayon`
-   still runs the walk through Rayon's `join`; either it moves to the fork's
-   pool, or `widecore` takes a `join`. Measured on the Mac first.
-3. Promote `candidate/no-linger` once its CI passes. The next runner job
-   number is 1443.
+1. Zooko's decision: the library on the proved walk. `update_rayon`
+   still runs the walk through Rayon's `join`: it moves to the fork's
+   pool, or `widecore` takes a `join` (Aeneas and closures, to try). Then
+   the multithreaded 512 KiB cell's cause (possibly 4%) before promotion.
+2. The Hasher's stack as code (`HasherProofs.lean` proves the algorithm):
+   its `ArrayVec` is outside what Aeneas translates, and a plain array
+   zeroes 1.7 KiB per `Hasher::new`; a representation that costs a short
+   message nothing, or Aeneas with ArrayVec's operations as stated
+   contracts.
+3. The SME2 flat walk (`ffi_sme2::flat_walk`) as a kernel with a proved
+   contract, the four streaming forms Isla needs over 50 GB for, and the
+   ZA loads and stores against Arm's specification.
+4. Promote `candidate/no-linger` once its CI passes. The next runner job
+   number is 1480.
 
 ## Commands
 
