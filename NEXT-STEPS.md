@@ -47,8 +47,10 @@ work". This file says where the work stands; its history is in git.
    the multithreaded 512 KiB cell's cause (possibly 4%) before promotion.
 2. The Hasher's stack as code: `src/stack_core.rs` on probe/stack-array
    (an array made at the first push, in place of ArrayVec; no cost on the
-   VM). Next: its Aeneas proof against `HasherProofs.lean`, and the Mac's
-   small cells measured again idle on mains (busy runs read them slower).
+   VM); its push and merge proved against `HasherProofs.lean` (e8a75e3).
+   Mac jobs 1490-1496 (battery, every run busy): `perf_regress` passes,
+   and the earlier slow cells read level (64 B x1.000, 2 messages
+   x1.000). Next: one idle run on mains, then Zooko's decision with item 1.
 3. Timing (the fork's QUALITY.md, "Timing and secrets", says where each
    condition stands; change it with every step here): whole `hash` calls
    are proved to run one path per length (the fork's
@@ -71,8 +73,12 @@ work". This file says where the work stands; its history is in git.
 5. The SME2 flat walk (`ffi_sme2::flat_walk`) as a kernel with a proved
    contract, the four streaming forms Isla needs over 50 GB for, and the
    ZA loads and stores against Arm's specification.
-6. Promote `candidate/no-linger` once its CI passes. The next runner job
-   number is 1490.
+6. Promote `candidate/no-linger` once its CI passes. GitHub Actions is
+   disabled for the fork (a dispatch answers "Actions has been disabled
+   for this repository"; no run since dc56276, whose last job was
+   cancelled at 02:00 UTC, October 9); Zooko to look at the fork's
+   Actions settings or GitHub's mail. dc56276's two failures are fixed in
+   63a6e26. The next runner job number is 1497.
 
 ## Commands
 
