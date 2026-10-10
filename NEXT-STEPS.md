@@ -41,9 +41,9 @@ work". This file says where the work stands; its history is in git.
 
 ## Next
 
-1. The library on the proved walk (probe/wide-walk), now that
-   `update_rayon` is gone (0e156c8, Zooko's decision): rebase the probe
-   onto the candidate, with Zooko's go-ahead.
+1. Done: the library's walk is the proved one (0156c58, Zooko's go-ahead),
+   after `update_rayon`'s removal (0e156c8). `perf_regress` passes on the
+   VM and the Mac (jobs 1497, 1498; battery, busy pairs rerun).
 2. The Hasher's stack as code: `src/stack_core.rs` on probe/stack-array
    (an array made at the first push, in place of ArrayVec; no cost on the
    VM); its push and merge proved against `HasherProofs.lean` (e8a75e3).
@@ -76,8 +76,11 @@ work". This file says where the work stands; its history is in git.
    disabled for the fork (a dispatch answers "Actions has been disabled
    for this repository"; no run since dc56276, whose last job was
    cancelled at 02:00 UTC, October 9); Zooko to look at the fork's
-   Actions settings or GitHub's mail. dc56276's two failures are fixed in
-   63a6e26. The next runner job number is 1497.
+   Actions settings or GitHub's mail; the settings show nothing, and the
+   account's other repository runs, so only GitHub Support can lift it.
+   Proposed first: the long SME2 proofs out of every push into a workflow
+   started by hand before promotion. dc56276's two failures are fixed in
+   63a6e26. The next runner job number is 1499.
 
 ## Commands
 
