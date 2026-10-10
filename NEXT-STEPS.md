@@ -41,10 +41,9 @@ work". This file says where the work stands; its history is in git.
 
 ## Next
 
-1. Zooko's decision: the library on the proved walk. `update_rayon`
-   still runs the walk through Rayon's `join`: it moves to the fork's
-   pool, or `widecore` takes a `join` (Aeneas and closures, to try). Then
-   the multithreaded 512 KiB cell's cause (possibly 4%) before promotion.
+1. The library on the proved walk (probe/wide-walk), now that
+   `update_rayon` is gone (0e156c8, Zooko's decision): rebase the probe
+   onto the candidate, with Zooko's go-ahead.
 2. The Hasher's stack as code: `src/stack_core.rs` on probe/stack-array
    (an array made at the first push, in place of ArrayVec; no cost on the
    VM); its push and merge proved against `HasherProofs.lean` (e8a75e3).
