@@ -45,16 +45,22 @@ work". This file says where the work stands; its history is in git.
    still runs the walk through Rayon's `join`: it moves to the fork's
    pool, or `widecore` takes a `join` (Aeneas and closures, to try). Then
    the multithreaded 512 KiB cell's cause (possibly 4%) before promotion.
-2. The Hasher's stack as code (`HasherProofs.lean` proves the algorithm):
-   its `ArrayVec` is outside what Aeneas translates, and a plain array
-   zeroes 1.7 KiB per `Hasher::new`; a representation that costs a short
-   message nothing, or Aeneas with ArrayVec's operations as stated
-   contracts.
-3. The SME2 flat walk (`ffi_sme2::flat_walk`) as a kernel with a proved
+2. The Hasher's stack as code: `src/stack_core.rs` on probe/stack-array
+   (an array made at the first push, in place of ArrayVec; no cost on the
+   VM). Next: its Aeneas proof against `HasherProofs.lean`, and the Mac's
+   small cells measured again idle on mains (busy runs read them slower).
+3. Timing (the fork's QUALITY.md, "Timing and secrets", says where each
+   condition stands; change it with every step here): prove whole calls
+   (`hash`, `keyed_hash`, `derive_key`, the Hasher) run instructions and
+   touch addresses that depend only on the length, as compiled, with the
+   executor that proves the kernels; then measure DIT's cost (Zooko
+   expects it too costly to be on by default, and an option's complexity
+   too high for its benefit).
+4. The SME2 flat walk (`ffi_sme2::flat_walk`) as a kernel with a proved
    contract, the four streaming forms Isla needs over 50 GB for, and the
    ZA loads and stores against Arm's specification.
-4. Promote `candidate/no-linger` once its CI passes. The next runner job
-   number is 1480.
+5. Promote `candidate/no-linger` once its CI passes. The next runner job
+   number is 1490.
 
 ## Commands
 
