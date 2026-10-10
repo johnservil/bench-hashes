@@ -49,7 +49,11 @@ work". This file says where the work stands; its history is in git.
    VM); its push and merge proved against `HasherProofs.lean` (e8a75e3).
    Mac jobs 1490-1496 (battery, every run busy): `perf_regress` passes,
    and the earlier slow cells read level (64 B x1.000, 2 messages
-   x1.000). Next: one idle run on mains, then Zooko's decision with item 1.
+   x1.000). Zooko's go-ahead (October 10): merging into the candidate.
+   Then consider removing every use of `arrayvec` (the SIMD pointer
+   tables, hazmat, the lanes, `to_hex`'s `ArrayString`, which is public
+   API) for simplicity: one dependency fewer, and less unsafe code under
+   the proofs; only where the result is simpler, not merely different.
 3. Timing (the fork's QUALITY.md, "Timing and secrets", says where each
    condition stands; change it with every step here): whole `hash` calls
    are proved to run one path per length (the fork's
