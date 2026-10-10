@@ -98,6 +98,11 @@ work". This file says where the work stands; its history is in git.
    flags, batch or multi-buffer APIs where a crate has them), so every
    comparison is against SHA-256 at its best. A change to what the
    benchmark measures is Zooko's decision, recorded in FROZEN.md.
+8. SME2 at every vector length (Zooko, October 10): the kernels and the
+   library run SME2 only where the streaming vector length is 512 bits
+   (Apple M4), and fall back to NEON elsewhere. Make them scalable, so
+   future SME2 hardware with another length (128 to 2048 bits) runs
+   SME2 too, with the proofs covering each length the code supports.
 
 ## Commands
 
