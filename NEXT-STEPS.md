@@ -92,6 +92,12 @@ work". This file says where the work stands; its history is in git.
    October 10 to save the Mac's battery; restart them on the tip).
    dc56276's two failures are fixed in
    63a6e26. The next runner job number is 1500.
+7. SHA-256 as competitive as it can be on the benchmark (Zooko, October
+   10): give the SHA-256 contenders (sha2, ring) their fastest builds and
+   calls on each platform (the ARMv8 SHA-256 instructions, features and
+   flags, batch or multi-buffer APIs where a crate has them), so every
+   comparison is against SHA-256 at its best. A change to what the
+   benchmark measures is Zooko's decision, recorded in FROZEN.md.
 
 ## Commands
 
