@@ -49,7 +49,10 @@ work". This file says where the work stands; its history is in git.
    VM); its push and merge proved against `HasherProofs.lean` (e8a75e3).
    Mac jobs 1490-1496 (battery, every run busy): `perf_regress` passes,
    and the earlier slow cells read level (64 B x1.000, 2 messages
-   x1.000). Zooko's go-ahead (October 10): merging into the candidate.
+   x1.000). Merged (40663e0, Zooko's go-ahead). The VM's check held once
+   at LentBatches|16 (+8.3%), a path that never reaches the stack, then
+   passed four times; the Mac's check (job 1499) gave no verdict, the Mac
+   busy. Rerun it with the Mac idle before promotion.
    Then consider removing every use of `arrayvec` (the SIMD pointer
    tables, hazmat, the lanes, `to_hex`'s `ArrayString`, which is public
    API) for simplicity: one dependency fewer, and less unsafe code under
@@ -84,7 +87,7 @@ work". This file says where the work stands; its history is in git.
    account's other repository runs, so only GitHub Support can lift it.
    Proposed first: the long SME2 proofs out of every push into a workflow
    started by hand before promotion. dc56276's two failures are fixed in
-   63a6e26. The next runner job number is 1499.
+   63a6e26. The next runner job number is 1500.
 
 ## Commands
 
