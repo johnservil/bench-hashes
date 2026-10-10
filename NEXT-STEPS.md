@@ -86,7 +86,11 @@ work". This file says where the work stands; its history is in git.
    Actions settings or GitHub's mail; the settings show nothing, and the
    account's other repository runs, so only GitHub Support can lift it.
    Proposed first: the long SME2 proofs out of every push into a workflow
-   started by hand before promotion. dc56276's two failures are fixed in
+   started by hand before promotion (done: `sme2-every.yml`). The
+   candidate changes the message kernel, so promotion needs those proofs:
+   GitHub cannot run them, so run its six groups on the VM (stopped
+   October 10 to save the Mac's battery; restart them on the tip).
+   dc56276's two failures are fixed in
    63a6e26. The next runner job number is 1500.
 
 ## Commands
