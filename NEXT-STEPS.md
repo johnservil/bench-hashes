@@ -50,10 +50,12 @@ work". This file says where the work stands; its history is in git.
    VM). Next: its Aeneas proof against `HasherProofs.lean`, and the Mac's
    small cells measured again idle on mains (busy runs read them slower).
 3. Timing (the fork's QUALITY.md, "Timing and secrets", says where each
-   condition stands; change it with every step here): prove whole calls
-   (`hash`, `keyed_hash`, `derive_key`, the Hasher) run instructions and
-   touch addresses that depend only on the length, as compiled, with the
-   executor that proves the kernels; then measure DIT's cost (Zooko
+   condition stands; change it with every step here): whole `hash` calls
+   are proved to run one path per length (the fork's
+   `tools/verify/prove_timing.py`, 294 lengths, to 64 KiB on NEON and 4
+   KiB on SME2). Next: `keyed_hash`, `derive_key`, the Hasher; SME2 past 4
+   KiB (its pointer table in vector lanes); the new instruction forms
+   against Isla; then measure DIT's cost (Zooko
    expects it too costly to be on by default, and an option's complexity
    too high for its benefit).
 4. A description of what is proved about correctness, for two audiences:
