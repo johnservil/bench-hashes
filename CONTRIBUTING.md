@@ -83,7 +83,7 @@ benchmark.
 - **Contenders are black boxes.** The benchmark lists a contender, calls
   its plain entry point (single-threaded, multithreaded, a batch call, or
   its incremental API for messages in pieces; for the fork's multithreaded
-  contender, its queue for inputs one after another) with no pool, cap,
+  contender, its stream for inputs one after another) with no pool, cap,
   or wrapper of its own, and asks the fork for its
   `kernel_report()`. A contender without a batch entry point hashes a
   batch as `for m in batch { hash(m) }`.

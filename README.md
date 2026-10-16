@@ -79,7 +79,7 @@ The contenders:
 - **BLAKE3 servil mt**: [a fork](https://github.com/johnservil/BLAKE3) of
   the official BLAKE3 Rust crate, faster on 64-bit Arm, above all on
   Apple M4-class chips, and on x86-64, with its own threads to spread
-  large inputs over your CPU cores and a queue for inputs that come one
+  large inputs over your CPU cores and a stream for inputs that come one
   after another.
 - **BLAKE3 servil st**: the same on one thread.
 - **SHA-256** (the `sha2` crate) and **SHA-256 ring** (the `ring`
