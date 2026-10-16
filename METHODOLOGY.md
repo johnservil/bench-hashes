@@ -470,6 +470,20 @@ margin, the rest level. Beside each cell: each side's median mean, the
 median ratio with the range a sign test leaves plausible (about 90%),
 and how many pairs ran faster. It says so beside any run whose load was
 busy or unmeasured.
+Where both sides' samples carry CPU time, it adds each cell's CPU-time
+ratio: per pair, new CPU time per unit over old (all of a run's samples'
+CPU time over their units), the median of the pairs, with no verdict.
+
+**CPU time.** Each solo sample of a continuous or lent cell records the
+process's CPU time across it, all its threads together
+(`clocks::process_cpu_ns`: `CLOCK_PROCESS_CPUTIME_ID` on Linux and macOS,
+read outside the timed interval with the thread's counts), in the samples
+file's `cpu ns` column. It is what the call costs the machine, beside
+what its caller waits for: the calling thread and every worker the call
+kept busy, waiting, or spinning. A sample after gaps has none, since the
+gap's other work would count as the call's, and a shared sample none,
+since its two copies share the process. A b3sum row holds each run's CPU
+time as the OS counts it for the child process.
 
 `bench-hashes regress [--full] [--pairs N] [--rounds K] [--keep DIR] OLD_EXE... -- NEW_EXE...` judges two
 builds the same way: eight pairs of runs (`--pairs`), pair i running the i-th

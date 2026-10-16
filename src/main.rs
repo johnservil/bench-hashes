@@ -423,6 +423,10 @@ struct RunSamples {
     /// point. Shared starts belong to the individual copies, after solo.
     solo_started_ns: Vec<Vec<Vec<u64>>>,
     shared_started_ns: Vec<Vec<Vec<u64>>>,
+    /// Each solo sample's process CPU time (DuoCopy::cpu_ns), by contender
+    /// and point. Shared samples have none: their two copies share the
+    /// process, so its CPU time is both copies'.
+    solo_cpu_ns: Vec<Vec<Vec<Option<u64>>>>,
 }
 
 /*
@@ -1664,6 +1668,7 @@ fn measure_all(roster: &Roster, mut trace: Option<&mut ClockTrace>) -> (Results,
         shared: empty(),
         solo_started_ns: vec![vec![Vec::new(); POINT_COUNT]; roster.len()],
         shared_started_ns: vec![vec![Vec::new(); POINT_COUNT]; roster.len()],
+        solo_cpu_ns: vec![vec![Vec::new(); POINT_COUNT]; roster.len()],
     };
     let mut batch_iterations: Vec<Vec<usize>> = vec![vec![1usize; POINT_COUNT]; roster.len()];
     let point_orders: Vec<_> = POINTS.iter()
@@ -1752,7 +1757,7 @@ fn measure_all(roster: &Roster, mut trace: Option<&mut ClockTrace>) -> (Results,
 
                     /* The solo sample: this thread runs the batch, alone. */
                     clocks::load::tick();
-                    let DuoCopy { elapsed_ns, counts, preparation, started_ns } = take_sample(algorithm, input, point, iterations);
+                    let DuoCopy { elapsed_ns, counts, preparation, started_ns, cpu_ns } = take_sample(algorithm, input, point, iterations);
 
                     /*
                      * The shared sample, under the same conditions, for the
@@ -1766,6 +1771,7 @@ fn measure_all(roster: &Roster, mut trace: Option<&mut ClockTrace>) -> (Results,
                     let per_unit = |ns: u64| Measured::new(ns, total_units);
                     samples.solo[algorithm_index][size_index].push(per_unit(elapsed_ns));
                     samples.solo_started_ns[algorithm_index][size_index].push(started_ns);
+                    samples.solo_cpu_ns[algorithm_index][size_index].push(cpu_ns);
                     for copy in copies.iter().flatten() {
                         samples.shared[algorithm_index][size_index].push(per_unit(copy.elapsed_ns));
                         samples.shared_started_ns[algorithm_index][size_index].push(copy.started_ns);
@@ -2028,12 +2034,14 @@ fn take_sample(algorithm: Algorithm, input: &[u8], point: Point, iterations: usi
         return take_prepared_sample(input, iterations, idle, |input| run_batch(algorithm, input, point, 1));
     }
     let started_ns = clocks::load::now_ns();
+    let cpu0 = process_cpu_ns();
     let counts0 = clocks::Counts::read();
     let started = clocks::now();
     run_batch(algorithm, input, point, iterations);
     let elapsed_ns = clocks::since_ns(started);
     let counts = counts0.zip(clocks::Counts::read()).map(|(before, after)| after.since(before));
-    DuoCopy { elapsed_ns, counts, preparation: None, started_ns }
+    let cpu_ns = cpu0.zip(process_cpu_ns()).map(|(before, after)| after - before);
+    DuoCopy { elapsed_ns, counts, preparation: None, started_ns, cpu_ns }
 }
 
 /// Prepare and time an already-selected call, each after the program
@@ -2053,7 +2061,7 @@ fn take_prepared_sample(input: &[u8], iterations: usize, idle: bool, mut call: i
         // The write and the call, both the program's work (FROZEN.md, Zooko,
         // October 3, 2026); the trace keeps the write's own share.
         let counts = measured.calls.counts.zip(measured.preparation.counts).map(|(call, write)| call.plus(write));
-        DuoCopy { elapsed_ns: measured.calls.wall_ns + measured.preparation.wall_ns, counts, preparation: Some(measured.preparation), started_ns }
+        DuoCopy { elapsed_ns: measured.calls.wall_ns + measured.preparation.wall_ns, counts, preparation: Some(measured.preparation), started_ns, cpu_ns: None }
     })
 }
 
@@ -3006,6 +3014,17 @@ struct DuoCopy {
     elapsed_ns: u64,
     counts: Option<clocks::Counts>,
     preparation: Option<clocks::Batch>,
+    /// The process's CPU time across the sample, all its threads (read
+    /// outside the timed interval): None for a sample after gaps (their
+    /// other work is no part of the call's), or where the platform has no
+    /// process CPU clock.
+    cpu_ns: Option<u64>,
+}
+
+/// The process's CPU time so far, all its threads (clocks::process_cpu_ns):
+/// None where the platform has no such clock.
+fn process_cpu_ns() -> Option<u64> {
+    Some(clocks::process_cpu_ns()).filter(|&ns| ns > 0)
 }
 
 #[derive(Clone, Copy)]
@@ -3886,8 +3905,17 @@ fn append_kernel_report(output: &mut String, algorithm: Algorithm, use_case: Use
 /// The samples file's first line and its column row, which the reader
 /// (read_samples) requires: a file in another format is read with the
 /// tools of the commit that wrote it.
-const SAMPLES_VERSION: &str = "# bench-hashes samples v4";
-const SAMPLES_COLUMNS: &str = "contender\tscenario\tuse_case\tpoint\tunit\tns/units\tstart ms";
+const SAMPLES_VERSION: &str = "# bench-hashes samples v5";
+const SAMPLES_COLUMNS: &str = "contender\tscenario\tuse_case\tpoint\tunit\tns/units\tstart ms\tcpu ns";
+
+/// A row's `cpu ns` field: each sample's process CPU time, or `-` where a
+/// cell has none (a sample after gaps, a shared one, no process CPU clock).
+fn cpu_field(cpu: &[Option<u64>]) -> String {
+    match cpu.iter().copied().collect::<Option<Vec<u64>>>() {
+        Some(ns) if !ns.is_empty() => ns.iter().map(u64::to_string).collect::<Vec<_>>().join(","),
+        _ => "-".to_string(),
+    }
+}
 
 /// A samples file read back: its `# load:` line (the run's own verdict,
 /// "quiet: ..." or "busy: ..."), and each cell's samples as measured,
@@ -3899,6 +3927,9 @@ struct SamplesFile {
     /// Its `# power:` line.
     power: String,
     cells: Vec<(String, Vec<Measured>)>,
+    /// The cells whose samples carry the process's CPU time: each sample's,
+    /// in nanoseconds, in the order of its wall-time samples.
+    cpu: Vec<(String, Vec<u64>)>,
 }
 
 fn read_samples(path: &str) -> SamplesFile {
@@ -3910,6 +3941,7 @@ fn read_samples(path: &str) -> SamplesFile {
     let mut headers = Vec::new();
     let mut columns = false;
     let mut cells = Vec::new();
+    let mut cpu = Vec::new();
     for line in lines {
         if let Some(rest) = line.strip_prefix("# load: ") {
             load = Some(rest.to_owned());
@@ -3924,17 +3956,22 @@ fn read_samples(path: &str) -> SamplesFile {
             columns = true;
         } else {
             let fields: Vec<&str> = line.split('\t').collect();
-            assert_eq!(fields.len(), 7, "{path}: a row of seven fields: {line}");
-            let samples = fields[5].split(',').map(|sample| {
+            assert_eq!(fields.len(), 8, "{path}: a row of eight fields: {line}");
+            let samples: Vec<Measured> = fields[5].split(',').map(|sample| {
                 let (ns, units) = sample.split_once('/').expect("ns/units");
                 Measured::new(ns.parse().expect("ns"), units.parse().expect("units"))
             }).collect();
             let key = fields[..4].join("|");
             assert!(cells.iter().all(|(k, _)| *k != key), "{path}: a samples file holds each cell once: {key} twice");
+            if fields[7] != "-" {
+                let ns: Vec<u64> = fields[7].split(',').map(|ns| ns.parse().expect("cpu ns")).collect();
+                assert_eq!(ns.len(), samples.len(), "{path}: a CPU time for every sample of {key}");
+                cpu.push((key.clone(), ns));
+            }
             cells.push((key, samples));
         }
     }
-    SamplesFile { headers, load: load.unwrap_or_else(|| panic!("{path}: a load line")), power: power.unwrap_or_else(|| panic!("{path}: a power line")), cells }
+    SamplesFile { headers, load: load.unwrap_or_else(|| panic!("{path}: a load line")), power: power.unwrap_or_else(|| panic!("{path}: a power line")), cells, cpu }
 }
 
 /*
@@ -3959,27 +3996,40 @@ fn compare_command(arguments: &[String]) {
     let split = arguments.iter().position(|argument| argument == "--").expect(usage);
     let (old, new) = (&arguments[..split], &arguments[split + 1..]);
     assert!(old.len() >= 3 && old.len() == new.len(), "{usage}; at least three pairs");
+    // Each cell's mean wall time per unit, and (where its samples carry
+    // it) its CPU time per unit: all the samples' CPU time over their units,
+    // in the same fixed point.
     let means = |path: &String| {
         let file = read_samples(path);
         if !file.load.starts_with("quiet") {
             println!("{path}: {}: its samples are no evidence of speed", file.load);
         }
-        file.cells.into_iter().map(|(key, samples)| (key, ExactMean::of(&samples).fixed().0)).collect::<Vec<(String, u128)>>()
+        let cpu: std::collections::HashMap<String, Vec<u64>> = file.cpu.into_iter().collect();
+        file.cells.into_iter().map(|(key, samples)| {
+            let per_unit = cpu.get(&key).map(|ns| {
+                let units: u128 = samples.iter().map(|m| u128::from(m.units)).sum();
+                (ns.iter().map(|&n| u128::from(n)).sum::<u128>() << 64) / units.max(1)
+            });
+            (key, ExactMean::of(&samples).fixed().0, per_unit)
+        }).collect::<Vec<(String, u128, Option<u128>)>>()
     };
     // Every cell's means and its pairs' ratios, in the first old run's order.
     let mut order: Vec<String> = Vec::new();
-    let mut cells: std::collections::HashMap<String, (Vec<u128>, Vec<u128>, Vec<u64>)> = std::collections::HashMap::new();
+    let mut cells: std::collections::HashMap<String, (Vec<u128>, Vec<u128>, Vec<u64>, Vec<u64>)> = std::collections::HashMap::new();
     for (old_path, new_path) in old.iter().zip(new) {
-        let new_means: std::collections::HashMap<String, u128> = means(new_path).into_iter().collect();
-        for (key, old_mean) in means(old_path) {
-            let Some(&new_mean) = new_means.get(&key) else { continue };
+        let new_means: std::collections::HashMap<String, (u128, Option<u128>)> = means(new_path).into_iter().map(|(k, m, c)| (k, (m, c))).collect();
+        for (key, old_mean, old_cpu) in means(old_path) {
+            let Some(&(new_mean, new_cpu)) = new_means.get(&key) else { continue };
             if !cells.contains_key(&key) {
                 order.push(key.clone());
             }
-            let (olds, news, ratios) = cells.entry(key).or_default();
+            let (olds, news, ratios, cpu_ratios) = cells.entry(key).or_default();
             olds.push(old_mean);
             news.push(new_mean);
             ratios.push(clocks::summary::ratio_permille(new_mean, old_mean));
+            if let (Some(old_cpu), Some(new_cpu)) = (old_cpu, new_cpu) {
+                cpu_ratios.push(clocks::summary::ratio_permille(new_cpu, old_cpu));
+            }
         }
     }
     // Only cells every pair measured.
@@ -3987,7 +4037,7 @@ fn compare_command(arguments: &[String]) {
     let tested: Vec<Vec<(u128, u128)>> = order.iter().map(|key| cells[key].0.iter().copied().zip(cells[key].1.iter().copied()).collect()).collect();
     let verdicts = clocks::summary::discoveries(&tested, COMPARE_Q_PERMILLE, REGRESS_MARGIN_PERMILLE);
     for (key, verdict) in order.into_iter().zip(verdicts) {
-        let (olds, news, ratios) = &cells[&key];
+        let (olds, news, ratios, cpu_ratios) = &cells[&key];
         let (a, b) = (median_u128(olds), median_u128(news));
         let r = clocks::summary::median_permille(ratios);
         let verdict = match verdict {
@@ -3997,7 +4047,15 @@ fn compare_command(arguments: &[String]) {
         };
         let faster = ratios.iter().filter(|&&r| r < 1000).count();
         let interval = clocks::summary::interval_permille(ratios).map_or_else(|| "too few pairs for an interval".to_string(), |(low, high)| format!("x{}.{:03}-{}.{:03}", low / 1000, low % 1000, high / 1000, high % 1000));
-        println!("{key}: {} -> {} ns/unit  x{}.{:03} ({interval}) {verdict}, {faster} of {} pairs faster", Fixed(a).format_ns(), Fixed(b).format_ns(), r / 1000, r % 1000, ratios.len());
+        // CPU time beside wall time: the median of the pairs' ratios, no
+        // verdict (the rule judges wall time), where every pair has it.
+        let cpu = if !cpu_ratios.is_empty() && cpu_ratios.len() == ratios.len() {
+            let c = clocks::summary::median_permille(cpu_ratios);
+            format!("; CPU time x{}.{:03}", c / 1000, c % 1000)
+        } else {
+            String::new()
+        };
+        println!("{key}: {} -> {} ns/unit  x{}.{:03} ({interval}) {verdict}, {faster} of {} pairs faster{cpu}", Fixed(a).format_ns(), Fixed(b).format_ns(), r / 1000, r % 1000, ratios.len());
     }
 }
 
@@ -4330,9 +4388,13 @@ fn generate_samples_tsv(roster: &Roster, samples: &RunSamples, machine: &Machine
                 let starts: Vec<String> = cell_starts.iter()
                     .map(|ns| (ns / 1_000_000).to_string())
                     .collect();
+                let cpu = match scenario {
+                    Scenario::Solo => cpu_field(&samples.solo_cpu_ns[algorithm_index][point_index]),
+                    Scenario::Shared => "-".to_string(),
+                };
                 writeln!(
                     out,
-                    "{}\t{}\t{:?}\t{}\t{}\t{}\t{}",
+                    "{}\t{}\t{:?}\t{}\t{}\t{}\t{}\t{}",
                     algorithm.key(),
                     scenario.key(),
                     point.use_case,
@@ -4340,6 +4402,7 @@ fn generate_samples_tsv(roster: &Roster, samples: &RunSamples, machine: &Machine
                     point.use_case.unit_key(),
                     values.join(","),
                     starts.join(","),
+                    cpu,
                 )
                 .unwrap();
             }
@@ -4914,7 +4977,8 @@ mod correctness_tests {
         let empty = || -> Samples { vec![vec![Vec::new(); POINT_COUNT]; roster.len()] };
         let mut samples = RunSamples { solo: empty(), shared: empty(),
             solo_started_ns: vec![vec![Vec::new(); POINT_COUNT]; roster.len()],
-            shared_started_ns: vec![vec![Vec::new(); POINT_COUNT]; roster.len()] };
+            shared_started_ns: vec![vec![Vec::new(); POINT_COUNT]; roster.len()],
+            solo_cpu_ns: vec![vec![Vec::new(); POINT_COUNT]; roster.len()] };
         let mut results: Results = vec![vec![None; POINT_COUNT]; roster.len()];
         for a in 0..roster.len() {
             for &p in &roster.points {
@@ -4928,6 +4992,7 @@ mod correctness_tests {
                         samples.shared_started_ns[a][p].extend([10_000_000 + r as u64 * 1_000_000, 11_000_000 + r as u64 * 1_000_000]);
                     }
                     samples.solo_started_ns[a][p].push(r as u64 * 1_000_000);
+                    samples.solo_cpu_ns[a][p].push(Some(2 * value(a, p, r)));
                 }
                 results[a][p] = Some(Cell {
                     solo: summarize_measured(&samples.solo[a][p]),
@@ -5046,12 +5111,12 @@ mod correctness_tests {
             clocks::load::Window { start_ns: 1_500_000, end_ns: 3_000_000, other_milli_cpus: 100, steal_milli_cpus: 7 },
         ];
         let tsv = generate_samples_tsv(&roster, &samples, &machine, "test");
-        assert!(tsv.starts_with("# bench-hashes samples v4\n"));
+        assert!(tsv.starts_with("# bench-hashes samples v5\n"));
         assert!(tsv.contains("\n# load: busy: "), "{tsv}");
         assert!(tsv.contains("\n# load windows (start ms-end ms:other milli-CPUs:steal milli-CPUs): 0-1:1200:0,1-3:100:7\n"), "{tsv}");
-        assert!(tsv.contains("\ncontender\tscenario\tuse_case\tpoint\tunit\tns/units\tstart ms\n"));
-        assert!(tsv.contains("\nblake3-servil-st\tsolo\tOneMessage\t64 B\tB\t10000/1,10001/1,10002/1\t0,1,2\n"), "{tsv}");
-        assert!(tsv.contains("\nblake3-servil-st\tshared\tLentMessages\t64 B\tB\t10000/1,10000/1,10001/1,10001/1,10002/1,10002/1\t10,11,11,12,12,13\n"), "{tsv}");
+        assert!(tsv.contains("\ncontender\tscenario\tuse_case\tpoint\tunit\tns/units\tstart ms\tcpu ns\n"));
+        assert!(tsv.contains("\nblake3-servil-st\tsolo\tOneMessage\t64 B\tB\t10000/1,10001/1,10002/1\t0,1,2\t20000,20002,20004\n"), "{tsv}");
+        assert!(tsv.contains("\nblake3-servil-st\tshared\tLentMessages\t64 B\tB\t10000/1,10000/1,10001/1,10001/1,10002/1,10002/1\t10,11,11,12,12,13\t-\n"), "{tsv}");
         assert!(!tsv.contains("\tshared\tOneMessage\t"), "calls after a gap run alone: {tsv}");
     }
 
@@ -5080,6 +5145,10 @@ mod correctness_tests {
                     let key = format!("{}|{scenario}|{:?}|{}", algorithm.key(), POINTS[p].use_case, POINTS[p].label);
                     let (_, back) = read.cells.iter().find(|(k, _)| *k == key).unwrap_or_else(|| panic!("{key} read back"));
                     assert_eq!(figures(back), figures(cell), "{key}");
+                    // CPU time: each solo sample's, none for shared ones.
+                    let cpu = read.cpu.iter().find(|(k, _)| *k == key).map(|(_, ns)| ns.clone());
+                    let wanted = (scenario == "solo").then(|| samples.solo_cpu_ns[a][p].iter().map(|ns| ns.unwrap()).collect::<Vec<u64>>());
+                    assert_eq!(cpu, wanted, "{key}'s CPU time");
                     checked += 1;
                 }
             }

@@ -50,6 +50,17 @@ the notes) may still change, to say it better.
   file (defaults unchanged); and
   **`regress --contenders A,B [--points P,Q]`** (#19) judges the cells a
   run with them measures, every one, for a check of one design's cells.
+- **CPU time beside wall time** (Devon Jonte; issue #16): each solo
+  sample of the continuous and lent cells records the process's CPU time
+  across it, all its threads (`clocks::process_cpu_ns`, read outside the
+  timed interval), in a new `cpu ns` column (samples v5; a b3sum row
+  holds each run's CPU time, from `clocks::child`); `compare` prints each
+  cell's CPU-time ratio beside its wall-time verdict. Samples after gaps
+  have none (the gap's other work is no part of the call's), nor do
+  shared ones (both copies share the process). What a call costs the
+  machine, beside what its caller waits for: a pool that spins, or wakes
+  more threads, shows here. The verdicts, the map and the guide are
+  unchanged.
 - **`bench-hashes b3sum` adds many large files** (Devon Jonte, #17): 16
   files of 64 MiB, as many bytes as the 1 GiB file, in one run as
   `b3sum *.iso` hashes them (`--quick`: 4 of 16 MiB). Many large files

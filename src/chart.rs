@@ -98,7 +98,7 @@ mod tests {
     #[test]
     fn bars_from_a_samples_file() {
         let path = std::env::temp_dir().join(format!("bench-hashes-chart-{}.samples.tsv", std::process::id()));
-        let row = |key: &str, ns: u64| format!("{key}\tsolo\tOneMessage\t1 MiB\tB\t{ns}/1048576,{ns}/1048576\t1,2\n");
+        let row = |key: &str, ns: u64| format!("{key}\tsolo\tOneMessage\t1 MiB\tB\t{ns}/1048576,{ns}/1048576\t1,2\t-\n");
         let text = format!("{}\n# timestamp: 2026-10-02 12:00:00 UTC\n# bench-hashes version: 0.13.0+abc\n# blake3-servil source: x; commit 0123456789abcdef; clean\n# cpu type: Test CPU\n# cpu count: 4\n# power: n/a\n# load: quiet\n{}\n{}{}{}",
             super::super::SAMPLES_VERSION, super::super::SAMPLES_COLUMNS, row("blake3-servil-mt", 100_000), row("blake3-servil-st", 400_000), row("sha256", 800_000));
         std::fs::write(&path, text).unwrap();
