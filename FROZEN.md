@@ -67,6 +67,13 @@ the notes) may still change, to say it better.
   machine, beside what its caller waits for: a pool that spins, or wakes
   more threads, shows here. The verdicts, the map and the guide are
   unchanged.
+- **Package energy beside CPU time** (Devon Jonte): the same samples
+  record the CPU package's energy (`clocks::energy`; samples v6, an
+  `energy nJ` column; b3sum rows too), and `compare` prints a cell's energy
+  ratio where every run sampled it 100 ms or more. It counts the power a
+  call's threads draw and what they cost the rest of the package, which
+  CPU time misses (on #59, one spinner saved 15-28% of CPU time on
+  continuous messages and no energy). The verdicts stay wall time's.
 - **`bench-hashes b3sum` adds many large files** (Devon Jonte, #17): 16
   files of 64 MiB, as many bytes as the 1 GiB file, in one run as
   `b3sum *.iso` hashes them (`--quick`: 4 of 16 MiB). Many large files

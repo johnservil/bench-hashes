@@ -486,6 +486,20 @@ gap's other work would count as the call's, and a shared sample none,
 since its two copies share the process. A b3sum row holds each run's CPU
 time as the OS counts it for the child process.
 
+**Energy.** The same samples also record the CPU package's energy across
+them (`clocks::energy`: on Linux, RAPL's `energy-pkg` through
+`perf_event_open`, which needs `perf_event_paranoid` at 0 or below), in
+the `energy nJ` column, and a b3sum row each run's. It counts what CPU
+time cannot: the power the threads drew (a spinning core draws little,
+one waking and sleeping more), and what they cost the rest of the package,
+such as a clock its cores share. It is the whole package's, so a
+measurement's share holds on a quiet machine. The counter steps about once
+a millisecond, so `compare` gives a cell's energy ratio only where every
+run sampled the cell for 100 ms or more. Ask a run for the cells in
+question and enough rounds (`--contenders`, `--points`, `--rounds`). On an
+i7-12700K, one build against itself over 8 pairs read energy within 3%
+(CPU time within 0.4%). Elsewhere the column holds `-`.
+
 `bench-hashes regress [--full] [--pairs N] [--rounds K] [--keep DIR] OLD_EXE... -- NEW_EXE...` judges two
 builds the same way: eight pairs of runs (`--pairs`), pair i running the i-th
 executable of each side, back to back in alternating order, over the

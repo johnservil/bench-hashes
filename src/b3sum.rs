@@ -417,19 +417,9 @@ pub fn command(args: &[String]) {
         if !input.each {
             return run_files(c, input, &input.files);
         }
-        // A process per file: the runs' sums (their peak memory, the largest).
+        // A process per file: the runs as one (clocks::child::Run::sum).
         let runs: Vec<_> = input.files.iter().map(|f| run_files(c, input, std::slice::from_ref(f))).collect();
-        let sum = |f: fn(&clocks::child::Run) -> Option<u64>| runs.iter().map(f).sum::<Option<u64>>();
-        clocks::child::Run {
-            started_ns: runs[0].started_ns,
-            wall_ns: runs.iter().map(|r| r.wall_ns).sum(),
-            success: true,
-            cpu_ns: sum(|r| r.cpu_ns),
-            max_rss_bytes: runs.iter().map(|r| r.max_rss_bytes).max().flatten(),
-            storage_read_bytes: sum(|r| r.storage_read_bytes),
-            major_faults: sum(|r| r.major_faults),
-            counts: runs.iter().map(|r| r.counts).reduce(|a, b| a.zip(b).map(|(a, b)| a.plus(b))).flatten(),
-        }
+        clocks::child::Run::sum(&runs)
     };
     // Every contender once on every input, untimed, so the executables and
     // the files start in the page cache.
@@ -492,7 +482,8 @@ pub fn command(args: &[String]) {
                 let samples: Vec<String> = runs.iter().map(|r| format!("{}/{}", r.wall_ns, input.bytes)).collect();
                 let starts: Vec<String> = runs.iter().map(|r| (r.started_ns / 1_000_000).to_string()).collect();
                 let cpu: Vec<Option<u64>> = runs.iter().map(|r| r.cpu_ns).collect();
-                tsv += &format!("{}\t{}\tb3sum\t{}\tB\t{}\t{}\t{}\n", spec.name, cache.name(), input.label, samples.join(","), starts.join(","), super::cpu_field(&cpu));
+                let energy: Vec<Option<u64>> = runs.iter().map(|r| r.energy_nj).collect();
+                tsv += &format!("{}\t{}\tb3sum\t{}\tB\t{}\t{}\t{}\t{}\n", spec.name, cache.name(), input.label, samples.join(","), starts.join(","), super::cost_field(&cpu), super::cost_field(&energy));
             }
         }
     }
