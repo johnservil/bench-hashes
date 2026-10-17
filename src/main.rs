@@ -886,7 +886,7 @@ impl Algorithm {
             Self::Blake3Commonware => "single-threaded; commonware-cryptography's Blake3::hash_many for a batch, one message per SIMD lane (NEON 4 on AArch64; AVX2 8, AVX-512 16 on x86-64), its digests in a new Vec each call",
             Self::Blake3ServilSt => "single-threaded; blake3_servil::hash for one message, blake3_servil::hash_many for a batch, Hasher::update per piece for many messages at once",
             Self::Blake3Rayon => "multithreaded; Hasher::update_rayon (per piece, for a stream) on Rayon's global pool, the crate's own multithreading as a program gets it by default: the tree splits recursively over the pool, and inputs under a few chunks stay on the caller's thread",
-            Self::Blake3ServilMt => "multithreaded; blake3_servil::hash_multithreaded for one message, hash_many_multithreaded for a batch, Hasher::update_multithreaded per piece for many messages at once; for continuous loads its queue: Queue::messages for messages of up to 64 KiB, Queue::pieces for longer ones, Queue::fixed for batches: the fork chooses when to wake its worker threads; the kernel tables below show the one-shot calls' thresholds",
+            Self::Blake3ServilMt => "multithreaded; blake3_servil::hash_multithreaded for one message, hash_many_multithreaded for a batch, Hasher::update_multithreaded per piece for many messages at once; for continuous loads its stream: Stream::submit_with for messages, Stream::submit_batch_with for batches, each digest into a place the program keeps: the fork chooses when to wake its worker threads; the kernel tables below show the one-shot calls' thresholds",
         }
     }
 
@@ -2564,6 +2564,34 @@ fn each_interleaved<S: 'static>(
     SCHEDULES.with(|all| all.borrow_mut().push((key, Box::new(schedule))));
 }
 
+/// The places a ContinuousMessages stream keeps for its digests: the
+/// stream's own limit of messages in flight, so that places never bound
+/// it (32 bytes each).
+const STREAM_PLACES_PER_MESSAGE: usize = 1024;
+
+thread_local! {
+    /// The stream cells' places, made once and kept (by size).
+    static STREAM_PLACES: std::cell::RefCell<std::collections::HashMap<usize, Vec<blake3_servil::Hash>>> = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+fn take_places(n: usize) -> Vec<blake3_servil::Hash> {
+    STREAM_PLACES.with(|kept| kept.borrow_mut().remove(&n)).unwrap_or_else(|| vec![blake3_servil::Hash::from_bytes([0; 32]); n])
+}
+
+fn keep_places(places: Vec<blake3_servil::Hash>) {
+    STREAM_PLACES.with(|kept| kept.borrow_mut().insert(places.len(), places));
+}
+
+/// A free place from `free`, handing places back (collect) until one is.
+fn free_place<'a, D: FnMut(&'a mut [blake3_servil::Hash])>(free: &std::cell::RefCell<Vec<&'a mut [blake3_servil::Hash]>>, s: &mut blake3_servil::Stream<'a, D>) -> &'a mut [blake3_servil::Hash] {
+    loop {
+        if let Some(place) = free.borrow_mut().pop() {
+            return place;
+        }
+        s.collect();
+    }
+}
+
 /*
  * The continuous messages use case: `iterations` messages, each a copy of
  * `input` read into a buffer of the program's (a memory copy, the
@@ -2576,7 +2604,28 @@ fn each_interleaved<S: 'static>(
  */
 fn hash_continuous_messages(algorithm: Algorithm, input: &[u8], iterations: usize, mut consume: impl FnMut(&[u8])) {
     if algorithm == Algorithm::Blake3ServilMt {
-        return queue_messages(input, iterations, consume);
+        // Each message read straight into the stream's ring (submit_with),
+        // its digest into a kept place, used as the place comes back and
+        // the place used again.
+        let mut places = take_places(STREAM_PLACES_PER_MESSAGE);
+        let free = std::cell::RefCell::new(places.chunks_mut(1).collect::<Vec<_>>());
+        blake3_servil::stream(
+            blake3_servil::Mode::Hash,
+            |place: &mut [blake3_servil::Hash]| {
+                consume(place[0].as_bytes());
+                free.borrow_mut().push(place);
+            },
+            |s| {
+                for _ in 0..iterations {
+                    let message = black_box(input);
+                    let place = free_place(&free, s);
+                    s.submit_with(message.len(), |at, room| room.copy_from_slice(&message[at..][..room.len()]), &mut place[0]);
+                }
+                s.finish();
+            },
+        );
+        drop(free);
+        return keep_places(places);
     }
     if input.len() > PIECE_LEN {
         return hash_stream(algorithm, input, iterations, consume);
@@ -2602,7 +2651,31 @@ fn hash_continuous_messages(algorithm: Algorithm, input: &[u8], iterations: usiz
  */
 fn hash_continuous_batches(algorithm: Algorithm, input: &[u8], point: Point, iterations: usize, mut consume: impl FnMut(&[u8])) {
     if algorithm == Algorithm::Blake3ServilMt {
-        return queue_batches(input, point.messages, iterations, consume);
+        // Each batch read straight into the stream's ring (submit_batch_with),
+        // its digests into a kept place of the batch's size, handed to
+        // `consume` whole as the place comes back, as the queue's batch is,
+        // and the place used again. Sound: a Hash is its 32 bytes
+        // (repr(transparent)).
+        let batches = ((8 << 20) / input.len().max(1)).clamp(2, 1024);
+        let mut places = take_places(batches * point.messages);
+        let free = std::cell::RefCell::new(places.chunks_mut(point.messages.max(1)).collect::<Vec<_>>());
+        blake3_servil::stream(
+            blake3_servil::Mode::Hash,
+            |place: &mut [blake3_servil::Hash]| {
+                consume(unsafe { core::slice::from_raw_parts(place.as_ptr().cast::<u8>(), place.len() * 32) });
+                free.borrow_mut().push(place);
+            },
+            |s| {
+                for _ in 0..iterations {
+                    let batch = black_box(input);
+                    let place = free_place(&free, s);
+                    s.submit_batch_with(MESSAGE_LEN, |at, room| room.copy_from_slice(&batch[at..][..room.len()]), &mut place[..point.messages]);
+                }
+                s.finish();
+            },
+        );
+        drop(free);
+        return keep_places(places);
     }
     let batch = Point { use_case: UseCase::ManyMessages, ..point };
     let mut buffers = take_buffers(1, input.len());
@@ -2675,12 +2748,10 @@ fn keep_buffers(count: usize, len: usize, buffers: Vec<Vec<u8>>) {
 }
 
 /*
- * How many buffers a program keeps in flight through the fork's queue
- * (FROZEN.md): enough to cover the queue's round trip, so that the queue's
- * throughput is the hashing's (Little's law: in flight = rate x round
- * trip): about IN_FLIGHT_BYTES in all, or IN_FLIGHT_BUFFERS buffers,
- * whichever is fewer, and two at least, so one is read while another is
- * hashed.
+ * How many buffers a continuous cell's warm-up covers (FROZEN.md): about
+ * IN_FLIGHT_BYTES in all, or IN_FLIGHT_BUFFERS buffers, whichever is
+ * fewer, and two at least: what a pipelined API holds in flight to cover
+ * its round trip (Little's law: in flight = rate x round trip).
  */
 const IN_FLIGHT_BYTES: usize = 1 << 20;
 const IN_FLIGHT_BUFFERS: usize = 1024;
@@ -2689,203 +2760,6 @@ fn in_flight(buffer_len: usize) -> usize {
     (IN_FLIGHT_BYTES / buffer_len.max(1)).clamp(2, IN_FLIGHT_BUFFERS)
 }
 
-/*
- * The program's side of the queue in the continuous use cases, made once
- * per cell on each thread and kept from sample to sample, as a program
- * makes one queue and uses it for its life: the queue, and a bounded
- * channel (std::sync::mpsc::sync_channel, a ring allocated when it is
- * made) through which the handler hands the buffers and digests back to
- * the program's thread, with room for everything that can be waiting in
- * it, so a send never waits. After the cell's first sample nothing in the
- * program or the queue allocates.
- */
-struct Returns<Q, T> {
-    queue: Q,
-    returned: std::sync::mpsc::Receiver<T>,
-}
-
-/// Room for every return in flight: `count` buffers, and for pieces a
-/// digest per message, a message holding two pieces or more.
-fn returns_room(count: usize) -> usize {
-    2 * count + 1
-}
-
-/// What the continuous messages' handler hands back: a free buffer, a
-/// digest, or both.
-enum Back {
-    Buffer(Vec<u8>),
-    Digest(blake3_servil::Hash),
-    Both(Vec<u8>, blake3_servil::Hash),
-}
-
-struct MessagesBack(std::sync::mpsc::SyncSender<Back>);
-
-impl blake3_servil::MessageHandler for MessagesBack {
-    type Buffer = Vec<u8>;
-    fn hashed(&mut self, buffer: Vec<u8>, hash: blake3_servil::Hash) {
-        self.0.try_send(Back::Both(buffer, hash)).expect("the returns have room for every buffer in flight");
-    }
-}
-
-impl blake3_servil::PieceHandler for MessagesBack {
-    type Buffer = Vec<u8>;
-    fn piece_done(&mut self, buffer: Vec<u8>) {
-        self.0.try_send(Back::Buffer(buffer)).expect("the returns have room for every buffer in flight");
-    }
-    fn finished(&mut self, hash: blake3_servil::Hash) {
-        self.0.try_send(Back::Digest(hash)).expect("the returns have room for every digest in flight");
-    }
-}
-
-struct BatchesBack(std::sync::mpsc::SyncSender<(Vec<u8>, Vec<[u8; 32]>)>);
-
-impl blake3_servil::FixedHandler for BatchesBack {
-    type Buffer = Vec<u8>;
-    type Digests = Vec<[u8; 32]>;
-    fn hashed(&mut self, buffer: Vec<u8>, digests: Vec<[u8; 32]>) {
-        self.0.try_send((buffer, digests)).expect("the returns have room for every buffer in flight");
-    }
-}
-
-type MessageQueue = Returns<blake3_servil::Queue<MessagesBack, blake3_servil::shape::Messages>, Back>;
-type PieceQueue = Returns<blake3_servil::Queue<MessagesBack, blake3_servil::shape::Pieces>, Back>;
-type BatchQueue = Returns<blake3_servil::Queue<BatchesBack, blake3_servil::shape::Fixed>, (Vec<u8>, Vec<[u8; 32]>)>;
-
-thread_local! {
-    /// Each continuous cell's queue and returns on this thread, by buffers
-    /// in flight and buffer length (see Returns).
-    static MESSAGE_QUEUES: std::cell::RefCell<std::collections::HashMap<(usize, usize), MessageQueue>> = std::cell::RefCell::new(std::collections::HashMap::new());
-    static PIECE_QUEUES: std::cell::RefCell<std::collections::HashMap<(usize, usize), PieceQueue>> = std::cell::RefCell::new(std::collections::HashMap::new());
-    static BATCH_QUEUES: std::cell::RefCell<std::collections::HashMap<(usize, usize), BatchQueue>> = std::cell::RefCell::new(std::collections::HashMap::new());
-}
-
-/// This thread's queue and returns for the cell, made on first use (with
-/// `make`, given the returns' sending end); put it back with `keep`.
-fn take_returns<Q, T>(
-    kept: &'static std::thread::LocalKey<std::cell::RefCell<std::collections::HashMap<(usize, usize), Returns<Q, T>>>>,
-    key: (usize, usize),
-    make: impl FnOnce(std::sync::mpsc::SyncSender<T>) -> Q,
-) -> Returns<Q, T> {
-    kept.with(|kept| kept.borrow_mut().remove(&key)).unwrap_or_else(|| {
-        let (sender, returned) = std::sync::mpsc::sync_channel(returns_room(key.0));
-        Returns { queue: make(sender), returned }
-    })
-}
-
-/*
- * `iterations` messages of `input` through the fork's queue: the program keeps in_flight buffers of up to
- * PIECE_LEN, reads each message into free ones (a message of up to
- * PIECE_LEN into one, through Queue::messages; a longer one piece by
- * piece, through Queue::pieces, which starts the next message after each
- * finish), submits them, and gets them back through the handler and its
- * returns (see Returns). It waits on the returns when it has no free
- * buffer (the program's choice; the queue never blocks), and at the end
- * for every digest and buffer still in flight.
- */
-fn queue_messages(input: &[u8], iterations: usize, mut consume: impl FnMut(&[u8])) {
-    let piece_len = input.len().min(PIECE_LEN);
-    let count = in_flight(piece_len);
-    let key = (count, piece_len);
-    let mut free = take_buffers(count, piece_len);
-    let mut digests = 0;
-    /* One return taken: a free buffer, a digest, or both. */
-    let mut back = |returned: &std::sync::mpsc::Receiver<Back>, free: &mut Vec<Vec<u8>>, digests: &mut usize| match returned.recv().expect("the queue returns everything") {
-        Back::Buffer(buffer) => free.push(buffer),
-        Back::Digest(hash) => {
-            consume(hash.as_bytes());
-            *digests += 1;
-        }
-        Back::Both(buffer, hash) => {
-            consume(hash.as_bytes());
-            *digests += 1;
-            free.push(buffer);
-        }
-    };
-    let mut fill = |returned: &std::sync::mpsc::Receiver<Back>, free: &mut Vec<Vec<u8>>, digests: &mut usize, piece: &[u8]| -> Vec<u8> {
-        while free.is_empty() {
-            back(returned, free, digests);
-        }
-        let mut buffer = free.pop().unwrap();
-        buffer.clear();
-        buffer.extend_from_slice(piece);
-        buffer
-    };
-    if input.len() <= PIECE_LEN {
-        let returns = take_returns(&MESSAGE_QUEUES, key, |sender| {
-            blake3_servil::Queue::messages(blake3_servil::Mode::Hash, MessagesBack(sender))
-        });
-        for _ in 0..iterations {
-            returns.queue.submit(fill(&returns.returned, &mut free, &mut digests, black_box(input)));
-        }
-        /* Every digest delivered, every buffer free. */
-        while digests < iterations || free.len() < count {
-            back(&returns.returned, &mut free, &mut digests);
-        }
-        MESSAGE_QUEUES.with(|kept| kept.borrow_mut().insert(key, returns));
-    } else {
-        let returns = take_returns(&PIECE_QUEUES, key, |sender| {
-            blake3_servil::Queue::pieces(blake3_servil::Mode::Hash, MessagesBack(sender))
-        });
-        for _ in 0..iterations {
-            for piece in black_box(input).chunks(PIECE_LEN) {
-                returns.queue.submit(fill(&returns.returned, &mut free, &mut digests, piece));
-            }
-            returns.queue.finish();
-        }
-        while digests < iterations || free.len() < count {
-            back(&returns.returned, &mut free, &mut digests);
-        }
-        PIECE_QUEUES.with(|kept| kept.borrow_mut().insert(key, returns));
-    }
-    keep_buffers(count, piece_len, free);
-}
-
-/*
- * `iterations` batches of `input`'s `messages` 64-byte messages through
- * the fork's queue of fixed-length messages: the program keeps in_flight buffers, each with its digests' space,
- * reads each batch into a free one, submits it, and gets both back
- * through the handler and its returns (see Returns); it waits on the
- * returns when it has no free buffer, and at the end for every buffer
- * still in flight.
- */
-fn queue_batches(input: &[u8], messages: usize, iterations: usize, mut consume: impl FnMut(&[u8])) {
-    assert_eq!(input.len(), messages * MESSAGE_LEN, "a batch is whole 64-byte messages");
-    let count = in_flight(input.len());
-    let key = (count, input.len());
-    let returns = take_returns(&BATCH_QUEUES, key, |sender| {
-        blake3_servil::Queue::fixed(MESSAGE_LEN, blake3_servil::Mode::Hash, BatchesBack(sender))
-    });
-    let mut free = BATCH_PAIRS.with(|kept| kept.borrow_mut().remove(&key)).unwrap_or_else(|| {
-        (0..count).map(|_| (written(input.len(), 1u8), written(messages, [1u8; 32]))).collect()
-    });
-    for _ in 0..iterations {
-        let (mut buffer, digests) = match free.pop() {
-            Some(pair) => pair,
-            None => {
-                let (buffer, digests) = returns.returned.recv().expect("a buffer comes back");
-                consume(digests.as_flattened());
-                (buffer, digests)
-            }
-        };
-        buffer.clear();
-        buffer.extend_from_slice(black_box(input));
-        returns.queue.submit(buffer, digests);
-    }
-    while free.len() < count {
-        let (buffer, digests) = returns.returned.recv().expect("every buffer comes back");
-        consume(digests.as_flattened());
-        free.push((buffer, digests));
-    }
-    BATCH_QUEUES.with(|kept| kept.borrow_mut().insert(key, returns));
-    BATCH_PAIRS.with(|kept| kept.borrow_mut().insert(key, free));
-}
-
-type BatchPairs = Vec<(Vec<u8>, Vec<[u8; 32]>)>;
-thread_local! {
-    /// Keep the paired buffers and their descriptor vector together. Pairing
-    /// and unzipping anew would allocate three vectors in every sample.
-    static BATCH_PAIRS: std::cell::RefCell<std::collections::HashMap<(usize, usize), BatchPairs>> = std::cell::RefCell::new(std::collections::HashMap::new());
-}
 
 /// The pieces of one stream, each copied into a PIECE_LEN buffer (the
 /// producer's read) and handed to the callback in order.
@@ -2937,8 +2811,8 @@ const SERVIL_CALLS: [(Algorithm, UseCase, &str); 22] = [
     (Algorithm::Blake3ServilSt, UseCase::ManyMessages, "hash_many(batch, 64, out), the padded batch contract, each call after other work"),
     (Algorithm::Blake3ServilMt, UseCase::OneMessage, "hash_multithreaded(input), each call after other work"),
     (Algorithm::Blake3ServilMt, UseCase::ManyMessages, "hash_many_multithreaded(batch, 64, out), the padded batch contract, each call after other work"),
-    (Algorithm::Blake3ServilMt, UseCase::ContinuousMessages, "Queue::messages(Mode::Hash) for messages of up to 64 KiB, Queue::pieces(Mode::Hash) in 64 KiB pieces for longer ones, one message after another, each read into free buffers of the program's, about 1 MiB or 1024 buffers in flight, whichever is fewer, cycled through the handler and a bounded channel with room for all of them (std::sync::mpsc::sync_channel, allocated when made), the queue and the channel made once and kept"),
-    (Algorithm::Blake3ServilMt, UseCase::ContinuousBatches, "Queue::fixed(64, Mode::Hash), one batch after another, each read into a free buffer of the program's, submitted with its digests' space, about 1 MiB or 1024 buffers in flight, whichever is fewer, cycled through the handler and a bounded channel with room for all of them (std::sync::mpsc::sync_channel, allocated when made), the queue and the channel made once and kept"),
+    (Algorithm::Blake3ServilMt, UseCase::ContinuousMessages, "stream(Mode::Hash, handler, body), one a sample: one message after another, each read straight into the stream's ring (submit_with), its digest into one of 1024 kept places, used as the place comes back and the place used again"),
+    (Algorithm::Blake3ServilMt, UseCase::ContinuousBatches, "stream(Mode::Hash, handler, body), one a sample: one batch after another, each read straight into the stream's ring (submit_batch_with), its digests into a kept place of the batch's size (enough that the ring fills first, up to 1024), the place used whole as it comes back and used again"),
     (Algorithm::Blake3ServilSt, UseCase::LentMessages, "hash(input), one message after another, each read into a kept buffer and lent until the call returns"),
     (Algorithm::Blake3ServilSt, UseCase::Interleaved, "a Hasher per open message, 256 messages open at once, the pieces arriving in turns of 64, each read into its own kept buffer; Hasher::update_each per turn, then Hasher::finalize_each for the messages that ended in it, each buffer lent until the calls return"),
     (Algorithm::Blake3ServilSt, UseCase::Collection, "hash_each_with(Mode::Hash, items, out), every item of the collection in one call, in memory"),
@@ -3871,7 +3745,7 @@ fn servil_kernels(report: blake3_servil::KernelReport) -> Kernels {
 /// The contender must take part in the use case.
 fn detect_kernels(algorithm: Algorithm, use_case: UseCase) -> Kernels {
     assert!(algorithm.takes_part(use_case), "{} takes no part in {use_case:?}", algorithm.name());
-    // Queue and incremental MT APIs have no kernel-report entry point.
+    // The stream and incremental MT APIs have no kernel-report entry point.
     // Their known API boundaries remain useful; their schedules stay
     // explicitly unreported instead of inheriting one-shot thresholds.
     if use_case == UseCase::Verify {
@@ -3895,8 +3769,8 @@ fn detect_kernels(algorithm: Algorithm, use_case: UseCase) -> Kernels {
     if algorithm == Algorithm::Blake3ServilMt {
         let kernel = |first, api: &str| Kernel { first, name: api.to_owned() };
         let kernels = match use_case {
-            UseCase::ContinuousMessages => Some(vec![kernel(0, "Queue::messages"), kernel(PIECE_LEN + 1, "Queue::pieces")]),
-            UseCase::ContinuousBatches => Some(vec![kernel(0, "Queue::fixed")]),
+            UseCase::ContinuousMessages => Some(vec![kernel(0, "Stream::submit_with")]),
+            UseCase::ContinuousBatches => Some(vec![kernel(0, "Stream::submit_batch_with")]),
             UseCase::Interleaved => Some(vec![kernel(0, "Hasher::update_each_multithreaded")]),
             UseCase::Collection => Some(vec![kernel(0, "hash_each_multithreaded_with")]),
             _ => None,
@@ -4970,9 +4844,9 @@ const GUIDE_EXAMPLES: [(&str, &str); 9] = [
     ("hash_many_multithreaded", include_str!("../examples/guide_hash_many_multithreaded.rs")),
     ("update", include_str!("../examples/guide_update.rs")),
     ("update_multithreaded", include_str!("../examples/guide_update_multithreaded.rs")),
-    ("Queue::messages", include_str!("../examples/guide_queue_messages.rs")),
-    ("Queue::pieces", include_str!("../examples/guide_queue_pieces.rs")),
-    ("Queue::fixed", include_str!("../examples/guide_queue_fixed.rs")),
+    ("Stream::submit_with", include_str!("../examples/guide_stream_messages.rs")),
+    ("Stream::submit_reader", include_str!("../examples/guide_stream_pieces.rs")),
+    ("Stream::submit_batch_with", include_str!("../examples/guide_stream_batches.rs")),
 ];
 
 fn json_string(text: &str) -> String {

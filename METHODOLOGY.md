@@ -131,17 +131,16 @@ timed from the first read to the last digest. Every contender but BLAKE3
 servil mt hashes each input after reading it, so reading and hashing take
 turns: a message of up to 64 KiB through its one-shot call, a longer one
 through its incremental API per 64 KiB piece, a batch as the batch use
-case hashes it. BLAKE3 servil mt takes them through the fork's queue,
-built for throughput: `Queue::messages` for messages of up to 64 KiB,
-`Queue::pieces` in 64 KiB pieces for longer ones, and `Queue::fixed` for
-batches. The program keeps enough buffers in flight to cover the queue's
-round trip (about 1 MiB of them or 1024, whichever is fewer), reads each
-input into a free one, hands it over, and gets it back with its digest
-through the queue's handler, so reading and hashing overlap. The
-program makes its queue once and keeps it, with a bounded channel (a ring
-allocated when it is made) that carries the returned buffers and digests
-from the handler to the program's thread, so after warm-up neither the
-program nor the queue allocates. The servil single-threaded contender measures continuous load in the
+case hashes it. BLAKE3 servil mt takes them through the fork's stream,
+built for throughput: each message read straight into the stream's ring
+(`submit_with`), each batch likewise (`submit_batch_with`), their digests
+into places the program keeps: 1024 for messages, and for batches enough
+places of a batch's size that the ring fills first. The stream hands each
+place back, its digests in it, to its handler on the program's thread,
+which uses the digests and frees the place for another input, so reading
+and hashing overlap. The places are made once and kept, and the stream's
+storage is the thread's from its first stream on, so after warm-up neither
+the program nor the stream allocates. The servil single-threaded contender measures continuous load in the
 lent-buffer tasks, where its synchronous calls serve the one-thread
 column of the API plan.
 
@@ -331,7 +330,7 @@ wrapper of its own: its one-message call (`hash`, `hash_multithreaded`,
 `Hasher::update_rayon`, `digest`), its batch call where it has one
 (`hash_many`, `hash_many_multithreaded`, the crates.io crate's hidden
 `Platform::hash_many`), its incremental API (`update`,
-`update_multithreaded`), and for servil mt its queue; and it asks the
+`update_multithreaded`), and for servil mt its stream; and it asks the
 servil fork to describe its kernels (`kernel_report()` and its `_many`
 and `_multithreaded` forms). It asks for no machine capacity, sets no
 environment, and checks no digests: each crate's own tests do.
@@ -444,7 +443,7 @@ in its batch use case have fourteen: 56 rounds completes both designs.
 Shorter samples (0.5 ms) were tried and rejected: every cell read 1.6%
 slower, since a sample's fixed cost weighs twice as much. Before it sizes
 a cell's samples, the run calls the cell's batch once, untimed, so that
-one-time costs (a pool or a queue's thread starting, buffers touched for
+one-time costs (a pool's threads starting, buffers touched for
 the first time) leave the size alone.
 
 Each dot is its cell's mean. The hover panel also gives the cell's
