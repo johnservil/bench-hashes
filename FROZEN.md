@@ -96,6 +96,17 @@ the notes) may still change, to say it better.
   page of the file stays cached (a b3sum that leaves its mappings to exit
   can leave pages that cannot be dropped for 20-50 ms), so those cells no
   longer run partly from the page cache.
+- **The fork's queue retired; its stream measures the continuous cells.**
+  BLAKE3 servil mt's ContinuousMessages and ContinuousBatches call
+  `stream()`: each message or batch read straight into the stream's ring,
+  its digests into places the program keeps and cycles through the
+  stream's handler (the queue's buffers and digest space were cycled
+  through its handler and a channel). The stream covers the queue's three
+  shapes with one API, its cells measured faster than the queue's on an
+  i7-12700K (streaming batches x0.62, messages x0.82 against servil
+  beb9abe's queue, three pairs of default runs), and retiring the queue
+  leaves the fork one scheduler (fork #59). The guide's examples and the
+  map's calls for these cells name the stream's.
 
 **Changes in 0.16.0** (Zooko, October 6, 2026):
 - **A new contender, BLAKE3 commonware** (`blake3-commonware`):
@@ -389,8 +400,8 @@ blake3-servil-st OneMessage: hash(input), each call after other work
 blake3-servil-st ManyMessages: hash_many(batch, 64, out), the padded batch contract, each call after other work
 blake3-servil-mt OneMessage: hash_multithreaded(input), each call after other work
 blake3-servil-mt ManyMessages: hash_many_multithreaded(batch, 64, out), the padded batch contract, each call after other work
-blake3-servil-mt ContinuousMessages: Queue::messages(Mode::Hash) for messages of up to 64 KiB, Queue::pieces(Mode::Hash) in 64 KiB pieces for longer ones, one message after another, each read into free buffers of the program's, about 1 MiB or 1024 buffers in flight, whichever is fewer, cycled through the handler and a bounded channel with room for all of them (std::sync::mpsc::sync_channel, allocated when made), the queue and the channel made once and kept
-blake3-servil-mt ContinuousBatches: Queue::fixed(64, Mode::Hash), one batch after another, each read into a free buffer of the program's, submitted with its digests' space, about 1 MiB or 1024 buffers in flight, whichever is fewer, cycled through the handler and a bounded channel with room for all of them (std::sync::mpsc::sync_channel, allocated when made), the queue and the channel made once and kept
+blake3-servil-mt ContinuousMessages: stream(Mode::Hash, handler, body), one a sample: one message after another, each read straight into the stream's ring (submit_with), its digest into one of 1024 kept places, used as the place comes back and the place used again
+blake3-servil-mt ContinuousBatches: stream(Mode::Hash, handler, body), one a sample: one batch after another, each read straight into the stream's ring (submit_batch_with), its digests into a kept place of the batch's size (enough that the ring fills first, up to 1024), the place used whole as it comes back and used again
 blake3-servil-st LentMessages: hash(input), one message after another, each read into a kept buffer and lent until the call returns
 blake3-servil-st Interleaved: a Hasher per open message, 256 messages open at once, the pieces arriving in turns of 64, each read into its own kept buffer; Hasher::update_each per turn, then Hasher::finalize_each for the messages that ended in it, each buffer lent until the calls return
 blake3-servil-st Collection: hash_each_with(Mode::Hash, items, out), every item of the collection in one call, in memory

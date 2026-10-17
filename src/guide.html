@@ -100,12 +100,12 @@ const PATTERNS = { message: ["IdleOneMessage", "OneMessage", "LentMessages"], pi
 function recommendation(a) {
   const many = a.threads === "many", nonstop = a.keepsUp === "no", s = a.shape;
   if (many && nonstop && a.buffer === "owned") {
-    const call = { message: "Queue::messages", pieces: "Queue::pieces", batch: "Queue::fixed" }[s];
+    const call = { message: "Stream::submit_with", pieces: "Stream::submit_reader", batch: "Stream::submit_batch_with" }[s];
     return { call, contender: "blake3-servil-mt", uses: [s === "batch" ? "ContinuousBatches" : "ContinuousMessages"], useIndex: 0, shape: s,
-      summary: "A queue: you hand over buffers you own and keep producing; its threads hash them and hand each back with its digest to a handler you write.",
-      pass: s === "batch" ? "A buffer of equal-length messages laid out back to back, plus space for their digests; both come back to your handler." : s === "pieces" ? "Each piece of the message in order, then finish(); each piece comes back once hashed, the digest last." : "One buffer per message; each comes back to your handler with its digest.",
-      get: "Calls to your handler, in the order you submitted, one at a time. submit() returns at once.",
-      mind: "Keep the handler short; it runs on the queue's thread. Cycle a fixed set of buffers, and wait for one to come back when none is free. Make the queue once and keep it." };
+      summary: "A stream: you write or read each input straight into it and keep producing; its threads hash them, each digest into a place you own, and hand the places back in order to a handler you write.",
+      pass: s === "batch" ? "Each batch of equal-length messages, written into the stream as it asks, and a place for its digests." : s === "pieces" ? "A reader (a file, a socket); the stream reads the message in pieces, hashing each while it reads the next." : "Each message, written into the stream as it asks, and a place for its digest.",
+      get: "Each place back, digests in it, in the order you submitted, on your thread. submit_with() returns once the input is in the stream.",
+      mind: "Keep the handler short. Cycle a fixed set of places: the handler puts each back, and you take one, collecting when none is free. Call finish() last." };
   }
   const mt = many && (s !== "pieces" || nonstop);
   const call = { message: "hash", pieces: "update", batch: "hash_many" }[s] + (mt ? "_multithreaded" : "");
@@ -163,11 +163,11 @@ function show() {
 
 const plotFor = (use, sc) => DATA.plots.find(p => p.scenario === sc && p.use === use && p.series[current.contender]);
 const rival = plot => ["sha256-ring", "sha256", "sha256-cc"].find(key => plot.series[key]);
-/* Which points this function covers: Queue::messages up to 64 KiB, Queue::pieces beyond, else all. */
+/* Which points this function covers: a message in pieces, the lengths of several pieces (past 64 KiB); else all. */
 function pointsFor(plot) {
   const all = [...plot.labels.keys()];
-  if (plot.use !== "ContinuousMessages") return all;
-  return all.filter(k => current.shape === "pieces" ? plot.units[k] > 65536 : plot.units[k] <= 65536);
+  if (plot.use !== "ContinuousMessages" || current.shape !== "pieces") return all;
+  return all.filter(k => plot.units[k] > 65536);
 }
 
 /* The chips: the pattern the benchmark called the function in, and alone or beside another program. */
@@ -201,7 +201,7 @@ function drawSpeed() {
   const other = rival(plot);
   const mine = DATA.contenders.find(c => c.key === r.contender), theirs = DATA.contenders.find(c => c.key === other);
   /* hash's plot standing in for update's pieces now and then: its x is each piece's length. */
-  const standIn = r.shape === "pieces" && !r.call.startsWith("Queue::");
+  const standIn = r.shape === "pieces" && !r.call.startsWith("Stream::");
   el("stand-in").hidden = !standIn;
   el("stand-in").textContent = standIn ? `Each piece costs about what ${r.call === "update_multithreaded" ? "hash_multithreaded" : "hash"} costs on one buffer of the piece's length: these are its measurements.` : "";
   const unit = plot.batch ? " messages" : "";
@@ -213,7 +213,7 @@ function drawSpeed() {
     const behind = points.map(k => +plot.series[r.contender].mean[k] > +plot.series[other].mean[k]);
     let from = ahead.length;
     while (from > 0 && ahead[from - 1]) from--;
-    if (points.length === 1) text = `${ahead[0] ? "Faster than" : behind[0] ? "Slower than" : "As fast as"} ${theirs.name} on a ${plot.labels[points[0]]} message${r.call === "Queue::pieces" ? " in 64 KiB pieces" : ""}.`;
+    if (points.length === 1) text = `${ahead[0] ? "Faster than" : behind[0] ? "Slower than" : "As fast as"} ${theirs.name} on a ${plot.labels[points[0]]} message${r.call === "Stream::submit_reader" ? " in 64 KiB pieces" : ""}.`;
     else if (from === 0) text = `Faster than ${theirs.name} at every size measured.`;
     else if (behind.every(Boolean)) text = `Slower than ${theirs.name} at every size measured.`;
     else if (from === ahead.length) text = ahead.some(Boolean) ? "The two trade places across the sizes measured." : `As fast as ${theirs.name} or slower at every size measured.`;
