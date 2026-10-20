@@ -245,9 +245,50 @@ fn side(fork: &Path, bench: &Path, cache: &Path, name: &str, commit: &str) -> Pa
             &["checkout", "--quiet", "--force", "--detach", commit],
         );
     }
+    build_against(&checkout, bench, &cache.join(name).join("target"), name)
+}
+
+/// `bench-hashes build-against DIR`: this bench built against the fork
+/// checkout at DIR as it is, into DIR's `target/build-against/`; the
+/// executable's path on stdout (the Mac runner's benchmark jobs, and a
+/// maintainer measuring the working tree, run it from there).
+pub fn build_against_command(arguments: &[String]) -> i32 {
+    let usage = "usage: bench-hashes build-against DIR    (DIR: a checkout of the fork)";
+    let [dir] = arguments else { panic!("{usage}") };
+    let checkout = std::fs::canonicalize(dir).unwrap_or_else(|e| panic!("{dir}: {e}\n{usage}"));
+    assert!(
+        checkout.join("Cargo.toml").exists() && checkout.join("c").is_dir(),
+        "{dir} is no checkout of the fork\n{usage}"
+    );
+    let bench = std::env::current_dir().expect("the current directory");
+    // Where Cargo would build (CARGO_TARGET_DIR where set: the VM builds on
+    // a tmpfs, since its shared mount runs no executable), else the
+    // checkout's target/.
+    let target = std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| checkout.join("target"));
+    let exe = build_against(
+        &checkout,
+        &bench,
+        &target.join("build-against"),
+        "build-against",
+    );
+    println!("{}", exe.display());
+    0
+}
+
+/// This bench, built against the fork checkout at `checkout` as it is:
+/// its sources copied beside the fork (`checkout/bench-hashes`), Cargo
+/// pointed at the checkout for the fork and its clocks crate, a lock and a
+/// target directory of the build's own (the committed lock is never
+/// written); the executable's path. `check`'s two sides and the Mac
+/// runner's benchmark jobs build this way, and so does a maintainer
+/// measuring the working tree (`bench-hashes build-against ..`).
+pub fn build_against(checkout: &Path, bench: &Path, target: &Path, name: &str) -> PathBuf {
+    let commit = git(checkout, &["rev-parse", "HEAD"]);
     let copy = checkout.join("bench-hashes");
     copy_bench(bench, &copy);
-    let target = cache.join(name).join("target");
+    let target = target.to_path_buf();
     let [patch_fork, patch_clocks] = patches(&copy, &checkout);
     // The side's lock: the bench's, with the fork taken from the worktree.
     // Cargo patches at the locked version only, so a version change wants

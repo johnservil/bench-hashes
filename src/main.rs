@@ -2006,6 +2006,9 @@ fn main() {
     if arguments.first().map(String::as_str) == Some("check") {
         std::process::exit(check::command(&arguments[1..]));
     }
+    if arguments.first().map(String::as_str) == Some("build-against") {
+        std::process::exit(check::build_against_command(&arguments[1..]));
+    }
     if arguments.first().map(String::as_str) == Some("regress") {
         std::process::exit(regress_command(&arguments[1..]));
     }

@@ -126,7 +126,7 @@ fn sampled_visits_walk_the_orders_in_turn() {
 #[test]
 fn sample_schedule_handles_short_explicit_round_counts() {
     for rounds in 1..=96 {
-        for orders in 1..=18 {
+        for _orders in 1..=18 {
             for offset in [0, 1, 7, 95] {
                 let count = (0..rounds)
                     .filter(|r| cell_wants_sample(r + offset, rounds, 12))
