@@ -122,6 +122,27 @@ function rowAxis() {
   return s + "</svg>";
 }
 /* One chart's lines, rates (bytes over each mean time) on the section's log scale; the opened one with axes. */
+/* How many times one figure is another, in plain digits to two significant
+   figures: ×1.5, ×15, ×150, ×1,500 (toPrecision alone writes ×1.5e+2 from
+   100 up, which readers took for 1,500). */
+function timesText(r) {
+  return "×" + Number(r.toPrecision(2)).toLocaleString("en-US", { maximumFractionDigits: 1 });
+}
+/* A span's label at point k of chart c, the worst line shown over the best
+   (null below ×1.15, where none is drawn). */
+function spanText(c, live, k) {
+  const vs = live.map(i => c.series[i][k]).filter(Boolean);
+  if (vs.length < 2) return null;
+  const r = Math.max(...vs) / Math.min(...vs);
+  return r >= 1.15 ? timesText(r) : null;
+}
+/* The right margin a chart's last span label needs: the bracket's offset,
+   the gap, and the label at about 0.62 em a character (bold digits), so a
+   long one (×1,500) is never cut off at the chart's edge. */
+function spanRoom(c, live, axes) {
+  const label = spanText(c, live, c.sizes.length - 1);
+  return label ? (axes ? 12 : 8) + 3 + Math.ceil(label.length * (axes ? 12 : 10) * 0.62) + 4 : 0;
+}
 function draw(S, c, w, h, axes) {
   const live = c.series.map((s, i) => s && S.shownNow[i] ? i : -1).filter(i => i >= 0);
   const [lo, hi] = axisOf();
@@ -130,7 +151,7 @@ function draw(S, c, w, h, axes) {
      names to a row; case labels may take two lines below it. */
   const listed = axes ? c.series.filter(Boolean).length : 0;
   const tall = axes && narrow(), top = tall ? 72 : 40;
-  const n = c.sizes.length, L = axes ? (tall ? 50 : 70) : 8, R = axes ? 52 : 34, T = axes ? top + 22 * Math.ceil(listed / (tall ? 2 : 5)) + 8 : 8, B = axes ? (c.cases ? 84 : 62) : 14;
+  const n = c.sizes.length, L = axes ? (tall ? 50 : 70) : 8, R = Math.max(axes ? 52 : 34, spanRoom(c, live, axes)), T = axes ? top + 22 * Math.ceil(listed / (tall ? 2 : 5)) + 8 : 8, B = axes ? (c.cases ? 84 : 62) : 14;
   /* Sizes run edge to edge; separate cases sit in the middles of equal slots. */
   const x = k => n === 1 || c.cases ? L + (k + 0.5) * (w - L - R) / n : L + k * (w - L - R) / (n - 1);
   const y = v => h - B - (Math.log(v) - lo) / (hi - lo) * (h - T - B);
@@ -211,11 +232,12 @@ function draw(S, c, w, h, axes) {
   if (MEASURES.wall) {
     const at = axes && c.cases ? [...Array(n).keys()] : [n - 1];
     for (const k of at) {
+      const label = spanText(c, live, k);
+      if (!label) continue;
       const vs = live.map(i => c.series[i][k]).filter(Boolean);
-      if (vs.length < 2) continue;
       const best = Math.min(...vs), worst = Math.max(...vs), y1 = y(shown(best)), y2 = y(shown(worst));
       const bx = x(k) + (axes ? 12 : 8), fs = axes ? 12 : 10;
-      if (worst / best >= 1.15) s += `<path d="M${bx - 3} ${y1} H${bx} V${y2} H${bx - 3}" fill="none" stroke="#6b7280" stroke-width="1"/><text x="${bx + 3}" y="${(y1 + y2) / 2 + fs / 3}" font-size="${fs}" font-weight="700" fill="#4c1d95">×${(worst / best).toPrecision(2)}</text>`;
+      s += `<path d="M${bx - 3} ${y1} H${bx} V${y2} H${bx - 3}" fill="none" stroke="#6b7280" stroke-width="1"/><text x="${bx + 3}" y="${(y1 + y2) / 2 + fs / 3}" font-size="${fs}" font-weight="700" fill="#4c1d95">${label}</text>`;
     }
   }
   if (!axes) s += `<line class="cursor" x1="0" x2="0" y1="${T}" y2="${h - B}" stroke="#9ca3af" stroke-dasharray="3 3" visibility="hidden"/>`;
