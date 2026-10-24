@@ -653,9 +653,12 @@ power supply, and its report says the OS reports none.
 Every samples file records what built its machine code so another person
 can reproduce it. The header lists `bench-hashes`'s repository, commit,
 and working-tree state, the BLAKE3 digest of `Cargo.lock`, the Rust and C
-compilers, `RUSTFLAGS`, the target and its features, and one `source
-CONTENDER` line per contender (crate version and checksum, git commit, or
-system library). The CPU's identity includes its
+compilers, `RUSTFLAGS`, the target and its features, the `clocks source`
+(the instrument's commit, or a named local checkout and its state), and
+one `source CONTENDER` line per contender (crate version and checksum,
+git commit, or system library). The working-tree state is clean only if
+nothing changed but the lock lines a patch of blake3-servil or clocks
+drops, both recorded in their own lines. The CPU's identity includes its
 microcode. A b3sum contender's line names its build by the BLAKE3 digest
 of its executable.
 

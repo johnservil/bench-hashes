@@ -80,6 +80,20 @@ To move either pin, set its `rev` in `Cargo.toml` to the full commit
 hash and build: Cargo updates the lock. `build-against`, relinking and
 coverage replace the fork while keeping the benchmark's clocks pin.
 
+To try a local clocks before moving its pin, patch it and name the
+checkout, so the run records what timed it:
+
+```sh
+BENCH_CLOCKS_CHECKOUT=/path/to/BLAKE3/clocks cargo build --release \
+  --config 'patch."https://github.com/johnservil/BLAKE3".clocks.path="/path/to/BLAKE3/clocks"'
+```
+
+The samples header's `clocks source` line then names that checkout, its
+commit, and whether its `clocks/` was clean; a patch without
+`BENCH_CLOCKS_CHECKOUT` stops the build. The repository's `git clean
+status` forgives the lock line such a patch drops, as it does
+blake3-servil's, and no other change to `Cargo.lock`.
+
 ## Rules that keep results comparable
 
 - **Contenders are black boxes.** The benchmark lists a contender, calls
