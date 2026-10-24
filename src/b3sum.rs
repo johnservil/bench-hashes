@@ -908,7 +908,7 @@ fn report(
     }
     // Each comparison's ratio (the geometric mean of the rounds' ratios, the
     // ratio the rule judges) and its verdict.
-    let judgments: std::collections::HashMap<(usize, usize, usize), clocks::summary::Judgment> =
+    let judgments: crate::Map<(usize, usize, usize), clocks::summary::Judgment> =
         if judged {
             compared
                 .into_iter()

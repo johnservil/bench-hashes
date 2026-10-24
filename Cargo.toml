@@ -19,6 +19,10 @@ features = ["std", "rayon"]
 version = "=0.16.1"
 default-features = false
 
+# Seeded hashing for every map (crate::Map): runs lay out alike.
+[dependencies.wyhash]
+version = "0.6"
+
 # Machine metadata does not need sysinfo's multithread feature.
 [dependencies.sysinfo]
 version = "0.30"

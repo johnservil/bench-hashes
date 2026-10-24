@@ -4,7 +4,7 @@ use std::fs;
 use std::hint::black_box;
 use std::io::{IsTerminal, Write as _};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
-use sysinfo::System;
+use sysinfo::{CpuRefreshKind, RefreshKind, System};
 
 #[cfg(target_arch = "wasm32")]
 compile_error!("bench-hashes currently supports native targets only");
@@ -1720,7 +1720,7 @@ enum Sizes {
     /// Each cell's size as this file gives it, keyed by contender and
     /// point (a cell it lacks stops the run): no calibration, one untimed
     /// sample of each cell in its place, which warms it as calibration did.
-    From(std::collections::HashMap<(String, usize), usize>),
+    From(crate::Map<(String, usize), usize>),
 }
 
 /// A sizes file's first line: a file in another format is read with the
@@ -1931,6 +1931,25 @@ fn parse_selection(arguments: &[String]) -> (Selection, Vec<Algorithm>) {
             eprint!("{USAGE}");
             std::process::exit(2);
         }
+    }
+}
+
+/// Hash maps and sets with one fixed seed, in place of std's per-process
+/// random one: a run's tables, their growth and their iteration order, are
+/// the same in every run, so neither a measurement nor its report differs
+/// by a draw. WyHash, as zooko/smalloc's devutils hashes: seeded and fast.
+/// Every map in the bench is one of these (the test
+/// `every_map_is_seeded` keeps it so).
+pub(crate) type Map<K, V> = std::collections::HashMap<K, V, Seeded>;
+pub(crate) type Set<K> = std::collections::HashSet<K, Seeded>;
+
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Seeded;
+
+impl std::hash::BuildHasher for Seeded {
+    type Hasher = wyhash::WyHash;
+    fn build_hasher(&self) -> wyhash::WyHash {
+        wyhash::WyHash::with_seed(0x6A09_E667_F3BC_C908)
     }
 }
 
@@ -3653,7 +3672,7 @@ const STREAM_PLACES_PER_MESSAGE: usize = 1024;
 
 thread_local! {
     /// The stream cells' places, made once and kept (by size).
-    static STREAM_PLACES: std::cell::RefCell<std::collections::HashMap<usize, Vec<blake3_servil::Hash>>> = std::cell::RefCell::new(std::collections::HashMap::new());
+    static STREAM_PLACES: std::cell::RefCell<crate::Map<usize, Vec<blake3_servil::Hash>>> = std::cell::RefCell::new(crate::Map::default());
 }
 
 fn take_places(n: usize) -> Vec<blake3_servil::Hash> {
@@ -4037,7 +4056,7 @@ thread_local! {
      * more cycles per byte after the fork's queue's 1024 buffers,
      * September 28, 2026).
      */
-    static INPUT_BUFFERS: std::cell::RefCell<std::collections::HashMap<(usize, usize), Vec<Vec<u8>>>> = std::cell::RefCell::new(std::collections::HashMap::new());
+    static INPUT_BUFFERS: std::cell::RefCell<crate::Map<(usize, usize), Vec<Vec<u8>>>> = std::cell::RefCell::new(crate::Map::default());
 }
 
 /// `count` empty buffers with room for `len` bytes, this thread's kept set
@@ -5249,13 +5268,13 @@ fn compare_command(arguments: &[String]) {
                 file.load
             );
         }
-        let cpu: std::collections::HashMap<String, Vec<u64>> = file.cpu.into_iter().collect();
-        let energy: std::collections::HashMap<String, Vec<u64>> = file.energy.into_iter().collect();
+        let cpu: crate::Map<String, Vec<u64>> = file.cpu.into_iter().collect();
+        let energy: crate::Map<String, Vec<u64>> = file.energy.into_iter().collect();
         file.cells
             .into_iter()
             .map(|(key, samples)| {
                 let units: u128 = samples.iter().map(|m| u128::from(m.units)).sum();
-                let per_unit = |column: &std::collections::HashMap<String, Vec<u64>>| {
+                let per_unit = |column: &crate::Map<String, Vec<u64>>| {
                     column
                         .get(&key)
                         .map(|v| {
@@ -5272,10 +5291,10 @@ fn compare_command(arguments: &[String]) {
     // CPU time, in the first old run's order.
     type Pairs = Vec<(u128, u128)>;
     let mut order: Vec<String> = Vec::new();
-    let mut cells: std::collections::HashMap<String, (Pairs, Pairs, Pairs)> =
-        std::collections::HashMap::new();
+    let mut cells: crate::Map<String, (Pairs, Pairs, Pairs)> =
+        crate::Map::default();
     for (old_path, new_path) in old.iter().zip(new) {
-        let new_means: std::collections::HashMap<String, (u128, Option<u128>, Option<u128>)> =
+        let new_means: crate::Map<String, (u128, Option<u128>, Option<u128>)> =
             means(new_path)
                 .into_iter()
                 .map(|(k, m, c, e)| (k, (m, c, e)))
@@ -5434,7 +5453,7 @@ fn merge_sizes(old: &str, new: &str) -> String {
             .map(|(cell, _)| cell.to_owned())
             .unwrap_or_default()
     };
-    let old_cells: std::collections::HashSet<String> = old.lines().skip(1).map(cell).collect();
+    let old_cells: crate::Set<String> = old.lines().skip(1).map(cell).collect();
     old.lines()
         .chain(
             new.lines()
@@ -5635,7 +5654,7 @@ fn regress_command(arguments: &[String]) -> i32 {
     // A run's means, and its load line when clocks found it no evidence
     // (other programs busy, or no load window).
     let mut means =
-        |exe: &str, side: &str| -> (std::collections::HashMap<String, u128>, Option<String>) {
+        |exe: &str, side: &str| -> (crate::Map<String, u128>, Option<String>) {
             run_index += 1;
             let kept = keep
                 .as_ref()
@@ -6081,8 +6100,10 @@ fn column_heading(algorithm: Algorithm) -> &'static str {
 }
 
 fn machine_metadata() -> MachineMetadata {
-    let mut system = System::new_all();
-    system.refresh_all();
+    // CPUs alone: every process's name (a kworker's changes as it works)
+    // went into the heap before the measurement and moved the buffers
+    // after it to a new offset each run (bench-hashes #65).
+    let system = System::new_with_specifics(RefreshKind::new().with_cpu(CpuRefreshKind::everything()));
 
     let cpus = system.cpus();
 
@@ -6297,6 +6318,30 @@ mod overview;
 
 #[cfg(test)]
 mod correctness_tests {
+    /// No std map with its per-process random seed: each draw would lay a
+    /// run's heap out its own way (bench-hashes #65 found the main
+    /// thread's kept buffers at a new offset in every process).
+    #[test]
+    fn every_map_is_seeded() {
+        for (name, source) in [
+            ("main.rs", include_str!("main.rs")),
+            ("b3sum.rs", include_str!("b3sum.rs")),
+        ] {
+            let std_maps = source
+                .lines()
+                .filter(|l| {
+                    l.contains(concat!("std::collections::", "HashMap"))
+                        || l.contains(concat!("std::collections::", "HashSet"))
+                })
+                .count();
+            assert_eq!(
+                std_maps,
+                if name == "main.rs" { 2 } else { 0 },
+                "{name}: a std map outside the Map and Set aliases"
+            );
+        }
+    }
+
     use super::*;
 
     /// pmset's outputs on an M4 Max (fork runner jobs 350 and 351, September 27, 2026).
