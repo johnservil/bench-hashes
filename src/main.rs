@@ -348,6 +348,8 @@ const RING_SOURCE_INFO: &str = env!("RING_SOURCE_INFO");
 const SHA1_CHECKED_SOURCE_INFO: &str = env!("SHA1_CHECKED_SOURCE_INFO");
 const SHA3_SOURCE_INFO: &str = env!("SHA3_SOURCE_INFO");
 const BLAKE3_SERVIL_SOURCE_INFO: &str = env!("BLAKE3_SERVIL_SOURCE_INFO");
+/// The instrument's provenance: the clocks crate that timed the run (build.rs).
+const CLOCKS_SOURCE_INFO: &str = env!("CLOCKS_SOURCE_INFO");
 
 /*
  * Every power of two from 64 B to 128 MiB, plus 3 KiB and 3 MiB. Between
@@ -5836,6 +5838,7 @@ fn samples_header(machine: &MachineMetadata, run: &[(String, String)]) -> String
         ("build target", BUILD_TARGET),
         ("target features", TARGET_FEATURES),
         ("sample clock", clocks::WALL_CLOCK),
+        ("clocks source", CLOCKS_SOURCE_INFO),
         ("cpu type", machine.cpu_type.as_str()),
         ("cpu count", machine.cpu_count.to_string().as_str()),
         ("os type", machine.os_type.as_str()),
@@ -6068,6 +6071,7 @@ fn generate_text(
         writeln!(output, "  global allocator: {allocator}").unwrap();
     }
     writeln!(output, "  clock: {}", clocks::WALL_CLOCK).unwrap();
+    writeln!(output, "  clocks: {CLOCKS_SOURCE_INFO}").unwrap();
     writeln!(
         output,
         "  load during the run: {}",
