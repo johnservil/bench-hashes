@@ -280,7 +280,7 @@ fn a_merkle_tree_has_the_root_of_its_layers_hashed_node_by_node() {
             }
             Algorithm::Sha1Dc => &sha1_root,
             Algorithm::Sha3_256 => &sha3_root,
-            Algorithm::Blake3Rayon => {
+            Algorithm::Blake3Rayon | Algorithm::Blake3ServilMetal => {
                 unreachable!("{} takes no part in a Merkle tree", algorithm.key())
             }
         };

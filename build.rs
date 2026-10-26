@@ -12,6 +12,14 @@ fn hash_framed(hasher: &mut Hasher, label: &[u8], contents: &[u8]) {
 }
 
 fn main() {
+    println!("cargo:rustc-check-cfg=cfg(bench_metal)");
+    println!("cargo:rerun-if-env-changed=BENCH_METAL");
+    if env::var_os("BENCH_METAL").is_some() {
+        println!("cargo:rustc-cfg=bench_metal");
+    }
+        println!("cargo:rustc-env=BENCH_METAL_CPU_PERCENT={percent}");
+    }
+
     let manifest_dir = PathBuf::from(
         env::var_os("CARGO_MANIFEST_DIR").expect("Cargo must provide CARGO_MANIFEST_DIR"),
     );

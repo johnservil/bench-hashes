@@ -128,3 +128,32 @@ the open work is in the issues. Contributing needs neither. A release is
 to X.Y.Z+<HEAD's hash>, and its tag. `METHODOLOGY.md` explains why the measurement works as it does,
 should you want to change it; earlier findings are in `git log`, and in the
 notes the tree held until commit `aadeca9d`.
+
+## Experimental Metal comparison
+
+On Apple Silicon macOS, with a fork checkout containing the experimental
+`metal` feature, compare its GPU API with the baseline revision's
+`hash_multithreaded`:
+
+```sh
+cargo run --release -- check --against OLD --metal 0 --keep /tmp/metal-gpu
+cargo run --release -- check --against OLD --metal 25 --keep /tmp/metal-hybrid
+```
+
+The number is the CPU percentage: zero is GPU-only. The old build uses
+CPU hashing; the new build enables the fork's Metal feature. Both use the
+`blake3-servil-metal` comparison key, and each report names its actual
+implementation and split. The baseline can predate the Metal API.
+
+This measures every existing OneMessage and IdleOneMessage size, using
+the harness's inputs and gaps. A Metal context is retained per calling
+thread after calibration; input mapping or copying, command submission,
+and GPU completion are timed. Wall time and calling-thread core cycles
+come from `clocks`; those cycles exclude GPU work. Metal has no incremental,
+keyed, or outboard API, so those workloads are outside this comparison.
+The existing CPU contenders and their frozen workloads stay unchanged.
+
+The usual paired runs, random link layouts, load checks, statistical rule,
+and exit statuses apply. An explicit GPU split can lose on small inputs;
+the check reports those cells along with gains. Run the ordinary `check`
+separately to check the existing CPU paths for regressions.
