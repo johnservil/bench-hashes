@@ -132,28 +132,30 @@ notes the tree held until commit `aadeca9d`.
 ## Experimental Metal comparison
 
 On Apple Silicon macOS, with a fork checkout containing the experimental
-`metal` feature, compare its GPU API with the baseline revision's
-`hash_multithreaded`:
+`metal` feature, compare its Metal stream with its CPU stream:
 
 ```sh
-cargo run --release -- check --against OLD --metal 0 --keep /tmp/metal-gpu
-cargo run --release -- check --against OLD --metal 25 --keep /tmp/metal-hybrid
+cargo run --release -- check --against OLD --metal --keep /tmp/metal
 ```
 
-The number is the CPU percentage: zero is GPU-only. The old build uses
-CPU hashing; the new build enables the fork's Metal feature. Both use the
-`blake3-servil-metal` comparison key, and each report names its actual
-implementation and split. The baseline can predate the Metal API.
+The old build streams on the CPU (`performance::stream`); the new build
+enables the fork's Metal feature and streams through `metal::Hasher::stream`,
+which hashes messages of the GPU's threshold and more on the GPU and shorter
+ones on the CPU pool. Both use the `blake3-servil-metal` comparison key, and
+each report names its implementation. The baseline can predate the Metal
+API. The comparison measures every ContinuousMessages size, each message
+copied into the stream's own memory as the workload says; a Metal context
+is created on each calling thread before timing and kept. Wall time and
+calling-thread core cycles come from `clocks`; those cycles exclude GPU
+work. The usual paired runs, random link layouts, load checks, statistical
+rule and exit statuses apply, and the frozen CPU workloads stay unchanged.
 
-This measures every existing OneMessage and IdleOneMessage size, using
-the harness's inputs and gaps. A Metal context is retained per calling
-thread after calibration; input mapping or copying, command submission,
-and GPU completion are timed. Wall time and calling-thread core cycles
-come from `clocks`; those cycles exclude GPU work. Metal has no incremental,
-keyed, or outboard API, so those workloads are outside this comparison.
-The existing CPU contenders and their frozen workloads stay unchanged.
-
-The usual paired runs, random link layouts, load checks, statistical rule,
-and exit statuses apply. An explicit GPU split can lose on small inputs;
-the check reports those cells along with gains. Run the ordinary `check`
-separately to check the existing CPU paths for regressions.
+A calibrated sample holds one or two large messages in a fresh stream, too
+few for the GPU's clock to catch up with. On an M4 Pro the Metal stream
+reads level at every continuous size but 64 MiB shared, 30% slower: two
+callers' two-message streams serialize on a GPU in a low state, against
+fourteen cores taking both callers at once. A sustained stream is measured as a
+labelled diagnostic: run each side's layouts with `--sizes` naming many
+messages a sample, and compare the kept samples. On an M4 Pro the Metal
+stream then takes 53-59% of the CPU stream's time solo at 4-64 MiB and
+57-67% shared, at 5% of the CPU time.

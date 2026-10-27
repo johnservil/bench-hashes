@@ -391,3 +391,29 @@ fn every_message_in_blocks_hashes_its_own_bytes() {
         }
     }
 }
+
+#[cfg(bench_metal)]
+#[test]
+fn shared_metal_contexts_are_ready_before_timing() {
+    blake3_servil::initialize_multithreaded(None);
+    let len = 1024;
+    let input = make_input(len);
+    let samples = Duo::new().run(
+        Algorithm::Blake3ServilMetal,
+        &input,
+        &input,
+        Point::continuous("", len),
+        1,
+    );
+    let initialized = METAL_CONTEXT_READY.lock().unwrap();
+    assert_eq!(initialized.len(), 2, "each shared worker owns a context");
+    let first_sample = samples
+        .iter()
+        .map(|sample| sample.started_ns)
+        .min()
+        .unwrap();
+    assert!(
+        initialized.iter().all(|&ready| ready <= first_sample),
+        "both pipelines are created before either worker starts timing"
+    );
+}

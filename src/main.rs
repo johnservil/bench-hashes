@@ -1140,7 +1140,7 @@ impl Algorithm {
     /// to one thread hashes its inputs so (FROZEN.md).
     fn takes_part(self, use_case: UseCase) -> bool {
         if self == Self::Blake3ServilMetal {
-            return matches!(use_case, UseCase::OneMessage | UseCase::IdleOneMessage);
+            return use_case == UseCase::ContinuousMessages;
         }
         let use_case = use_case.call();
         match use_case {
@@ -1169,10 +1169,10 @@ impl Algorithm {
     fn availability(self) -> Result<(), String> {
         match self {
             Self::Blake3ServilMetal => {
-                if option_env!("BENCH_METAL_CPU_PERCENT").is_some() {
+                if option_env!("BENCH_METAL_SIDE").is_some() {
                     Ok(())
                 } else {
-                    Err("enabled by check --metal CPU_PERCENT".to_string())
+                    Err("enabled by check --metal".to_string())
                 }
             }
             Self::Blake3
@@ -1257,9 +1257,9 @@ impl Algorithm {
         match self {
             Self::Blake3ServilMetal => {
                 #[cfg(bench_metal)]
-                { concat!("Metal; CPU percent = ", env!("BENCH_METAL_CPU_PERCENT"), "; reusable metal::Hasher, synchronous completion") }
+                { "the fork's Metal stream (metal::Hasher::stream): messages of the GPU's threshold and more on the GPU, shorter ones on the CPU pool; a metal::Hasher per calling thread, kept" }
                 #[cfg(not(bench_metal))]
-                { "CPU-only comparison baseline; hash_multithreaded" }
+                { "the fork's CPU stream, the Metal comparison's baseline" }
             },
             Self::Blake3 => "single-threaded; blake3::hash for one message, the crate's hidden batch function blake3::platform::Platform::hash_many::<N> for a batch, sixteen messages per call",
             Self::Sha256
@@ -2880,6 +2880,9 @@ fn observe_call(call: &'static str) {
 /// once, before the gap; every result remains observable to the optimizer.
 fn one_message_call(algorithm: Algorithm) -> fn(&[u8], usize) {
     match algorithm {
+        Algorithm::Blake3ServilMetal => {
+            unreachable!("Metal takes part in ContinuousMessages alone")
+        }
         Algorithm::Blake3 => |blocks, len| use_digest(blake3::hash(&blocks[..len]).as_bytes()),
         Algorithm::Blake3ServilSt => |blocks, len| {
             let input = &blocks[..len];
@@ -3056,13 +3059,9 @@ fn hash_messages(
     }
     let input = if batch { input } else { &input[..message_len] };
     match algorithm {
-        Algorithm::Blake3ServilMetal => each_message(
-            input,
-            message_len,
-            iterations,
-            |m| *metal_hash(m).as_bytes(),
-            consume,
-        ),
+        Algorithm::Blake3ServilMetal => {
+            unreachable!("Metal takes part in ContinuousMessages alone")
+        }
         Algorithm::Blake3 => {
             // The crate's hidden batch function hashes each message as one
             // chunk: longer messages, as a program would, one call each.
@@ -3763,7 +3762,47 @@ fn hash_continuous_messages(
 ) {
     // The message's `len` bytes; `blocks`, its whole blocks (UseCase::in_blocks).
     let input = &blocks[..len];
-    if algorithm == Algorithm::Blake3ServilMt {
+    #[cfg(bench_metal)]
+    if algorithm == Algorithm::Blake3ServilMetal {
+        // Each message read straight into the Metal stream's own memory
+        // (submit_with), its digest into a kept place, as the fork's stream.
+        let mut places = take_places(STREAM_PLACES_PER_MESSAGE);
+        let free = std::cell::RefCell::new(places.chunks_mut(1).collect::<Vec<_>>());
+        METAL_HASHER.with(|hasher| {
+            hasher.borrow_mut().stream(
+                blake3_servil::Mode::Plain,
+                |place: &mut [blake3_servil::Hash]| {
+                    consume(place[0].as_bytes());
+                    free.borrow_mut().push(place);
+                },
+                |s| {
+                    for _ in 0..iterations {
+                        let message = black_box(input);
+                        let place = loop {
+                            if let Some(place) = free.borrow_mut().pop() {
+                                break place;
+                            }
+                            s.collect();
+                        };
+                        s.submit_with(
+                            message.len(),
+                            |at, room| {
+                                room.copy_from_slice(&message[at..][..room.len()]);
+                                room.len()
+                            },
+                            &mut place[0],
+                        );
+                    }
+                    s.finish();
+                },
+            )
+        });
+        drop(free);
+        return keep_places(places);
+    }
+    // The Metal contender without Metal (the check's baseline) streams on
+    // the CPU, as servil mt does.
+    if algorithm == Algorithm::Blake3ServilMt || algorithm == Algorithm::Blake3ServilMetal {
         // Each message read straight into the stream's ring (submit_with),
         // its digest into a kept place, used as the place comes back and
         // the place used again.
@@ -4702,6 +4741,12 @@ impl Duo {
              * instruction stream when the release comes, within a
              * microsecond of it.
              */
+            // Shared workers have their own context; pipeline compilation
+            // precedes the start barrier, as it does for solo calibration.
+            #[cfg(bench_metal)]
+            if job.algorithm == Algorithm::Blake3ServilMetal {
+                METAL_HASHER.with(|_| ());
+            }
             self.ready.fetch_add(1, Ordering::AcqRel);
             while self.generation.load(Ordering::Acquire) == seen {
                 std::thread::yield_now();
@@ -7257,21 +7302,17 @@ mod correctness_tests {
     }
 }
 
-/// One context per calling thread, created during calibration and reused.
-/// Inputs, gaps, completion timing, and clocks are the normal harness's.
-fn metal_hash(input: &[u8]) -> blake3_servil::Hash {
-    #[cfg(bench_metal)]
-    {
-        thread_local! {
-            static HASHER: std::cell::RefCell<blake3_servil::metal::Hasher> =
-                std::cell::RefCell::new(blake3_servil::metal::Hasher::new().expect("Metal device"));
-        }
-        HASHER.with(|hasher| {
-            hasher
-                .borrow_mut()
-                .hash(input, env!("BENCH_METAL_CPU_PERCENT").parse().unwrap())
-        })
-    }
-    #[cfg(not(bench_metal))]
-    blake3_servil::hash_multithreaded(input)
+#[cfg(all(test, bench_metal))]
+static METAL_CONTEXT_READY: std::sync::Mutex<Vec<u64>> = std::sync::Mutex::new(Vec::new());
+
+// One Metal context per calling thread, initialized before timing and
+// reused; inputs, gaps, completion timing and clocks are the harness's.
+#[cfg(bench_metal)]
+thread_local! {
+    static METAL_HASHER: std::cell::RefCell<blake3_servil::metal::Hasher> = {
+        let hasher = blake3_servil::metal::Hasher::new().expect("Metal device");
+        #[cfg(test)]
+        METAL_CONTEXT_READY.lock().unwrap().push(clocks::load::now_ns());
+        std::cell::RefCell::new(hasher)
+    };
 }

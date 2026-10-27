@@ -132,7 +132,9 @@ pub fn command(arguments: &[String]) -> i32 {
         against,
         &old[..12]
     );
-    let cache = fork.join("target").join(if metal { "check-metal" } else { "check" });
+    let cache = fork
+        .join("target")
+        .join(if metal { "check-metal" } else { "check" });
     if metal {
         eprintln!("check: the fork's CPU stream (the baseline) versus its Metal stream, every ContinuousMessages size");
     }
@@ -168,8 +170,15 @@ pub fn command(arguments: &[String]) -> i32 {
             dir
         }
     };
-    let old_exe = side(&fork, &old_bench, &cache, "old", &old, false);
-    let new_exe = side(&fork, &bench, &cache, "new", &new, metal);
+    let old_exe = side(
+        &fork,
+        &old_bench,
+        &cache,
+        "old",
+        &old,
+        metal.then_some("old"),
+    );
+    let new_exe = side(&fork, &bench, &cache, "new", &new, metal.then_some("new"));
     // The cells a change touches, from the new side's coverage.
     // The cells a change touches: (contender, point), from the new side's
     // coverage; a run measures their contenders over their points.
@@ -212,8 +221,22 @@ pub fn command(arguments: &[String]) -> i32 {
             Some(points.into_iter().collect()),
         )
     };
-    let olds = layouts(&old_bench, &cache, "old", &old_exe, 0..pairs, false);
-    let news = layouts(&bench, &cache, "new", &new_exe, pairs..2 * pairs, metal);
+    let olds = layouts(
+        &old_bench,
+        &cache,
+        "old",
+        &old_exe,
+        0..pairs,
+        metal.then_some("old"),
+    );
+    let news = layouts(
+        &bench,
+        &cache,
+        "new",
+        &new_exe,
+        pairs..2 * pairs,
+        metal.then_some("new"),
+    );
     let mut regress: Vec<String> = vec![
         "regress".into(),
         "--pairs".into(),
@@ -261,7 +284,7 @@ pub fn command(arguments: &[String]) -> i32 {
         "old",
         &old_exe,
         first..first + SECOND_PAIRS,
-        false,
+        metal.then_some("old"),
     );
     let news = layouts(
         &bench,
@@ -269,7 +292,7 @@ pub fn command(arguments: &[String]) -> i32 {
         "new",
         &new_exe,
         first + SECOND_PAIRS..first + 2 * SECOND_PAIRS,
-        metal,
+        metal.then_some("new"),
     );
     let mut second: Vec<String> = vec![
         "regress".into(),
@@ -406,7 +429,7 @@ fn side(
     cache: &Path,
     name: &str,
     commit: &str,
-    metal: bool,
+    metal: Option<&'static str>,
 ) -> PathBuf {
     let checkout = cache.join(name).join("src");
     if !checkout.exists() {
@@ -484,7 +507,7 @@ fn build_side(
     bench: &Path,
     target: &Path,
     name: &str,
-    metal: bool,
+    metal: Option<&'static str>,
 ) -> PathBuf {
     let commit = git(checkout, &["rev-parse", "HEAD"]);
     // The copy sits directly in the checkout (build.rs finds the fork at
@@ -646,7 +669,7 @@ fn layouts(
     name: &str,
     exe: &Path,
     seeds: std::ops::Range<usize>,
-    metal: bool,
+    metal: Option<&'static str>,
 ) -> Vec<String> {
     let nm = Command::new("nm").arg(exe).output().expect("nm runs");
     let text = String::from_utf8_lossy(&nm.stdout).into_owned();
@@ -1263,20 +1286,19 @@ mod tests {
 }
 
 // Keep each randomized relink on the same configuration as its first build.
-fn metal_build(metal: bool) -> Command {
+fn metal_build(side: Option<&str>) -> Command {
     let mut command = Command::new("cargo");
     command.env_remove("BENCH_METAL");
-    if metal {
-        command.env("BENCH_METAL", "1");
+    if let Some(side) = side {
+        command.env("BENCH_METAL", side);
     }
     command
 }
 
-fn metal_features(metal: bool) -> Vec<&'static str> {
-    if metal {
+fn metal_features(side: Option<&str>) -> Vec<&'static str> {
+    if side == Some("new") {
         vec!["--features", "blake3-servil/metal"]
     } else {
         Vec::new()
     }
-}
 }
