@@ -1,0 +1,9 @@
+{
+  "job": "1695-full-0.8-bench-0.18.1-m4.json",
+  "started": "2026-10-27T17:20:28-0500",
+  "power at start": "AC Power, 98%, powermode 2",
+  "type": "benchmark",
+  "status": "ok",
+  "finished": "2026-10-27T17:24:24-0500",
+  "power at end": "AC Power, 99%, powermode 2"
+}
