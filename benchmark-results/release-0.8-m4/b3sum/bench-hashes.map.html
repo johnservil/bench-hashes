@@ -1,0 +1,535 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>How fast BLAKE3 servil runs, beside other hashes</title>
+<style>
+body { font: 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; color: #111827; margin: 24px; background: #fdfdfc; }
+h1 { font-size: 20px; margin: 0 0 4px; } h2 { font-size: 17px; margin: 34px 0 6px; }
+.sub { color: #6b7280; margin: 0 0 14px; max-width: 980px; }
+.about { color: #6b7280; font-size: 12px; margin: 0 0 2px; }
+.run { color: #9ca3af; font-size: 12px; margin: 0 0 8px; }
+.run summary { cursor: pointer; width: max-content; }
+.run dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 6px 0 4px 14px; max-width: 980px; }
+.run dt { color: #6b7280; }
+.run dd { margin: 0; overflow-wrap: anywhere; }
+.run a { color: inherit; }
+.legend { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 6px; }
+.legend button { font: 12px inherit; border: 1px solid #d1d5db; background: #fff; border-radius: 12px; padding: 3px 10px 3px 8px; cursor: pointer; }
+.legend button::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; background: var(--c); vertical-align: -1px; }
+.legend button.off { opacity: .35; }
+.legend button.beside::before { display: none; } .legend button.beside svg { vertical-align: 0; }
+/* What the lines measure: wall-clock time, CPU time, energy; any or all. */
+/* The panel and each section's names stay in view while the page scrolls:
+   the panel at the top, the names of the section on screen just under it. */
+.measures { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 8px; font-size: 12px; color: #6b7280;
+  position: sticky; top: 0; z-index: 8; background: #fdfdfc; padding: 6px 0; }
+.legend { position: sticky; top: var(--bar, 38px); z-index: 8; background: #fdfdfc; padding: 4px 0 6px; }
+.measures button { font: 12px inherit; border: 1px solid #c4b5fd; background: #f5f3ff; color: #4c1d95; border-radius: 12px; padding: 3px 10px 3px 8px; cursor: pointer; }
+.measures button svg { vertical-align: 0; margin-right: 5px; }
+/* The view's switch stands upright: its knob up, higher lines are better
+   (a rate); down, lower lines are better (a cost). Its label says so. */
+.measures .switch { display: inline-flex; align-items: center; gap: 6px; background: none; border: none; padding: 0 4px; cursor: pointer; color: #4c1d95; font-weight: 600; }
+.measures .switch .track { width: 18px; height: 32px; border-radius: 9px; background: #c4b5fd; position: relative; }
+.measures .switch .knob { position: absolute; left: 2px; top: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: top .15s; }
+.measures .switch.on .knob { top: 16px; }
+.measures .switch .dir { white-space: nowrap; } .measures .switch .scale { font-weight: 400; color: #6b7280; white-space: nowrap; }
+.measures button.off { background: #fff; border-color: #d1d5db; color: #6b7280; opacity: .6; }
+.measures button:disabled { cursor: not-allowed; opacity: .4; }
+#tip .was { color: #9ca3af; }
+.layer { font-size: 13px; color: #374151; display: flex; align-items: center; gap: 6px; margin: 14px 0 4px; cursor: help; user-select: none; width: max-content; padding: 2px 6px; border-radius: 6px; position: relative; }
+.layer:hover, .layer.show { background: #ede9fe; }
+.grid { position: relative; display: grid; grid-template-columns: 170px 38px repeat(var(--cols), 210px); gap: 6px; width: max-content; }
+.axis-cell { position: relative; }
+.h { font-size: 12px; color: #4b5563; text-align: center; padding: 4px; border-radius: 6px; cursor: help; user-select: none; display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; }
+.h:hover, .h.show, .h.lit { background: #ede9fe; color: #111827; }
+/* A header's meaning: under it while the pointer rests on it, or after a click or tap. */
+.means { display: none; position: absolute; top: 100%; left: 0; margin-top: 4px; width: 240px; z-index: 7; background: #111827; color: #fff; font-size: 12px; line-height: 1.4; text-align: left; padding: 7px 9px; border-radius: 6px; }
+.h:hover .means, .h.show .means, .layer:hover .means, .layer.show .means { display: block; }
+.h.row { flex-direction: row; gap: 6px; justify-content: flex-start; text-align: left; }
+.cell { height: 96px; border-radius: 8px; background: #fff; border: 1px solid #e5e7eb; position: relative; cursor: zoom-in; transition: opacity .15s; }
+.cell.empty { background: #fafaf9; border-color: #f1f1ef; cursor: default; }
+.cell .note { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; color: #9ca3af; text-align: center; padding: 6px; }
+.cell .call { position: absolute; left: 6px; bottom: 3px; font: 10px ui-monospace, Menlo, monospace; color: #6b7280; }
+a.doc { color: inherit; text-decoration: underline dotted #9ca3af; text-underline-offset: 2px; } a.doc:hover { color: #6d28d9; text-decoration-color: #6d28d9; }
+.zoom { position: absolute; background: #fff; border: 1px solid #c4b5fd; border-radius: 10px; box-shadow: 0 8px 30px rgba(0,0,0,.12); z-index: 5; overflow: hidden; transition: left .2s, top .2s, width .2s, height .2s; cursor: zoom-out; }
+.zoom .title { position: absolute; left: 14px; top: 10px; font-size: 13px; color: #374151; display: flex; gap: 6px; align-items: center; }
+.zoom .close { position: absolute; right: 8px; top: 6px; font-size: 12px; color: #4b5563; background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 12px; padding: 3px 10px; cursor: pointer; }
+/* An opened chart's contenders: a line each, its toggle. */
+.zoom .key { position: absolute; right: 10px; display: flex; flex-wrap: wrap; gap: 2px 14px; }
+.zoom .key button { font: 600 12px inherit; line-height: 20px; border: none; background: none; padding: 0 4px; margin: 0; cursor: pointer; color: var(--c); border-radius: 4px; }
+.zoom .key button:hover { background: #f5f3ff; }
+.zoom .key button.off { opacity: .35; text-decoration: line-through; }
+/* A narrow screen (a phone): the grid scales to the screen's width, and a
+   chart opens as a panel across it, at full size, under the bar. */
+@media (max-width: 999px) { body { margin: 10px; } .sub { font-size: 13px; } }
+.zoom.phone { position: fixed; z-index: 9; }
+/* The values under the pointer: as tall as they need, never wider than the window. */
+#tip { position: fixed; pointer-events: none; background: #111827; color: #fff; font-size: 12px; padding: 6px 8px; border-radius: 6px; display: none; z-index: 10; box-sizing: border-box; max-width: min(34em, calc(100vw - 8px)); }
+#tip .row { padding-left: 1.2em; text-indent: -1.2em; }
+#tip .sw { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; }
+/* After the rules above, which it narrows for a phone. */
+@media (max-width: 999px) { .zoom.phone .title { right: 44px; font-size: 12px; line-height: 1.35; } .zoom.phone .close .word { display: none; } }
+</style></head><body>
+<h1>How fast BLAKE3 servil runs, beside other hashes</h1>
+<p class="sub">Each small chart is one measurement: its row is what a program hashes, its column how it calls; point at either name for what it means. Open a chart to read its values; its names hide or show their lines.</p>
+<div id="sections"></div>
+<div id="tip"></div>
+<script>
+const SECTIONS = [{"title":"How fast b3sum hashes files, from its start to its exit","rows":[["file","a file","One file, of the size along the chart's axis."],["tree","a tree of files","Many files, given to b3sum in one run."]],"cols":[["cached","in the page cache","Each file was read moments before, so the operating system holds it in memory."],["storage","read from storage","Each file was dropped from the operating system's memory before the run, so b3sum reads it from the disk."]],"layers":[["solo","one program","One program hashes; the machine is otherwise quiet."]],"names":["official","official-1-thread","b3sum","b3sum-1-thread","sha256sum","sha1sum","md5sum"],"colors":["#3b82f6","#3b82f6","#7c3aed","#7c3aed","#e07a45","#b4b0a8","#cfcbc3"],"striped":[true,false,true,false,false,false,false],"ours":[false,false,true,true,false,false,false],"shown":[true,true,true,true,true,true,true],"cells":{"solo|file|cached":{"sizes":["4 KiB","64 KiB","1 MiB","16 MiB","256 MiB","1 GiB"],"unit":"GB/s","call":"b3sum","doc":"https://github.com/johnservil/BLAKE3/tree/servil/b3sum","cases":false,"per":[4096,65536,1048576,16777216,268435456,1073741824],"what":"a run","axis":"file size","series":[[449.009229,26.285089,1.691667,0.172339,0.050934,0.043081],[359.417041,21.244132,1.686711,0.519141,0.473167,0.462443],[393.749300,23.232058,1.745902,0.159963,0.043545,0.034693],[400.121419,24.128085,1.600297,0.515005,0.458049,0.452738],[281.571436,16.668322,1.365182,0.468741,0.425055,0.418990],[282.880290,16.211871,1.423120,0.476897,0.432903,0.427772],[293.081331,17.484071,2.216954,1.319501,1.261043,1.255000]],"before":[],"cpu":[[557.063802,56.103516,4.376856,0.919127,0.627194,0.606395],[269.873047,16.081746,1.395607,0.497242,0.471155,0.461888],[308.072917,18.173218,2.547963,0.591028,0.463372,0.443040],[311.214193,18.941243,1.305326,0.491246,0.454225,0.450547],[209.309896,12.648519,1.128769,0.450122,0.423343,0.418505],[211.083984,12.243652,1.176516,0.459075,0.431119,0.427295],[218.815104,13.477580,1.969020,1.300514,1.259302,1.254403]],"energy":[null,null,null,null,null,null,null],"cores":[null,null,null,null,null,null,null]},"solo|tree|cached":{"sizes":["1000 x 16 KiB","1000 x 16 KiB, a process each","mixed tree, 1000 files, 74 MiB","16 x 64 MiB"],"unit":"GB/s","call":"b3sum","doc":"https://github.com/johnservil/BLAKE3/tree/servil/b3sum","cases":true,"per":[16384000,16384000,77688832,1073741824],"what":"a run","axis":"tree","series":[[3.514004,94.971293,0.684672,0.047044],[1.327815,75.704370,0.647813,0.463329],[0.730081,84.807780,0.150356,0.038126],[1.214417,84.733597,0.505729,0.449687],[1.807393,58.746789,0.730498,0.420428],[1.849142,58.851428,0.742172,0.428737],[2.713108,59.630861,1.581898,1.258226]],"before":[],"cpu":[[21.341406,135.616073,6.263007,0.653692],[1.295752,58.660938,0.640827,0.462734],[8.398726,67.434021,1.717610,0.442120],[1.185356,67.461768,0.497227,0.447569],[1.780066,44.494230,0.724623,0.419956],[1.822359,44.547957,0.736218,0.428229],[2.685124,45.337663,1.575840,1.257622]],"energy":[null,null,null,null,null,null,null],"cores":[null,null,null,null,null,null,null]},"solo|file|storage":{"sizes":["4 KiB","64 KiB","1 MiB","16 MiB","256 MiB","1 GiB"],"unit":"GB/s","call":"b3sum","doc":"https://github.com/johnservil/BLAKE3/tree/servil/b3sum","cases":false,"per":[4096,65536,1048576,16777216,268435456,1073741824],"what":"a run","axis":"file size","series":[[482.107894,27.687074,2.186910,0.503645,0.360641,0.351455],[410.431608,24.253249,2.378035,1.523205,1.394600,1.414638],[443.830664,23.810535,1.918727,0.289466,0.156904,0.148470],[455.483643,23.977579,1.791800,0.385225,0.221518,0.212050],[331.119808,19.630858,1.837823,0.583788,0.452158,0.442716],[327.366797,18.749745,1.811754,0.594350,0.457484,0.451432],[333.907096,19.598643,2.551466,1.394571,1.287407,1.279332]],"before":[],"cpu":[[620.117188,58.773804,6.621361,1.252302,0.778097,0.750007],[280.159505,16.483561,1.537005,0.605766,0.543479,0.535253],[316.813151,18.068441,2.156576,0.617711,0.506236,0.486101],[326.660156,18.238322,1.346715,0.293295,0.215142,0.210315],[217.626953,13.381958,1.247215,0.487435,0.446161,0.440981],[219.222005,13.159180,1.248932,0.501808,0.451898,0.449762],[223.388672,14.080811,2.064387,1.323728,1.283259,1.277940]],"energy":[null,null,null,null,null,null,null],"cores":[null,null,null,null,null,null,null]},"solo|tree|storage":{"sizes":["1000 x 16 KiB","1000 x 16 KiB, a process each","mixed tree, 1000 files, 74 MiB","16 x 64 MiB"],"unit":"GB/s","call":"b3sum","doc":"https://github.com/johnservil/BLAKE3/tree/servil/b3sum","cases":true,"per":[16384000,16384000,77688832,1073741824],"what":"a run","axis":"tree","series":[[7.842567,95.540329,2.418923,0.362742],[6.068473,81.380874,2.841268,1.282824],[1.684540,89.773494,0.376994,0.150509],[6.068219,89.936418,1.308905,0.234111],[6.494337,64.256739,2.452790,0.459046],[6.498837,63.955300,2.482107,0.468495],[7.318274,64.795758,3.225244,1.293817]],"before":[],"cpu":[[25.103499,137.033691,7.408453,0.826745],[1.631038,60.150187,0.807739,0.536152],[2.920402,68.572119,1.063359,0.491075],[1.624011,68.768005,0.482570,0.212222],[2.087166,45.527995,0.842635,0.438318],[2.098995,45.300631,0.860372,0.448092],[2.955868,46.211495,1.684937,1.279520]],"energy":[null,null,null,null,null,null,null],"cores":[null,null,null,null,null,null,null]}},"about":"Apple M4 Max, 16 CPUs, macOS · 2026-10-27 · load not measured","details":[["Measured","2026-10-27 21:12:43 UTC",""],["Machine","Apple M4 Max, 12 performance and 4 efficiency cores, darwin25",""],["Power","mains power, High Power mode",""],["Other programs","not measured on macOS (its accounting books this process's own threads as other programs')",""],["bench-hashes","0.18.0",""],["bench-hashes commit","github.com/johnservil/bench-hashes at 67bae864751ae766f170be94ac38a9b3723fc181 (dirty-00f89401984e1b87c593f0df5c83b99c771ae9753dc43409689099811271c7f5)","https://github.com/johnservil/bench-hashes/tree/67bae864751ae766f170be94ac38a9b3723fc181"],["Rust compiler","rustc 1.98.0-nightly (f428d123a 2026-06-19)",""],["C compiler","cc: Apple clang version 17.0.0 (clang-1700.0.13.5)",""],["RUSTFLAGS","none",""],["Dependencies","blake3 b7d0b85e7caae9f4bc635961a22a659be47dd254e334b84eee8ee0ef2a455983 of Cargo.lock",""],["Target","aarch64-apple-darwin",""],["Files","/Users/benchrunner/b3sum-bench-files on apfs (on /System/Volumes/Data)",""],["b3sum official","b3sum-official-1.8.7  (blake3 eb4b933ed768a1793405970b6870d57df208b376d2cfeed5934c27c4adf81fa1; b3sum 1.8.7)",""],["b3sum official-1-thread","b3sum-official-1.8.7 --num-threads 1 (blake3 eb4b933ed768a1793405970b6870d57df208b376d2cfeed5934c27c4adf81fa1; b3sum 1.8.7)",""],["b3sum b3sum","b3sum-934dee8  (blake3 d352f9ef1ebc37ff4b1d2349fecb877493655f02e87c314cc681d6f2398713cf; b3sums 0.8.0+f7ce4e4e7bd41bd14e9e55d35279af4c6ad6d3ab)",""],["b3sum b3sum-1-thread","b3sum-934dee8 --num-threads 1 (blake3 d352f9ef1ebc37ff4b1d2349fecb877493655f02e87c314cc681d6f2398713cf; b3sums 0.8.0+f7ce4e4e7bd41bd14e9e55d35279af4c6ad6d3ab)",""],["b3sum sha256sum","sha256sum  (blake3 cbea32aab468b2870a29e74f48482893daaa97e608d7d9324e51b31c9f0ab368; sha256sum (Darwin) 1.0)",""],["b3sum sha1sum","sha1sum  (blake3 cbea32aab468b2870a29e74f48482893daaa97e608d7d9324e51b31c9f0ab368; sha1sum (Darwin) 1.0)",""],["b3sum md5sum","md5sum  (blake3 cbea32aab468b2870a29e74f48482893daaa97e608d7d9324e51b31c9f0ab368; md5sum (Darwin) 1.0)",""],["Samples","b3sum.samples.tsv","b3sum.samples.tsv"]],"run":"bench-hashes 0.18.0","before":["",""]}];
+/* A library's multi-threaded form wears its single-threaded form's colour
+   as a double line: the colour, a white core along it (Zooko, October 24).
+   `rest` is the line's other attributes (dashes, caps, opacity). */
+function line(S, i, points, width, rest = "") {
+  const one = (stroke, w) => `<polyline points="${points}" fill="none" stroke="${stroke}" stroke-width="${w}" ${rest}/>`;
+  return S.striped && S.striped[i] ? one(S.colors[i], width + 1.6) + one("#fff", Math.max(0.8, width * 0.55)) : one(S.colors[i], width);
+}
+/* A dot: filled for a single-threaded form, a ring for a multi-threaded one. */
+function dot(S, i, cx, cy, r) {
+  return S.striped && S.striped[i] ? `<circle cx="${cx}" cy="${cy}" r="${r}" fill="#fff" stroke="${S.colors[i]}" stroke-width="1.8"/>` : `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${S.colors[i]}"/>`;
+}
+/* A swatch's background: the colour, or its stripes. */
+function swatch(S, i) {
+  const c = S.colors[i];
+  return S.striped && S.striped[i] ? `repeating-linear-gradient(135deg, ${c} 0 2px, #fff 2px 3.5px)` : c;
+}
+function glyph(kind, size = 20, color = "#4b5563") {
+  const r = (x, y, w, h, o = 1) => `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="1.2" fill="${color}" opacity="${o}"/>`;
+  const g = {
+    one: r(2, 8, 18, 6),
+    batch: [0, 1, 2].map(j => r(7, 2 + j * 6.5, 8, 5)).join(""),
+    long: [0, 1, 2].map(j => r(2, 2 + j * 6.5, 18, 5)).join(""),
+    many: [0, 1, 2].map(j => r(1 + j * 2, 3 + j * 6, 8 + (j % 2) * 6, 4)).join(""),
+    coll: [[1, 3, 6], [9, 3, 11], [1, 10, 14], [17, 10, 4], [1, 17, 9], [12, 17, 9]].map(([x, y, w]) => r(x, y, w, 4)).join(""),
+    merkle: `<path d="M11 4 L6 10 M11 4 L16 10 M6 10 L3.5 16 M6 10 L8.5 16 M16 10 L13.5 16 M16 10 L18.5 16" stroke="${color}" stroke-width="1.4" fill="none"/><circle cx="11" cy="3.5" r="2.2" fill="${color}"/><circle cx="6" cy="10" r="1.8" fill="${color}"/><circle cx="16" cy="10" r="1.8" fill="${color}"/>` + [1.5, 6.5, 11.5, 16.5].map(x => r(x, 16, 4, 4)).join(""),
+    outb: r(1, 15, 20, 5) + `<path d="M11 13 V9 M5 13 V10 H17 V13 M11 9 V4" stroke="${color}" stroke-width="1.6" fill="none"/>` + `<circle cx="11" cy="3.5" r="2.2" fill="${color}"/>`,
+    busy: `<circle cx="11" cy="11" r="4" fill="none" stroke="${color}" stroke-width="2.5"/>` + [0, 45, 90, 135, 180, 225, 270, 315].map(a => `<rect x="10" y="2" width="2" height="4" fill="${color}" transform="rotate(${a} 11 11)"/>`).join(""),
+    idle: `<path d="M14 3 a8 8 0 1 0 5 13 a6.5 6.5 0 1 1 -5 -13 z" fill="${color}"/>`,
+    lent: r(1, 7, 7, 8) + `<path d="M10 11 h6 M14 11 l-2.5 -2.5 M14 11 l-2.5 2.5" stroke="${color}" stroke-width="1.8" fill="none" stroke-linecap="round"/><rect x="17" y="7" width="4" height="8" rx="1" fill="none" stroke="${color}" stroke-width="1.5"/>`,
+    piped: [0, 1, 2].map(j => r(1 + j * 7, 8, 5.5, 6, 1 - j * .3)).join("") + `<path d="M2 18 h18 m-3 -2.5 l3 2.5 l-3 2.5" stroke="${color}" stroke-width="1.5" fill="none" stroke-linecap="round"/>`,
+    solo: `<circle cx="11" cy="6" r="3.5" fill="${color}"/><path d="M4.5 20 a6.5 6.5 0 0 1 13 0 z" fill="${color}"/>`,
+    shared: `<circle cx="7" cy="7" r="3" fill="${color}"/><path d="M1.5 20 a5.5 5.5 0 0 1 11 0 z" fill="${color}"/><circle cx="15.5" cy="7" r="3" fill="${color}"/><path d="M10 20 a5.5 5.5 0 0 1 11 0 z" fill="${color}"/>`,
+    file: `<path d="M5 2 h8 l5 5 v13 h-13 z" fill="none" stroke="${color}" stroke-width="1.8"/><path d="M13 2 v5 h5" fill="none" stroke="${color}" stroke-width="1.5"/>`,
+    tree: `<path d="M3 3 h6 l2 2 h8 v13 h-16 z" fill="none" stroke="${color}" stroke-width="1.8"/>` + r(6, 9, 10, 2) + r(6, 13, 7, 2),
+    cached: r(3, 4, 16, 14) + [6, 10, 14].map(x => `<rect x="${x}" y="1" width="1.6" height="3" fill="${color}"/><rect x="${x}" y="18" width="1.6" height="3" fill="${color}"/>`).join(""),
+    storage: `<ellipse cx="11" cy="5" rx="8" ry="3" fill="none" stroke="${color}" stroke-width="1.8"/><path d="M3 5 v12 a8 3 0 0 0 16 0 v-12" fill="none" stroke="${color}" stroke-width="1.8"/>`,
+  }[kind] || "";
+  return `<svg width="${size}" height="${size}" viewBox="0 0 22 22">${g}</svg>`;
+}
+/* One rate axis for the whole page: every chart of every section, every
+   contender and measure, so a line's height reads the same everywhere,
+   whatever is set aside, and one chart's level compares with another's. */
+let AXIS = null;
+function axisOf() {
+  if (!AXIS) {
+    /* Over the measures shown: a hidden one (energy's joules) would stretch the scale. */
+    const lines = c => [].concat(MEASURES.wall ? c.series.concat(c.before) : [], MEASURES.cpu ? c.cpu : [], MEASURES.energy ? c.energy : []);
+    const vals = SECTIONS.flatMap(S => Object.values(S.cells).flatMap(c => lines(c).filter(Boolean).flat())).filter(v => v).map(shown);
+    AXIS = [Math.log(Math.min(...vals)) - 0.1, Math.log(Math.max(...vals)) + 0.1];
+  }
+  return AXIS;
+}
+/* A row's shared axis: the page's one scale at the cards' height, its
+   powers of ten named once for the row (each card's faint lines meet them). */
+function rowAxis() {
+  const [lo, hi] = axisOf(), h = 94, T = 8, B = 14;
+  const y = v => h - B - (Math.log(v) - lo) / (hi - lo) * (h - T - B);
+  let s = `<svg width="38" height="${h}">`;
+  for (let e = Math.ceil(lo / Math.LN10); e <= Math.floor(hi / Math.LN10); e++) {
+    s += `<line x1="32" x2="38" y1="${y(10 ** e)}" y2="${y(10 ** e)}" stroke="#d6d2cb"/>`;
+    s += `<text x="30" y="${y(10 ** e) + 3}" font-size="9.5" fill="#4b5563" text-anchor="end">${+(10 ** e).toPrecision(1)}</text>`;
+  }
+  return s + "</svg>";
+}
+/* One chart's lines, rates (bytes over each mean time) on the section's log scale; the opened one with axes. */
+/* How many times one figure is another, in plain digits to two significant
+   figures: ×1.5, ×15, ×150, ×1,500 (toPrecision alone writes ×1.5e+2 from
+   100 up, which readers took for 1,500). */
+function timesText(r) {
+  return "×" + Number(r.toPrecision(2)).toLocaleString("en-US", { maximumFractionDigits: 1 });
+}
+/* The duel at point k of chart c: BLAKE3 servil (the faster of its forms
+   shown) against its strongest rival (the fastest other shown), as the
+   overview's brackets (Zooko, October 24): {r, w, a, b}, the factor, the
+   winner's index, servil's and the rival's times; null without both. */
+function duel(S, c, live, k) {
+  const best = is => is.filter(i => c.series[i][k]).reduce((m, i) => (m < 0 || c.series[i][k] < c.series[m][k] ? i : m), -1);
+  const ours = best(live.filter(i => S.ours[i])), rival = best(live.filter(i => !S.ours[i]));
+  if (ours < 0 || rival < 0) return null;
+  const [a, b] = [c.series[ours][k], c.series[rival][k]];
+  return { r: Math.max(a, b) / Math.min(a, b), w: a <= b ? ours : rival, a, b };
+}
+function spanText(S, c, live, k) {
+  const d = duel(S, c, live, k);
+  return d ? timesText(d.r) : null;
+}
+/* The right margin a chart's last span label needs: the bracket's offset,
+   the gap, and the label at about 0.62 em a character (bold digits), so a
+   long one (×1,500) is never cut off at the chart's edge. */
+function spanRoom(S, c, live, axes) {
+  const label = spanText(S, c, live, c.sizes.length - 1);
+  return label ? (axes ? 12 : 8) + 3 + Math.ceil(label.length * (axes ? 12 : 10) * 0.62) + 4 : 0;
+}
+function draw(S, c, w, h, axes) {
+  const live = c.series.map((s, i) => s && S.shownNow[i] ? i : -1).filter(i => i >= 0);
+  const [lo, hi] = axisOf();
+  /* An opened chart names its contenders above the plot, the names its
+     toggles (open() places them), a phone's title taking two lines and two
+     names to a row; case labels may take two lines below it. */
+  const listed = axes ? c.series.filter(Boolean).length : 0;
+  const tall = axes && narrow(), top = tall ? 72 : 40;
+  const n = c.sizes.length, L = axes ? (tall ? 50 : 70) : 8, R = Math.max(axes ? 52 : 34, spanRoom(S, c, live, axes)), T = axes ? top + 22 * Math.ceil(listed / (tall ? 2 : 5)) + 8 : 8, B = axes ? (c.cases ? 84 : 62) : 14;
+  /* Sizes run edge to edge; separate cases sit in the middles of equal slots. */
+  const x = k => n === 1 || c.cases ? L + (k + 0.5) * (w - L - R) / n : L + k * (w - L - R) / (n - 1);
+  const y = v => h - B - (Math.log(v) - lo) / (hi - lo) * (h - T - B);
+  let s = `<svg width="${w}" height="${h}">`;
+  /* Every chart shares the page's log scale: faint lines at each power of
+     ten, labelled small, show it in equal steps per factor of ten. */
+  if (!axes) for (let e = Math.ceil(lo / Math.LN10); e <= Math.floor(hi / Math.LN10); e++) {
+    s += `<line x1="0" x2="${w}" y1="${y(10 ** e)}" y2="${y(10 ** e)}" stroke="#e7e5e0"/>`;
+  }
+  if (axes) {
+    for (let e = Math.floor(Math.log10(Math.exp(lo))) - 1; e <= Math.ceil(Math.log10(Math.exp(hi))); e++) for (const m of [1, 2, 5]) {
+      const v = m * 10 ** e; if (Math.log(v) < lo || Math.log(v) > hi) continue;
+      const onNow = ["wall", "cpu", "energy"].filter(m => MEASURES[m]);
+      const unit = onNow.length === 1 && onNow[0] === "wall" ? (SHOW.cost ? " ns/B" : " GB/s") : "";
+      s += `<line x1="${L}" x2="${w - R}" y1="${y(v)}" y2="${y(v)}" stroke="#f3f4f6"/><text x="${L - 6}" y="${y(v) + 4}" font-size="11" fill="#6b7280" text-anchor="end">${+v.toPrecision(2)}${unit}</text>`;
+    }
+    /* The title runs up the axis; its arrow, beside its end, points up, as faster lines lie. */
+    /* The axis names every selected measure: solid, dotted, dashed. */
+    /* The unit of every measure shown, in one short phrase (the chips say which line is which). */
+    const M = MEASURES, on = ["wall", "cpu", "energy"].filter(m => M[m]);
+    const title0 = on.length === 1 && on[0] === "wall" && !SHOW.cost ? "gigibytes per second"
+      : SHOW.cost ? on.map(m => ({ wall: "ns", cpu: "CPU ns", energy: "nJ" })[m]).join(" / ") + " per byte" : "GB per " + on.map(m => ({ wall: "second", cpu: "CPU second", energy: "joule" })[m]).join(" / ");
+    const mid = (T + h - B) / 2, title = `${title0} (log scale), ${SHOW.cost ? "lower" : "higher"} is better`, half = title.length * 3.1;
+    s += `<text x="14" y="${mid}" font-size="11" fill="#6b7280" transform="rotate(-90 14 ${mid})" text-anchor="middle">${title}</text>`;
+    s += SHOW.cost
+      ? `<path d="M10 ${mid + half + 4} V${mid + half + 18} M6.5 ${mid + half + 13} L10 ${mid + half + 18} L13.5 ${mid + half + 13}" stroke="#6b7280" stroke-width="1.3" fill="none"/>`
+      : `<path d="M10 ${mid - half - 4} V${mid - half - 18} M6.5 ${mid - half - 13} L10 ${mid - half - 18} L13.5 ${mid - half - 13}" stroke="#6b7280" stroke-width="1.3" fill="none"/>`;
+    /* As many size labels as fit, about 48 px each. */
+    const every = Math.max(1, Math.ceil(n * 48 / (w - L - R)));
+    /* Case labels wrap to the width of their slot, so neighbours never overlap. */
+    const slot = (w - L - R) / Math.max(n, 1), chars = Math.max(6, Math.floor(slot / 6.2));
+    const wrap = lab => lab.split(" ").reduce((lines, word) => { const last = lines[lines.length - 1]; if (last && (last + " " + word).length <= chars) lines[lines.length - 1] = last + " " + word; else lines.push(word); return lines; }, []);
+    s += `<text x="${(L + w - R) / 2}" y="${h - 8}" font-size="11" fill="#6b7280" text-anchor="middle">${c.axis} (log scale)</text>`;
+    c.sizes.forEach((lab, k) => { if (c.cases || k % every === 0 || k === n - 1) s += `<text x="${x(k)}" y="${h - B + 16}" font-size="11" fill="#6b7280" text-anchor="middle">${(c.cases ? wrap(lab) : [lab]).map((t, j) => `<tspan x="${x(k)}" dy="${j ? 13 : 0}">${t}</tspan>`).join("")}</text>`; });
+    s += `<line class="cursor" x1="0" x2="0" y1="${T}" y2="${h - B}" stroke="#9ca3af" stroke-dasharray="3 3" visibility="hidden"/>`;
+  }
+  /* An earlier run beside this one: its lines dashed and pale, under the run's own. */
+  if (S.besideNow) for (const i of live) {
+    const was = c.before[i]; if (!was) continue;
+    const pts = was.map((v, k) => v ? [x(k), y(shown(v))] : null);
+    if (!(pts.filter(Boolean).length === 1 || c.cases)) {
+      let run = [];
+      for (const p of pts.concat([null])) {
+        if (p) { run.push(p); continue; }
+        if (run.length > 1) s += line(S, i, run.map(p => p.map(q => q.toFixed(1)).join(",")).join(" "), axes ? 2 : 1.3, `stroke-opacity=".55" stroke-dasharray="4 3"`);
+        run = [];
+      }
+    }
+    if (pts.length <= 3 || c.cases) s += pts.filter(Boolean).map(p => `<circle cx="${p[0]}" cy="${p[1]}" r="${axes ? 5 : 3}" fill="none" stroke="${S.colors[i]}" stroke-opacity=".7" stroke-width="1.5"/>`).join("");
+  }
+  /* CPU time (the processor time a unit took, all the program's threads)
+     dotted; energy (the CPU package's, a unit's share) dashed. */
+  for (const [m, dash, cap] of [["cpu", `0.1 ${axes ? 4 : 3}`, "round"], ["energy", axes ? "7 4" : "5 3", "butt"]]) if (MEASURES[m]) for (const i of live) {
+    const values = c[m][i]; if (!values) continue;
+    const pts = values.map((v, k) => v ? [x(k), y(shown(v))] : null);
+    let run = [];
+    for (const p of pts.concat([null])) {
+      if (p) { run.push(p); continue; }
+      if (run.length > 1 && !c.cases) s += line(S, i, run.map(p => p.map(q => q.toFixed(1)).join(",")).join(" "), axes ? (m === "cpu" ? 2.6 : 2) : (m === "cpu" ? 1.8 : 1.4), `stroke-dasharray="${dash}" stroke-linecap="${cap}"`);
+      run = [];
+    }
+    if (pts.length <= 3 || c.cases) s += pts.filter(Boolean).map(p => `<circle cx="${p[0]}" cy="${p[1]}" r="${axes ? 4 : 2.5}" fill="#fff" stroke="${S.colors[i]}" stroke-width="1.6" stroke-dasharray="${m === "cpu" ? "1.5 1.5" : "3 1.5"}"/>`).join("");
+  }
+  /* Dots after every line, the fastest at each point drawn last, on top:
+     where two overlap, the faster one shows. */
+  const dots = [];
+  if (MEASURES.wall) for (const i of live) {
+    const pts = c.series[i].map((v, k) => [x(k), y(shown(v))]);
+    s += pts.length === 1 || c.cases ? "" : line(S, i, pts.map(p => p.map(q => q.toFixed(1)).join(",")).join(" "), axes ? 2.2 : 1.5);
+    if (pts.length <= 3 || c.cases) dots.push(...pts.map((p, k) => [1 / c.series[i][k], dot(S, i, p[0], p[1], axes ? 5 : 3)]));
+  }
+  /* Slowest first, fastest last: where dots overlap, the fastest shows. */
+  s += dots.sort((a, b) => a[0] - b[0]).map(d => d[1]).join("");
+  /* A small chart's span: at its last point, a bracket from the worst line
+     shown to the best, and how many times better the best is. */
+  /* The bracket: servil's line to its strongest rival's, the factor in
+     the winner's colour, at a chart's last point, and in an opened chart
+     of separate cases at every case. */
+  if (MEASURES.wall) {
+    const at = axes && c.cases ? [...Array(n).keys()] : [n - 1];
+    for (const k of at) {
+      const d = duel(S, c, live, k);
+      if (!d) continue;
+      const y1 = y(shown(d.a)), y2 = y(shown(d.b));
+      const bx = x(k) + (axes ? 12 : 8), fs = axes ? 12 : 10;
+      s += `<path d="M${bx - 3} ${y1} H${bx} V${y2} H${bx - 3}" fill="none" stroke="#6b7280" stroke-width="1"/><text x="${bx + 3}" y="${(y1 + y2) / 2 + fs / 3}" font-size="${fs}" font-weight="700" fill="${S.colors[d.w]}">${timesText(d.r)}</text>`;
+    }
+  }
+  if (!axes) s += `<line class="cursor" x1="0" x2="0" y1="${T}" y2="${h - B}" stroke="#9ca3af" stroke-dasharray="3 3" visibility="hidden"/>`;
+  return { svg: s + "</svg>", x, n, L, R, w };
+}
+/* The page is narrow (a phone): grids scale to fit, charts open across it. */
+/* The screen's width: clientWidth (a phone widens innerWidth to fit content
+   wider than itself, so it would never read narrow). */
+const screenWidth = () => document.documentElement.clientWidth;
+const narrow = () => screenWidth() < 1000;
+let GRIDS = [];
+function fitGrids() {
+  for (const g of GRIDS) {
+    g.style.zoom = 1;
+    g.style.zoom = narrow() ? Math.min(1, (screenWidth() - 20) / g.scrollWidth) : 1;
+  }
+}
+window.addEventListener("resize", () => { const was = OPEN; render(); if (was) { OPEN = was; reopen(); } });
+/* What the lines measure, for the whole page: wall-clock time by default. */
+const MEASURES = { wall: true, cpu: false, energy: false };
+/* What a line's height is: a rate (bytes per second, higher is faster) by
+   default, or a cost (nanoseconds per byte, lower is faster). */
+const SHOW = { cost: false };
+const shown = nsPerByte => SHOW.cost ? nsPerByte : 1 / nsPerByte;
+/* The chart open now (its cell's key), so a chip that redraws the page keeps it open. */
+let OPEN = null;
+function render() {
+  /* A redraw keeps the reader's place on the page. */
+  const scrolled = window.scrollY;
+  requestAnimationFrame(() => window.scrollTo(0, scrolled));
+  const root = document.getElementById("sections");
+  document.removeEventListener("keydown", window.onZoomKey || (() => {}));
+  document.getElementById("tip").style.display = "none";
+  root.style.minHeight = root.offsetHeight + "px"; root.innerHTML = ""; GRIDS = [];
+  /* A phone's opened chart lives outside the sections: it goes with them. */
+  document.querySelectorAll(".zoom.phone").forEach(z => z.remove());
+    /* What the lines measure: wall-clock time by default; CPU time where the
+     run recorded it; energy once the benchmark counts it. */
+  const measures = document.createElement("div"); measures.className = "measures";
+  /* First the view: a switch between a rate (higher is faster) and a cost
+     (lower is faster); then which lines, each named for what its height is. */
+  const sw = document.createElement("button"); sw.className = "switch" + (SHOW.cost ? " on" : "");
+  sw.setAttribute("role", "switch"); sw.setAttribute("aria-checked", SHOW.cost);
+  sw.title = SHOW.cost ? "Lines are costs, nanoseconds per byte: lower is better. Click to show rates (higher is better)." : "Lines are rates, bytes per second: higher is better. Click to show costs (lower is better).";
+  sw.innerHTML = `<span class="track"><span class="knob"></span></span><span class="dir">${SHOW.cost ? "↓ lower is better" : "↑ higher is better"}<span class="scale">, log scale</span></span>`;
+  sw.onclick = () => { SHOW.cost = !SHOW.cost; AXIS = null; render(); reopen(); };
+  measures.append(sw, "·");
+  const icon = m => `<svg width="20" height="10"><line x1="2" x2="18" y1="5" y2="5" stroke="currentColor" stroke-width="${m === "cpu" ? 2.2 : 1.8}" ${m === "cpu" ? 'stroke-dasharray="0.1 3.5" stroke-linecap="round"' : m === "energy" ? 'stroke-dasharray="5 3"' : ""}/></svg>`;
+  /* Energy where any run counted it (a quiet machine's CPU package, solo cells). */
+  const counted = m => SECTIONS.some(S => Object.values(S.cells).some(c => c[m].some(Boolean)));
+  const lines = SHOW.cost
+    ? [["wall", "wall-clock ns per byte", false, "Nanoseconds the program waits per byte hashed."], ["cpu", "CPU ns per byte", true, "Nanoseconds of processor time per byte hashed, every thread of the program summed: what the hash costs the machine."], ["energy", "nJ per byte", false, "Nanojoules the CPU package used per byte hashed (solo cells; the whole package's, on a quiet machine)."]]
+    : [["wall", "GB per wall-clock second", false, "Bytes hashed per second the program waits."], ["cpu", "GB per CPU second", true, "Bytes hashed per second of processor time, every thread of the program summed: higher is cheaper for the machine. A hash on one thread draws both lines together."], ["energy", "GB per joule", false, "Bytes hashed per joule the CPU package used (solo cells; the whole package's, on a quiet machine): higher is cheaper."]];
+  for (const [m, label, dots, why] of lines) {
+    const b = document.createElement("button"); b.innerHTML = icon(m) + label; b.title = why;
+    if (m !== "wall" && !counted(m)) { b.disabled = true; b.classList.add("off"); b.title = `This run counted no ${m === "cpu" ? "CPU time" : "energy"}.`; }
+    else {
+      if (!MEASURES[m]) b.classList.add("off");
+      b.onclick = () => { MEASURES[m] = !MEASURES[m]; AXIS = null; render(); reopen(); };
+    }
+    measures.appendChild(b);
+  }
+  root.appendChild(measures);
+  /* The names stick just under the panel, whatever its height (it wraps on a phone). */
+  requestAnimationFrame(() => document.documentElement.style.setProperty("--bar", measures.offsetHeight + "px"));
+
+  SECTIONS.forEach((S, si) => {
+    S.shownNow = S.shownNow || S.shown.slice();
+    if (S.besideNow === undefined) S.besideNow = !!S.before[0];
+    const box = document.createElement("div");
+    const esc = t => t.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+    const rows = S.details.map(([k, v, a]) => `<dt>${esc(k)}</dt><dd>${a ? `<a href="${esc(a)}">${esc(v)}</a>` : esc(v)}</dd>`).join("");
+    const vs = S.before[0] ? `<p class="about">Solid lines: ${esc(S.run)}. Dashed lines: ${esc(S.before[0])}, ${esc(S.before[1])}.</p>` : "";
+    box.innerHTML = `<h2>${S.title}</h2><p class="about">${esc(S.about)}</p>${vs}<details class="run"><summary>About this run</summary><dl>${rows}</dl></details>`;
+    const legend = document.createElement("div"); legend.className = "legend";
+    S.names.forEach((nm, i) => {
+      const b = document.createElement("button"); b.textContent = nm; b.style.setProperty("--c", swatch(S, i));
+      if (!S.shownNow[i]) b.classList.add("off");
+      b.onclick = () => { S.shownNow[i] = !S.shownNow[i]; render(); reopen(); };
+      legend.appendChild(b);
+    });
+    /* The earlier run beside this one: a chip that hides or shows its dashed lines. */
+    if (S.before[0]) {
+      const b = document.createElement("button"); b.className = "beside" + (S.besideNow ? "" : " off");
+      b.innerHTML = `<svg width="22" height="10"><line x1="1" x2="21" y1="5" y2="5" stroke="#6b7280" stroke-dasharray="4 3" stroke-width="1.6"/></svg> ${esc(S.before[0])}`;
+      b.title = S.before[1];
+      b.onclick = () => { S.besideNow = !S.besideNow; render(); reopen(); };
+      legend.appendChild(b);
+    }
+    box.appendChild(legend);
+    for (const [layer, lname, lnote] of S.layers) {
+      if (S.layers.length > 1) {
+        const lay = document.createElement("div");
+        lay.className = "layer";
+        lay.innerHTML = glyph(layer, 18) + lname + `<span class="means">${lnote}</span>`;
+        lay.onclick = () => lay.classList.toggle("show");
+        box.appendChild(lay);
+      }
+      const g = document.createElement("div"); g.className = "grid"; g.style.setProperty("--cols", S.cols.length); box.appendChild(g);
+      GRIDS.push(g);
+      g.appendChild(document.createElement("div"));
+      g.appendChild(document.createElement("div"));
+      for (const [c, cname, cmeans] of S.cols) {
+        const h = document.createElement("div"); h.className = "h";
+        h.innerHTML = glyph(c) + cname + `<span class="means">${cmeans}</span>`; h.dataset.key = "col:" + c; h.onclick = () => h.classList.toggle("show"); g.appendChild(h);
+      }
+      for (const [r, rname, rmeans] of S.rows) {
+        const h = document.createElement("div"); h.className = "h row";
+        h.innerHTML = glyph(r) + `<span>${rname}</span><span class="means">${rmeans}</span>`; h.dataset.key = "row:" + r; h.onclick = () => h.classList.toggle("show"); g.appendChild(h);
+        const ax = document.createElement("div"); ax.className = "axis-cell"; ax.innerHTML = rowAxis(); g.appendChild(ax);
+        for (const [c] of S.cols) {
+          const cell = document.createElement("div"); cell.className = "cell";
+          const key = `${layer}|${r}|${c}`, q = S.cells[key];
+          if (q) {
+            const nothing = (MEASURES.wall || MEASURES.cpu || MEASURES.energy) && !MEASURES.wall && !(MEASURES.cpu && q.cpu.some(Boolean)) && !(MEASURES.energy && q.energy.some(Boolean));
+            const d = draw(S, q, 208, 94, false);
+            cell.innerHTML = d.svg + (nothing ? `<span class="note">nothing selected is recorded for this way of calling</span>` : "") + `<span class="call"><a class="doc" href="${q.doc}" target="_blank" title="${q.call}: its documentation">${q.call}</a></span>`;
+            if (!nothing) hoverTip(cell, S, q, d);
+            cell.querySelector("a.doc").onclick = e => e.stopPropagation();
+            cell.dataset.key = si + ":" + key;
+            cell.onclick = () => open(S, g, cell, q, r, c, layer);
+          } else {
+            cell.classList.add("empty");
+          }
+          g.appendChild(cell);
+        }
+      }
+    }
+    root.appendChild(box);
+  });
+  fitGrids();
+}
+function tipHTML(S, q, k) {
+  const M = MEASURES;
+  const rows = q.series.map((s, i) => s && S.shownNow[i] ? [i, 1 / s[k], s[k]] : null).filter(Boolean).sort((a, b) => b[1] - a[1]);
+  /* Beside an earlier run: its rate, and how many times faster the run is. */
+  const was = i => { const v = S.besideNow && q.before[i] && q.before[i][k]; return v ? ` <span class="was">(before: ${(1 / v).toPrecision(3)}; now ×${(v / q.series[i][k]).toFixed(2)})</span>` : ""; };
+  const time = ns => ns >= 1e6 ? (ns / 1e6).toPrecision(3) + " ms" : ns >= 1e3 ? (ns / 1e3).toPrecision(3) + " µs" : ns.toPrecision(3) + " ns";
+  const cpuOf = i => { const v = q.cpu[i] && q.cpu[i][k]; return v ? `${M.wall ? "; " : ""}CPU ${SHOW.cost ? v.toPrecision(3) + " ns/B · " : ""}${time(v * q.per[k])} ${q.what}` : M.wall ? "" : "no CPU time recorded"; };
+  const energyOf = i => { const v = q.energy[i] && q.energy[i][k]; if (!v) return ""; const nj = v * q.per[k]; return `${M.wall || M.cpu ? "; " : ""}energy ${SHOW.cost ? v.toPrecision(3) + " nJ/B · " : (1 / v).toPrecision(3) + " GB/J · "}${nj >= 1e6 ? (nj / 1e6).toPrecision(3) + " mJ" : nj >= 1e3 ? (nj / 1e3).toPrecision(3) + " µJ" : nj.toPrecision(3) + " nJ"} ${q.what}`; };
+  /* Where the caller ran: its E-core share and the clocks, where counted. */
+  const ran = i => { const c = q.cores && q.cores[i] && q.cores[i][k]; if (!c) return ""; const [e, p, ee] = c; return ` <span class="was">[${e < 0.005 ? `P cores, ${p.toFixed(2)} GHz` : e > 0.995 ? `E cores, ${ee.toFixed(2)} GHz` : `${(100 * e).toFixed(0)}% on E cores; P ${p.toFixed(2)}, E ${ee.toFixed(2)} GHz`}]</span>`; };
+  /* A contender a block: what wraps indents under its name. */
+  return `${q.axis}: <b>${q.sizes[k]}</b>` + rows.map(([i, rate, t]) => `<div class="row"><span class="sw" style="background:${swatch(S, i)}"></span>${S.names[i]}: ` + (M.wall ? `${SHOW.cost ? t.toPrecision(3) + " ns/B" : rate.toPrecision(3) + " " + q.unit} · ${time(t * q.per[k])} ${q.what}${was(i)}${ran(i)}` : "") + (M.cpu ? cpuOf(i) : "") + (M.energy ? energyOf(i) : "") + "</div>").join("");
+}
+/* A collapsed card's hover: the opened chart's values at the pointer's
+   point, the cursor on that point; a click still opens the chart. */
+function hoverTip(cell, S, q, d) {
+  const cur = cell.querySelector(".cursor"), tip = document.getElementById("tip"), svg = cell.querySelector("svg");
+  if (!cur) return;
+  cell.onmousemove = e => {
+    const r = svg.getBoundingClientRect(), mx = (e.clientX - r.left) / r.width * d.w;
+    const slot = (d.w - d.L - d.R) / (q.cases ? d.n : Math.max(d.n - 1, 1));
+    const k = d.n === 1 ? 0 : Math.max(0, Math.min(d.n - 1, Math.round((mx - d.L) / slot - (q.cases ? 0.5 : 0))));
+    cur.setAttribute("x1", d.x(k)); cur.setAttribute("x2", d.x(k)); cur.setAttribute("visibility", "visible");
+    tip.innerHTML = tipHTML(S, q, k);
+    tip.style.display = "block";
+    tip.style.left = "0px";
+    tip.style.left = Math.max(4, Math.min(e.clientX + 14, screenWidth() - tip.offsetWidth - 4)) + "px";
+    tip.style.top = Math.max(4, Math.min(e.clientY + 10, innerHeight - tip.offsetHeight - 4)) + "px";
+  };
+  cell.onmouseleave = () => { cur.setAttribute("visibility", "hidden"); tip.style.display = "none"; };
+}
+/* Opening: the chart grows from its own cell over the cells' area, the headers in view, and shrinks back into it. */
+function open(S, grid, cell, q, row, col, layer) {
+  const gr = grid.getBoundingClientRect(), cr = cell.getBoundingClientRect();
+  const first = grid.querySelector(".cell").getBoundingClientRect();
+  const phone = narrow();
+  /* A phone: a panel across the screen under the bar, at full size (the
+     grid is scaled down); else over the grid's cells, the headers in view. */
+  const bar = document.querySelector(".measures").getBoundingClientRect().bottom;
+  const X0 = phone ? 6 : first.left - gr.left, Y0 = phone ? bar + 4 : first.top - gr.top;
+  const W = phone ? screenWidth() - 12 : Math.max(Math.min(gr.width - X0, window.innerWidth - first.left - 6), 640);
+  const H = phone ? Math.max(360, window.innerHeight - Y0 - 6) : Math.max(gr.height - Y0, 340);
+  const z = document.createElement("div"); z.className = "zoom" + (phone ? " phone" : "");
+  const start = phone ? { left: cr.left, top: cr.top, width: cr.width, height: cr.height } : { left: cr.left - gr.left, top: cr.top - gr.top, width: cr.width, height: cr.height };
+  const place = r => Object.assign(z.style, Object.fromEntries(Object.entries(r).map(([k, v]) => [k, v + "px"])));
+  const instant = cell.dataset.instant === "1";
+  OPEN = cell.dataset.key;
+  if (instant) z.style.transition = "none";
+  place(start); (phone ? document.body : grid).appendChild(z);
+  const d = draw(S, q, W, H, true);
+  const rn = S.rows.find(r => r[0] === row)[1], cn = S.cols.find(c => c[0] === col)[1];
+  const ln = S.layers.length > 1 ? ", " + S.layers.find(l => l[0] === layer)[1] : "";
+  z.innerHTML = d.svg + `<div class="title">${glyph(row, 16)}${glyph(col, 16)} ${rn}, ${cn}${ln}: <code><a class="doc" href="${q.doc}" target="_blank" title="its documentation">${q.call}</a></code></div><button class="close">✕<span class="word"> put back</span></button>`;
+  z.querySelector("a.doc").onclick = e => e.stopPropagation();
+  /* The chart's contenders under its title, each name its toggle. */
+  const key = document.createElement("div"); key.className = "key";
+  key.style.left = d.L + "px"; key.style.top = (phone && narrow() ? 72 : 40) - 10 + "px";
+  q.series.forEach((v, i) => {
+    if (!v) return;
+    const b = document.createElement("button"); b.style.setProperty("--c", S.colors[i]);
+    b.textContent = S.names[i];
+    if (!S.shownNow[i]) b.classList.add("off");
+    b.title = S.shownNow[i] ? "hide its lines" : "show its lines";
+    b.onclick = e => { e.stopPropagation(); S.shownNow[i] = !S.shownNow[i]; render(); reopen(); };
+    key.appendChild(b);
+  });
+  z.appendChild(key);
+  if (instant) { place({ left: X0, top: Y0, width: W, height: H }); requestAnimationFrame(() => { z.style.transition = ""; }); }
+  else requestAnimationFrame(() => place({ left: X0, top: Y0, width: W, height: H }));
+  const lit = [...grid.querySelectorAll(".h")].filter(h => h.dataset.key === "row:" + row || h.dataset.key === "col:" + col);
+  lit.forEach(h => h.classList.add("lit"));
+  const tip = document.getElementById("tip"), cur = z.querySelector(".cursor");
+  /* A touch's tap shows the values at its point (the finger moves no
+     pointer); a mouse's click, or the button, puts the chart back. */
+  let touch = false;
+  z.onpointerdown = e => { touch = e.pointerType !== "mouse"; };
+  const show = e => {
+    const zr = z.getBoundingClientRect(), mx = e.clientX - zr.left;
+    const slot = (d.w - d.L - d.R) / (q.cases ? d.n : Math.max(d.n - 1, 1));
+    const k = d.n === 1 ? 0 : Math.max(0, Math.min(d.n - 1, Math.round((mx - d.L) / slot - (q.cases ? 0.5 : 0))));
+    cur.setAttribute("x1", d.x(k)); cur.setAttribute("x2", d.x(k)); cur.setAttribute("visibility", "visible");
+    tip.innerHTML = tipHTML(S, q, k);
+    tip.style.display = "block";
+    /* Measured at the left edge, at its full width, then placed. */
+    tip.style.left = "0px";
+    tip.style.left = Math.max(4, Math.min(e.clientX + 14, screenWidth() - tip.offsetWidth - 4)) + "px";
+    /* Above a finger, which would hide it; below a mouse pointer. */
+    tip.style.top = Math.max(4, Math.min(touch ? e.clientY - tip.offsetHeight - 24 : e.clientY + 10, innerHeight - tip.offsetHeight - 4)) + "px";
+  };
+  z.onmousemove = e => { if (!touch) show(e); };
+  /* A mouse leaving hides the values; after a touch, the emulated mouse events that follow a tap would hide what the tap showed, so they wait for the next tap. */
+  z.onmouseleave = () => { if (touch) return; tip.style.display = "none"; cur.setAttribute("visibility", "hidden"); };
+  const close = () => { OPEN = null; document.removeEventListener("click", outside); document.removeEventListener("keydown", onKey); tip.style.display = "none"; lit.forEach(h => h.classList.remove("lit")); place(start); setTimeout(() => z.remove(), 220); };
+  z.querySelector(".close").onclick = e => { e.stopPropagation(); close(); };
+  /* Escape puts it back too. */
+  const onKey = e => { if (e.key === "Escape") { document.removeEventListener("keydown", onKey); close(); } };
+  document.addEventListener("keydown", onKey); window.onZoomKey = onKey;
+  z.onclick = e => { if (touch) show(e); else close(); };
+  /* A click anywhere else on the page puts it back too, except on the
+     chips, which redraw it in place. */
+  const outside = e => { if (!z.isConnected) return document.removeEventListener("click", outside); if (!z.contains(e.target) && !e.target.closest(".measures, .legend")) close(); };
+  setTimeout(() => document.addEventListener("click", outside));
+}
+render();
+/* A chip clicked inside an open chart: redraw, and open it again at full size at once. */
+function reopen() {
+  const key = OPEN; if (!key) return;
+  const cell = document.querySelector(`.cell[data-key="${CSS.escape(key)}"]`);
+  if (cell) { cell.dataset.instant = "1"; cell.click(); delete cell.dataset.instant; } else OPEN = null;
+}
+/* A link to one chart (#solo|one|lent, or #1:solo|file|cached for a later section) opens it. */
+function openFromHash() {
+  if (location.hash.length < 2) return;
+  const want = decodeURIComponent(location.hash.slice(1)), key = want.includes(":") ? want : "0:" + want;
+  const cell = document.querySelector(`.cell[data-key="${CSS.escape(key)}"]`);
+  if (!cell || document.querySelector(".zoom")) return;
+  cell.scrollIntoView({ block: "center" });
+  cell.click();
+  // The chart grows from the small cell into a larger box (.zoom's 0.2 s
+  // transition), which can reach below the screen: once grown, bring the
+  // opened chart itself into view, centred if it fits, else from its top
+  // (a link from the overview opened it below the fold, Zooko, October 24).
+  const zoom = document.querySelector(".zoom");
+  if (!zoom) return;
+  let done = false;
+  const show = () => {
+    if (done) return;
+    done = true;
+    zoom.scrollIntoView({ block: zoom.offsetHeight <= innerHeight ? "center" : "start" });
+  };
+  // When its growth ends (the last of its transitions), or soon after in
+  // any case.
+  zoom.addEventListener("transitionend", () => setTimeout(show, 30));
+  setTimeout(show, 600);
+}
+// After the page has laid out, so nothing moves the chart afterwards.
+if (document.readyState === "complete") openFromHash(); else addEventListener("load", openFromHash);
+window.addEventListener("hashchange", openFromHash);
+</script></body></html>
