@@ -1,0 +1,535 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>How fast BLAKE3 servil runs, beside other hashes</title>
+<style>
+body { font: 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; color: #111827; margin: 24px; background: #fdfdfc; }
+h1 { font-size: 20px; margin: 0 0 4px; } h2 { font-size: 17px; margin: 34px 0 6px; }
+.sub { color: #6b7280; margin: 0 0 14px; max-width: 980px; }
+.about { color: #6b7280; font-size: 12px; margin: 0 0 2px; }
+.run { color: #9ca3af; font-size: 12px; margin: 0 0 8px; }
+.run summary { cursor: pointer; width: max-content; }
+.run dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 6px 0 4px 14px; max-width: 980px; }
+.run dt { color: #6b7280; }
+.run dd { margin: 0; overflow-wrap: anywhere; }
+.run a { color: inherit; }
+.legend { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 6px; }
+.legend button { font: 12px inherit; border: 1px solid #d1d5db; background: #fff; border-radius: 12px; padding: 3px 10px 3px 8px; cursor: pointer; }
+.legend button::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; background: var(--c); vertical-align: -1px; }
+.legend button.off { opacity: .35; }
+.legend button.beside::before { display: none; } .legend button.beside svg { vertical-align: 0; }
+/* What the lines measure: wall-clock time, CPU time, energy; any or all. */
+/* The panel and each section's names stay in view while the page scrolls:
+   the panel at the top, the names of the section on screen just under it. */
+.measures { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 8px; font-size: 12px; color: #6b7280;
+  position: sticky; top: 0; z-index: 8; background: #fdfdfc; padding: 6px 0; }
+.legend { position: sticky; top: var(--bar, 38px); z-index: 8; background: #fdfdfc; padding: 4px 0 6px; }
+.measures button { font: 12px inherit; border: 1px solid #c4b5fd; background: #f5f3ff; color: #4c1d95; border-radius: 12px; padding: 3px 10px 3px 8px; cursor: pointer; }
+.measures button svg { vertical-align: 0; margin-right: 5px; }
+/* The view's switch stands upright: its knob up, higher lines are better
+   (a rate); down, lower lines are better (a cost). Its label says so. */
+.measures .switch { display: inline-flex; align-items: center; gap: 6px; background: none; border: none; padding: 0 4px; cursor: pointer; color: #4c1d95; font-weight: 600; }
+.measures .switch .track { width: 18px; height: 32px; border-radius: 9px; background: #c4b5fd; position: relative; }
+.measures .switch .knob { position: absolute; left: 2px; top: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: top .15s; }
+.measures .switch.on .knob { top: 16px; }
+.measures .switch .dir { white-space: nowrap; } .measures .switch .scale { font-weight: 400; color: #6b7280; white-space: nowrap; }
+.measures button.off { background: #fff; border-color: #d1d5db; color: #6b7280; opacity: .6; }
+.measures button:disabled { cursor: not-allowed; opacity: .4; }
+#tip .was { color: #9ca3af; }
+.layer { font-size: 13px; color: #374151; display: flex; align-items: center; gap: 6px; margin: 14px 0 4px; cursor: help; user-select: none; width: max-content; padding: 2px 6px; border-radius: 6px; position: relative; }
+.layer:hover, .layer.show { background: #ede9fe; }
+.grid { position: relative; display: grid; grid-template-columns: 170px 38px repeat(var(--cols), 210px); gap: 6px; width: max-content; }
+.axis-cell { position: relative; }
+.h { font-size: 12px; color: #4b5563; text-align: center; padding: 4px; border-radius: 6px; cursor: help; user-select: none; display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; }
+.h:hover, .h.show, .h.lit { background: #ede9fe; color: #111827; }
+/* A header's meaning: under it while the pointer rests on it, or after a click or tap. */
+.means { display: none; position: absolute; top: 100%; left: 0; margin-top: 4px; width: 240px; z-index: 7; background: #111827; color: #fff; font-size: 12px; line-height: 1.4; text-align: left; padding: 7px 9px; border-radius: 6px; }
+.h:hover .means, .h.show .means, .layer:hover .means, .layer.show .means { display: block; }
+.h.row { flex-direction: row; gap: 6px; justify-content: flex-start; text-align: left; }
+.cell { height: 96px; border-radius: 8px; background: #fff; border: 1px solid #e5e7eb; position: relative; cursor: zoom-in; transition: opacity .15s; }
+.cell.empty { background: #fafaf9; border-color: #f1f1ef; cursor: default; }
+.cell .note { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; color: #9ca3af; text-align: center; padding: 6px; }
+.cell .call { position: absolute; left: 6px; bottom: 3px; font: 10px ui-monospace, Menlo, monospace; color: #6b7280; }
+a.doc { color: inherit; text-decoration: underline dotted #9ca3af; text-underline-offset: 2px; } a.doc:hover { color: #6d28d9; text-decoration-color: #6d28d9; }
+.zoom { position: absolute; background: #fff; border: 1px solid #c4b5fd; border-radius: 10px; box-shadow: 0 8px 30px rgba(0,0,0,.12); z-index: 5; overflow: hidden; transition: left .2s, top .2s, width .2s, height .2s; cursor: zoom-out; }
+.zoom .title { position: absolute; left: 14px; top: 10px; font-size: 13px; color: #374151; display: flex; gap: 6px; align-items: center; }
+.zoom .close { position: absolute; right: 8px; top: 6px; font-size: 12px; color: #4b5563; background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 12px; padding: 3px 10px; cursor: pointer; }
+/* An opened chart's contenders: a line each, its toggle. */
+.zoom .key { position: absolute; right: 10px; display: flex; flex-wrap: wrap; gap: 2px 14px; }
+.zoom .key button { font: 600 12px inherit; line-height: 20px; border: none; background: none; padding: 0 4px; margin: 0; cursor: pointer; color: var(--c); border-radius: 4px; }
+.zoom .key button:hover { background: #f5f3ff; }
+.zoom .key button.off { opacity: .35; text-decoration: line-through; }
+/* A narrow screen (a phone): the grid scales to the screen's width, and a
+   chart opens as a panel across it, at full size, under the bar. */
+@media (max-width: 999px) { body { margin: 10px; } .sub { font-size: 13px; } }
+.zoom.phone { position: fixed; z-index: 9; }
+/* The values under the pointer: as tall as they need, never wider than the window. */
+#tip { position: fixed; pointer-events: none; background: #111827; color: #fff; font-size: 12px; padding: 6px 8px; border-radius: 6px; display: none; z-index: 10; box-sizing: border-box; max-width: min(34em, calc(100vw - 8px)); }
+#tip .row { padding-left: 1.2em; text-indent: -1.2em; }
+#tip .sw { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; }
+/* After the rules above, which it narrows for a phone. */
+@media (max-width: 999px) { .zoom.phone .title { right: 44px; font-size: 12px; line-height: 1.35; } .zoom.phone .close .word { display: none; } }
+</style></head><body>
+<h1>How fast BLAKE3 servil runs, beside other hashes</h1>
+<p class="sub">Each small chart is one measurement: its row is what a program hashes, its column how it calls; point at either name for what it means. Open a chart to read its values; its names hide or show their lines.</p>
+<div id="sections"></div>
+<div id="tip"></div>
+<script>
+const SECTIONS = [{"title":"How fast each hash runs, by what a program hashes and how it calls","rows":[["one","one message","One message in memory, of the length along the chart's axis."],["batch","a batch of short messages","Many 64-byte messages hashed together, such as a Merkle tree's nodes; the axis counts the messages."],["long","a batch of longer messages","Many 4 KiB messages hashed together, such as a store's blocks or a backup's chunks; the axis counts the messages."],["merkle","a Merkle tree","A Merkle tree over 256-byte leaves the program has just written into place, leaves and parents hashed apart, every layer kept, as a zero-knowledge prover commits to its Reed-Solomon codeword (WHIR); the axis counts the leaves."],["many","many messages at once, in pieces","256 messages in progress at once, their pieces arriving 64 at a time, as a server's uploads arrive."],["coll","a collection of messages","A collection of messages of every size, such as a repository's objects or a store's files, hashed together."]],"cols":[["busy","now and then, after other work","The program hashes now and then and does other work in between, which pushes the hash's code and data out of the CPU's caches."],["idle","now and then, after a pause","The program hashes now and then and waits in between (for the network, say), so the core rests and starts the next hash slowly."],["lent","nonstop, waiting for each call","The program hashes input after input as fast as it can, reading each input once the hash before it has returned."],["piped","nonstop, pipelined","The program hashes input after input as fast as it can, and reads the next inputs while earlier ones hash: it hands its inputs to BLAKE3 servil's stream, which hashes them on other threads. The other hashes have no such call and hash on the program's thread."]],"layers":[["solo","one program","One program hashes; the machine is otherwise quiet."],["shared","two programs at once","Two programs hash at the same moment, nonstop, sharing the machine."]],"names":["BLAKE3 official","SHA-256","SHA-1DC","BLAKE3 servil st","SHA-256 ring","BLAKE3 servil mt","SHA3-256"],"colors":["#3b82f6","#e07a45","#8a7a1e","#7c3aed","#c2410c","#7c3aed","#db2777"],"striped":[false,false,false,false,false,true,false],"ours":[false,false,false,true,false,true,false],"shown":[true,false,false,false,true,true,false],"cells":{"solo|one|busy":{"sizes":["64 B","128 B","256 B","512 B","1 KiB","1536 B","2 KiB","2304 B","3 KiB","3839 B","4 KiB","4470 B","7935 B","8 KiB","16 KiB","32 KiB","64 KiB","128 KiB","256 KiB","512 KiB","1 MiB","2 MiB","3 MiB","4 MiB","8 MiB","32 MiB","64 MiB","128 MiB"],"unit":"GB/s","call":"performance::hash_multithreaded","doc":"https://johnservil.github.io/BLAKE3/blake3_servil/performance/fn.hash_multithreaded.html","cases":false,"per":[64,128,256,512,1024,1536,2048,2304,3072,3839,4096,4470,7935,8192,16384,32768,65536,131072,262144,524288,1048576,2097152,3145728,4194304,8388608,33554432,67108864,134217728],"what":"a message","axis":"message size","series":[[25.256510,12.599935,6.788249,3.920003,2.353109,2.224284,1.856527,1.701425,1.467095,1.347617,1.057882,1.040101,0.944318,0.787099,0.612691,0.548993,0.483884,0.472068,0.468520,0.446929,0.438816,0.427110,0.425319,0.423226,0.429529,0.432296,0.431401,0.432279],[23.247396,10.714844,5.798177,3.048340,1.746460,1.288628,1.110514,1.067021,0.848823,0.795086,0.712056,0.726286,0.575415,0.570485,0.489970,0.436574,0.376650,0.382079,0.370927,0.360065,0.348691,0.346844,0.349085,0.343276,0.341384,0.339402,0.339004,0.339937],[50.023438,24.874349,13.630534,7.669759,4.618164,3.553765,2.973918,2.803060,2.346490,2.168013,2.024292,1.935738,1.663684,1.625488,1.454041,1.351039,1.314802,1.286668,1.304454,1.286169,1.278549,1.288326,1.281288,1.280677,1.289835,1.287770,1.288855,1.285054],[22.027344,11.149089,6.666667,3.597738,2.298910,2.034505,1.593791,1.633644,1.191352,1.060910,0.991842,1.033949,0.711510,0.782867,0.500142,0.360916,0.305228,0.234975,0.204126,0.183357,0.178469,0.177542,0.179231,0.176344,0.175939,0.177202,0.179515,0.178671],[22.570312,12.559896,6.483073,4.815023,1.898885,1.462511,1.176514,0.968967,0.809218,0.762568,1.057088,0.683538,0.533837,0.548482,0.474492,0.422478,0.386663,0.351826,0.326528,0.324083,0.323474,0.319049,0.313205,0.313373,0.311744,0.308479,0.309727,0.309767],[24.227214,12.668620,6.910970,3.770671,2.451579,2.226562,1.687093,1.579282,1.250081,1.102522,1.063009,0.987286,0.717192,0.675608,0.448654,0.362821,0.311427,0.235558,0.209822,0.239789,0.156168,0.105591,0.087028,0.081898,0.064745,0.044224,0.045319,0.041030],[24.252604,14.039062,7.290690,5.913900,2.573730,2.020833,1.785360,1.577836,1.491998,1.363897,1.408936,1.273154,1.189782,1.188955,1.129140,0.984291,0.992826,0.953171,0.956297,0.932508,0.924375,0.926862,0.931191,0.933093,0.941733,0.944850,0.946884,0.947868]],"before":[],"cpu":[null,null,null,null,null,null,null],"energy":[null,null,null,null,null,null,null],"cores":[null,null,null,null,null,null,null]},"solo|batch|busy":{"sizes":["1","2","3","4","6","8","12","16","24","32","48","64","128","256","512","1024","2048","4096","8192","16384","32768","65536","131072","262144"],"unit":"GB/s","call":"performance::hash_many_multithreaded","doc":"https://johnservil.github.io/BLAKE3/blake3_servil/performance/fn.hash_many_multithreaded.html","cases":false,"per":[64,128,192,256,384,512,768,1024,1536,2048,3072,4096,8192,16384,32768,65536,131072,262144,524288,1048576,2097152,4194304,8388608,16777216],"what":"a batch","axis":"messages in the batch (64 B each)","series":[[32.361979,19.557943,12.533420,9.384766,7.025825,4.875977,3.137804,2.299235,1.903429,1.529297,1.118924,0.914673,0.750214,0.573695,0.490936,0.447217,0.415697,0.406530,0.401735,0.397037,0.382261,0.382774,0.382184,0.382306],[23.330078,14.229167,8.093316,6.422038,4.118707,3.570475,2.549913,2.149902,1.589301,1.364746,1.157416,1.001994,0.821004,0.714620,0.673080,0.620364,0.583331,0.591092,0.573390,0.583317,0.575738,0.576086,0.571371,0.570916],[52.626302,29.378255,20.019531,15.476237,10.995660,9.195801,7.852756,6.466146,5.230794,4.675985,4.551676,3.829997,3.278931,3.005564,3.086311,2.990143,2.967676,2.984829,2.964285,2.975361,2.954210,2.965366,2.968632,2.965103],[22.460286,11.963216,7.613498,6.320638,3.910699,2.976969,2.653863,1.983480,1.471680,1.073283,0.796794,0.644287,0.473022,0.360062,0.282290,0.236462,0.212749,0.189794,0.177205,0.173989,0.170799,0.170729,0.169027,0.167458],[25.254557,12.857422,9.241536,7.574870,5.017795,4.136719,3.042426,2.743164,1.955458,1.739380,1.409451,1.322489,1.110494,1.029561,0.942970,0.882198,0.901196,0.902719,0.863897,0.864512,0.872304,0.873702,0.877895,0.882478],[25.202474,12.966146,7.740234,6.626139,4.114041,3.159993,2.577040,1.978475,1.478299,1.415568,0.837511,0.652771,0.593384,0.358785,0.288857,0.240012,0.214019,0.196231,0.239988,0.154184,0.101745,0.077417,0.064781,0.052089],[31.549479,15.041667,11.790799,9.236979,6.980252,5.452637,4.539171,3.780843,3.960666,3.416300,2.831380,2.657552,2.435048,2.264028,2.269114,2.243891,2.280685,2.226737,2.191338,2.187871,2.210905,2.223884,2.244209,2.230846]],"before":[],"cpu":[null,null,null,null,null,null,null],"energy":[null,null,null,null,null,null,null],"cores":[null,null,null,null,null,null,null]},"solo|long|busy":{"sizes":["4","16","64","256"],"unit":"GB/s","call":"performance::hash_many_multithreaded","doc":"https://johnservil.github.io/BLAKE3/blake3_servil/performance/fn.hash_many_multithreaded.html","cases":false,"per":[16384,65536,262144,1048576],"what":"a batch","axis":"messages in the batch (4 KiB each)","series":[[0.649775,0.487225,0.487526,0.451893],[0.489532,0.384387,0.367574,0.350426],[1.462936,1.315809,1.301699,1.303511],[0.727987,0.262267,0.221530,0.200166],[0.464762,0.377969,0.343467,0.316143],[0.625829,0.270579,0.214683,0.151068],[1.064295,0.983714,0.971158,0.942283]],"before":[],"cpu":[null,null,null,null,null,null,null],"energy":[null,null,null,null,null,null,null],"cores":[null,null,null,null,null,null,null]},"solo|one|idle":{"sizes":["64 B","128 B","256 B","512 B","1 KiB","1536 B","2 KiB","2304 B","3 KiB","3839 B","4 KiB","4470 B","7935 B","8 KiB","16 KiB","32 KiB","64 KiB","128 KiB","256 KiB","512 KiB","1 MiB","2 MiB","3 MiB","4 MiB","8 MiB","32 MiB","64 MiB","128 MiB"],"unit":"GB/s","call":"performance::hash_multithreaded","doc":"https://johnservil.github.io/BLAKE3/blake3_servil/performance/fn.hash_multithreaded.html","cases":false,"per":[64,128,256,512,1024,1536,2048,2304,3072,3839,4096,4470,7935,8192,16384,32768,65536,131072,262144,524288,1048576,2097152,3145728,4194304,8388608,33554432,67108864,134217728],"what":"a message","axis":"message size","series":[[11.842882,6.781684,4.726725,4.336670,2.821208,2.891222,2.461792,2.607060,1.692084,1.771837,1.118917,1.480537,1.794528,1.241069,0.830139,1.041623,0.682196,0.645161,0.595994,0.970423,1.009553,0.754057,0.633233,0.562904,0.501986,0.431787,0.421359,0.423101],[12.332031,6.609592,3.268229,3.438314,1.912516,1.544217,1.164673,1.235641,0.961833,0.854715,0.970683,2.566480,1.027862,1.004567,0.708277,0.801097,0.571775,0.479751,0.482731,0.737608,0.853774,0.626908,0.526624,0.466888,0.423754,0.356287,0.344848,0.346183],[25.417318,13.808594,7.961589,7.595052,5.394694,3.614746,3.346924,3.948532,3.085612,3.235261,2.417664,3.159154,2.990874,2.947927,2.313395,2.330574,1.895323,1.567918,1.504156,2.809134,2.826638,2.075066,1.729222,1.530565,1.380308,1.288367,1.287793,1.286667],[12.505534,7.568793,4.611491,3.583903,3.173503,2.482205,1.508993,1.862666,1.194634,1.032930,0.970601,1.819202,1.319754,1.066844,0.749374,0.556310,0.552972,0.389046,0.288155,0.370536,0.352247,0.269181,0.229050,0.206959,0.186159,0.181068,0.181213,0.182753],[15.805122,5.668837,3.567600,3.790771,1.807373,1.356255,1.044474,1.032299,0.766412,0.641269,0.791687,1.142580,0.941703,0.820597,0.927836,0.683462,0.727706,0.513763,0.428160,0.764436,0.768138,0.546257,0.477675,0.422450,0.383104,0.326034,0.316078,0.317251],[13.906250,7.099447,4.313314,3.102620,3.048340,2.843696,1.646200,1.375977,1.220730,0.908939,1.100220,2.031283,1.212140,0.971924,0.729665,0.404040,0.397578,0.360116,0.295691,0.503758,0.292483,0.158778,0.113975,0.096675,0.067760,0.046862,0.048455,0.046393],[16.276476,7.486654,4.781250,4.448893,3.441895,2.398329,2.400757,2.518302,2.200738,2.303703,2.189636,2.759955,2.249139,2.337128,1.898244,1.641805,1.249045,1.218954,1.143682,2.216015,2.109875,1.508567,1.324878,1.164369,1.053760,0.933218,0.932918,0.931560]],"before":[],"cpu":[null,null,null,null,null,null,null],"energy":[null,null,null,null,null,null,null],"cores":[null,null,null,null,null,null,null]},"solo|batch|idle":{"sizes":["1","2","3","4","6","8","12","16","24","32","48","64","128","256","512","1024","2048","4096","8192","16384","32768","65536","131072","262144"],"unit":"GB/s","call":"performance::hash_many_multithreaded","doc":"https://johnservil.github.io/BLAKE3/blake3_servil/performance/fn.hash_many_multithreaded.html","cases":false,"per":[64,128,192,256,384,512,768,1024,1536,2048,3072,4096,8192,16384,32768,65536,131072,262144,524288,1048576,2097152,4194304,8388608,16777216],"what":"a batch","axis":"messages in the batch (64 B each)","series":[[25.424913,20.534180,8.382161,4.476562,3.716688,2.648438,1.905816,1.702148,2.124946,1.451090,1.185764,1.094381,0.602305,0.829274,0.814219,0.675940,1.018736,0.733508,0.635100,0.533150,0.464734,0.401822,0.380961,0.414207],[19.095052,8.952474,6.374349,5.221191,3.029080,3.153320,2.545139,2.258138,3.155653,1.829264,1.271539,1.614868,1.220693,0.885000,1.273796,0.995157,1.579283,1.101162,0.932170,0.773089,0.684983,0.593632,0.567633,0.596380],[39.253255,21.402669,12.985243,12.628255,8.608507,8.937988,7.387478,6.262777,8.866048,7.890503,7.856527,8.133809,4.831106,3.868317,3.525736,3.996802,7.146784,5.543472,4.440427,3.832108,3.298165,2.976794,2.964337,2.979962],[19.478190,7.478082,4.666233,3.567057,2.239077,2.200765,1.921549,1.479980,1.991645,1.232503,0.906494,0.624756,0.587443,0.386546,0.375951,0.327798,0.474264,0.345163,0.276188,0.226319,0.192166,0.175461,0.173442,0.174190],[28.884983,9.837674,6.473741,4.442220,3.956272,3.045003,2.287543,2.193929,3.232639,2.492188,1.959907,1.604757,1.572927,1.671478,1.434746,1.452026,2.191249,1.677580,1.392463,1.180758,1.040929,0.904731,0.870355,0.862945],[19.873372,8.174045,5.141059,3.458333,2.884549,2.105794,2.491102,1.526042,2.276476,1.118896,1.104248,0.716309,0.588328,0.346283,0.459468,0.510484,0.461367,0.351919,0.306725,0.194761,0.132047,0.089638,0.063592,0.053672],[29.460069,10.551758,10.769314,6.972005,5.958984,7.507487,5.194444,4.221517,6.734104,5.672852,6.682265,4.717468,5.247355,3.440653,2.614449,3.157618,6.024729,4.145953,3.395796,2.943383,2.558187,2.232148,2.191855,2.220801]],"before":[],"cpu":[null,null,null,null,null,null,null],"energy":[null,null,null,null,null,null,null],"cores":[null,null,null,null,null,null,null]},"solo|one|piped":{"sizes":["64 B","128 B","256 B","512 B","1 KiB","4 KiB","16 KiB","64 KiB","256 KiB","1 MiB","4 MiB","16 MiB","64 MiB"],"unit":"GB/s","call":"performance::Stream::submit_with","doc":"https://johnservil.github.io/BLAKE3/blake3_servil/performance/struct.Stream.html#method.submit_with","cases":false,"per":[64,128,256,512,1024,4096,16384,65536,262144,1048576,4194304,16777216,67108864],"what":"a message","axis":"message size","series":[[0.949111,0.811820,0.790295,0.774124,0.768526,0.427371,0.419003,0.420771,0.424594,0.437485,0.417098,0.421394,0.423313],[0.632200,0.450674,0.404167,0.376026,0.386279,0.352698,0.340812,0.348920,0.349678,0.343782,0.339828,0.344705,0.340039],[2.838931,1.969462,1.542423,1.324104,1.271056,1.173499,1.163032,1.197914,1.218336,1.250171,1.246265,1.268686,1.266331],[0.862190,0.774031,0.749145,0.752830,0.757323,0.335868,0.244956,0.233597,0.244326,0.249671,0.255833,0.251252,0.252990],[0.922199,0.534451,0.422414,0.382308,0.346134,0.319342,0.312195,0.310617,0.313341,0.318324,0.310820,0.306216,0.307128],[0.369360,0.324951,0.185577,0.160006,0.131694,0.106020,0.109286,0.042597,0.044804,0.049037,0.053346,0.055965,0.049306],[2.234518,1.131360,1.027989,1.000516,0.969175,0.929581,0.907355,0.880983,0.886010,0.884354,0.908797,0.948591,0.936046]],"before":[],"cpu":[[0.950367,0.812864,0.791336,0.775516,0.769781,0.427942,0.419575,0.421376,0.425183,0.438220,0.417319,0.421447,0.423342],[0.633053,0.451402,0.404748,0.377279,0.386794,0.353217,0.341466,0.349436,0.350189,0.344420,0.340016,0.344775,0.340063],[2.843068,1.973727,1.544665,1.325455,1.271682,1.174159,1.163774,1.198457,1.219024,1.250916,1.246462,1.268735,1.266357],[0.863958,0.775990,0.750343,0.754633,0.758012,0.336408,0.245421,0.233991,0.245661,0.250232,0.256035,0.251309,0.253006],[0.923510,0.535201,0.423012,0.382826,0.346732,0.319781,0.312633,0.311041,0.313765,0.318755,0.310997,0.306264,0.307145],[1.395715,1.924804,1.469927,1.350034,1.163248,0.729204,0.740121,0.414448,0.410404,0.438801,0.444091,0.475696,0.432358],[2.238453,1.132918,1.029536,1.001900,0.969989,0.930882,0.908150,0.882010,0.886755,0.885434,0.908993,0.948682,0.936064]],"energy":[null,null,null,null,null,null,null],"cores":[null,null,null,null,null,null,null]},"shared|one|piped":{"sizes":["64 B","128 B","256 B","512 B","1 KiB","4 KiB","16 KiB","64 KiB","256 KiB","1 MiB","4 MiB","16 MiB","64 MiB"],"unit":"GB/s","call":"performance::Stream::submit_with","doc":"https://johnservil.github.io/BLAKE3/blake3_servil/performance/struct.Stream.html#method.submit_with","cases":false,"per":[64,128,256,512,1024,4096,16384,65536,262144,1048576,4194304,16777216,67108864],"what":"a message","axis":"message size","series":[[0.927239,0.818869,0.774567,0.782948,0.763850,0.439585,0.430326,0.430492,0.431632,0.435349,0.426392,0.423693,0.427596],[0.626982,0.459727,0.399130,0.376326,0.390313,0.357556,0.356463,0.345668,0.356005,0.353892,0.349811,0.350341,0.347716],[2.839728,1.991965,1.567943,1.322819,1.280328,1.192368,1.197961,1.201664,1.218577,1.237141,1.256353,1.276364,1.280639],[0.839804,0.792049,0.763316,0.763897,0.757275,0.337433,0.298216,0.288689,0.295035,0.300042,0.297305,0.296798,0.294617],[0.944180,0.540197,0.407663,0.390291,0.358408,0.329279,0.315339,0.312747,0.320391,0.317634,0.319998,0.317038,0.315349],[0.409509,0.350431,0.209863,0.163459,0.157426,0.101044,0.096848,0.056623,0.053483,0.054729,0.062329,0.056450,0.055035],[2.234137,1.133332,1.034477,1.002406,1.000616,0.947119,0.915723,0.895719,0.905731,0.909671,0.912178,0.943467,0.946616]],"before":[],"cpu":[null,null,null,null,null,null,null],"energy":[null,null,null,null,null,null,null],"cores":[null,null,null,null,null,null,null]},"solo|batch|piped":{"sizes":["16","64","256","1024","4096","16384","65536"],"unit":"GB/s","call":"performance::Stream::submit_batch_with","doc":"https://johnservil.github.io/BLAKE3/blake3_servil/performance/struct.Stream.html#method.submit_batch_with","cases":false,"per":[1024,4096,16384,65536,262144,1048576,4194304],"what":"a batch","axis":"messages in the batch (64 B each)","series":[[0.396554,0.370290,0.376936,0.380307,0.378563,0.374195,0.364758],[0.553684,0.537141,0.534528,0.536899,0.538859,0.532771,0.531206],[3.250890,3.137824,3.152950,3.201299,3.215518,3.237095,3.258343],[0.406517,0.298416,0.225178,0.208070,0.206698,0.183303,0.175094],[0.912110,0.907577,0.905739,0.926196,0.920283,0.922516,0.937976],[0.089684,0.079184,0.076650,0.075114,0.072619,0.072795,0.073849],[2.160258,2.134065,2.132254,2.176904,2.134095,2.181318,2.203233]],"before":[],"cpu":[[0.397138,0.370849,0.377473,0.380852,0.379049,0.374562,0.364894],[0.554403,0.537876,0.535372,0.537598,0.540170,0.533124,0.531376],[3.251625,3.138555,3.153642,3.201961,3.216293,3.237454,3.258470],[0.407255,0.299019,0.225620,0.208399,0.207010,0.183606,0.175199],[0.912762,0.908302,0.906428,0.926928,0.920978,0.922928,0.938126],[0.550014,0.548713,0.532017,0.532432,0.549148,0.535194,0.544460],[2.161168,2.134813,2.133005,2.177639,2.134816,2.181662,2.203385]],"energy":[null,null,null,null,null,null,null],"cores":[null,null,null,null,null,null,null]},"shared|batch|piped":{"sizes":["16","64","256","1024","4096","16384","65536"],"unit":"GB/s","call":"performance::Stream::submit_batch_with","doc":"https://johnservil.github.io/BLAKE3/blake3_servil/performance/struct.Stream.html#method.submit_batch_with","cases":false,"per":[1024,4096,16384,65536,262144,1048576,4194304],"what":"a batch","axis":"messages in the batch (64 B each)","series":[[0.396265,0.375533,0.370610,0.378933,0.384614,0.383028,0.377227],[0.559237,0.544841,0.544091,0.553982,0.556454,0.550062,0.551160],[2.970446,2.879019,2.897123,2.931486,2.936696,2.971432,3.016743],[0.364029,0.348451,0.298401,0.276765,0.263145,0.237333,0.235528],[0.844679,0.846356,0.831205,0.854044,0.851967,0.841581,0.845871],[0.088075,0.082813,0.080479,0.073547,0.081108,0.077798,0.079556],[2.153552,2.131050,2.137451,2.153632,2.134952,2.167914,2.207636]],"before":[],"cpu":[null,null,null,null,null,null,null],"energy":[null,null,null,null,null,null,null],"cores":[null,null,null,null,null,null,null]},"solo|one|lent":{"sizes":["64 B","128 B","256 B","512 B","1 KiB","4 KiB","16 KiB","64 KiB","256 KiB","1 MiB","4 MiB","16 MiB","64 MiB"],"unit":"GB/s","call":"performance::hash_multithreaded","doc":"https://johnservil.github.io/BLAKE3/blake3_servil/performance/fn.hash_multithreaded.html","cases":false,"per":[64,128,256,512,1024,4096,16384,65536,262144,1048576,4194304,16777216,67108864],"what":"a message","axis":"message size","series":[[0.944246,0.822059,0.789473,0.757799,0.746572,0.430269,0.418307,0.418727,0.420292,0.420200,0.414817,0.415915,0.420126],[0.636350,0.467371,0.407989,0.405781,0.375221,0.350259,0.341340,0.339821,0.346249,0.340994,0.342753,0.340956,0.341220],[3.023469,2.078917,1.638457,1.352741,1.284465,1.166224,1.150652,1.170900,1.231891,1.214962,1.247914,1.274743,1.284134],[0.873178,0.811086,0.784241,0.749907,0.747233,0.334611,0.245077,0.233886,0.202935,0.168965,0.176176,0.178418,0.177177],[0.942790,0.593683,0.451579,0.386193,0.349365,0.320570,0.312851,0.307750,0.314007,0.312860,0.314401,0.310979,0.309335],[0.866970,0.798141,0.768653,0.753489,0.734166,0.337140,0.245349,0.233369,0.199940,0.135060,0.071796,0.062116,0.055812],[2.279735,1.149826,1.060771,0.987364,0.960674,0.947471,0.886611,0.877845,0.895745,0.879255,0.896277,0.923252,0.934752]],"before":[],"cpu":[[0.945605,0.823276,0.790631,0.758888,0.747592,0.430814,0.418851,0.419307,0.420848,0.420868,0.415193,0.416029,0.420169],[0.637558,0.468004,0.408762,0.406372,0.375716,0.350749,0.342122,0.340299,0.346781,0.341457,0.343222,0.341039,0.341256],[3.027589,2.082123,1.640688,1.354534,1.286221,1.167776,1.152200,1.172693,1.233834,1.216365,1.248282,1.274880,1.284142],[0.874382,0.812312,0.785380,0.751092,0.749522,0.335110,0.245425,0.234233,0.203229,0.169218,0.176582,0.178551,0.177219],[0.943985,0.594504,0.452188,0.386733,0.349803,0.320991,0.313266,0.308195,0.314448,0.313306,0.314828,0.311087,0.309378],[0.868189,0.799263,0.769805,0.754503,0.735271,0.337598,0.245730,0.233713,0.200207,0.778110,0.481169,0.431295,0.438526],[2.282744,1.151398,1.062223,0.988611,0.961999,0.948792,0.887830,0.880118,0.897189,0.880612,0.896662,0.923361,0.934801]],"energy":[null,null,null,null,null,null,null],"cores":[null,null,null,null,null,null,null]},"shared|one|lent":{"sizes":["64 B","128 B","256 B","512 B","1 KiB","4 KiB","16 KiB","64 KiB","256 KiB","1 MiB","4 MiB","16 MiB","64 MiB"],"unit":"GB/s","call":"performance::hash_multithreaded","doc":"https://johnservil.github.io/BLAKE3/blake3_servil/performance/fn.hash_multithreaded.html","cases":false,"per":[64,128,256,512,1024,4096,16384,65536,262144,1048576,4194304,16777216,67108864],"what":"a message","axis":"message size","series":[[0.931862,0.837800,0.800963,0.785220,0.764731,0.429688,0.424959,0.426633,0.425845,0.425370,0.418223,0.420791,0.424722],[0.635211,0.467452,0.413830,0.416852,0.379555,0.353812,0.349605,0.347486,0.352043,0.350656,0.348941,0.349945,0.352603],[2.848949,1.988990,1.549775,1.327660,1.299214,1.180575,1.181523,1.197045,1.243331,1.240373,1.246024,1.286333,1.294915],[0.873187,0.822340,0.790347,0.765142,0.757437,0.336957,0.302698,0.284620,0.250923,0.213627,0.236457,0.241194,0.241358],[0.931965,0.609716,0.454049,0.395985,0.358949,0.323975,0.314827,0.315522,0.319090,0.318829,0.319327,0.319596,0.318486],[0.848157,0.803910,0.773366,0.762762,0.754343,0.343922,0.298807,0.279548,0.248995,0.116029,0.079069,0.067522,0.060141],[2.329730,1.163396,1.045617,1.000075,0.963525,0.938057,0.903968,0.892948,0.920749,0.900960,0.893853,0.929046,0.940098]],"before":[],"cpu":[null,null,null,null,null,null,null],"energy":[null,null,null,null,null,null,null],"cores":[null,null,null,null,null,null,null]},"solo|many|lent":{"sizes":["256"],"unit":"GB/s","call":"performance::update_each_multithreaded","doc":"https://johnservil.github.io/BLAKE3/blake3_servil/performance/fn.update_each_multithreaded.html","cases":true,"per":[1048576],"what":"a megabyte of pieces","axis":"messages open at once","series":[[0.662416],[0.352197],[1.267493],[0.295185],[0.322532],[0.291447],[0.893109]],"before":[],"cpu":[[0.663022],[0.352654],[1.268963],[0.295579],[0.323031],[0.291881],[0.894500]],"energy":[null,null,null,null,null,null,null],"cores":[null,null,null,null,null,null,null]},"shared|many|lent":{"sizes":["256"],"unit":"GB/s","call":"performance::update_each_multithreaded","doc":"https://johnservil.github.io/BLAKE3/blake3_servil/performance/fn.update_each_multithreaded.html","cases":true,"per":[1048576],"what":"a megabyte of pieces","axis":"messages open at once","series":[[0.670034],[0.355663],[1.250823],[0.343545],[0.330250],[0.330441],[0.910891]],"before":[],"cpu":[null,null,null,null,null,null,null],"energy":[null,null,null,null,null,null,null],"cores":[null,null,null,null,null,null,null]},"solo|coll|lent":{"sizes":["git objects","Nix files"],"unit":"GB/s","call":"performance::hash_each_multithreaded","doc":"https://johnservil.github.io/BLAKE3/blake3_servil/performance/fn.hash_each_multithreaded.html","cases":true,"per":[43216008,34764744],"what":"the collection","axis":"collection","series":[[0.413972,0.418726],[0.324047,0.324190],[1.266191,1.270744],[0.228662,0.218928],[0.293046,0.295168],[0.039992,0.063797],[0.916791,0.916601]],"before":[],"cpu":[[0.414040,0.418791],[0.324098,0.324249],[1.266261,1.270771],[0.228738,0.218996],[0.293092,0.295217],[0.454071,0.575816],[0.916864,0.916671]],"energy":[null,null,null,null,null,null,null],"cores":[null,null,null,null,null,null,null]},"shared|coll|lent":{"sizes":["git objects","Nix files"],"unit":"GB/s","call":"performance::hash_each_multithreaded","doc":"https://johnservil.github.io/BLAKE3/blake3_servil/performance/fn.hash_each_multithreaded.html","cases":true,"per":[43216008,34764744],"what":"the collection","axis":"collection","series":[[0.420502,0.427485],[0.330663,0.330543],[1.278499,1.275156],[0.282366,0.270331],[0.294958,0.301703],[0.049218,0.065740],[0.913237,0.919437]],"before":[],"cpu":[null,null,null,null,null,null,null],"energy":[null,null,null,null,null,null,null],"cores":[null,null,null,null,null,null,null]},"solo|batch|lent":{"sizes":["16","64","256","1024","4096","16384","65536"],"unit":"GB/s","call":"performance::hash_many_multithreaded","doc":"https://johnservil.github.io/BLAKE3/blake3_servil/performance/fn.hash_many_multithreaded.html","cases":false,"per":[1024,4096,16384,65536,262144,1048576,4194304],"what":"a batch","axis":"messages in the batch (64 B each)","series":[[0.395402,0.375018,0.369543,0.374188,0.379495,0.370990,0.375826],[0.560501,0.548040,0.542008,0.550610,0.538995,0.540025,0.542841],[3.054672,3.027463,3.068652,3.084465,3.057241,3.198154,3.234886],[0.385572,0.299911,0.225734,0.207159,0.206479,0.179664,0.180860],[0.923315,0.921803,0.915230,0.909978,0.897365,0.895394,0.916575],[0.418107,0.299126,0.225994,0.207760,0.205811,0.140681,0.083758],[2.125672,2.133072,2.115236,2.094891,2.084706,2.096136,2.161824]],"before":[],"cpu":[[0.395919,0.375532,0.370048,0.374695,0.380010,0.371434,0.376234],[0.561247,0.548760,0.542709,0.551363,0.539631,0.540949,0.543217],[3.059087,3.031528,3.072971,3.088050,3.062407,3.199538,3.235271],[0.386086,0.300351,0.226079,0.207463,0.206780,0.179962,0.181228],[0.924355,0.922892,0.916364,0.911105,0.898435,0.896745,0.916988],[0.418681,0.299558,0.226345,0.208081,0.206123,0.800301,0.533691],[2.128452,2.135752,2.118118,2.097540,2.087289,2.097507,2.162268]],"energy":[null,null,null,null,null,null,null],"cores":[null,null,null,null,null,null,null]},"shared|batch|lent":{"sizes":["16","64","256","1024","4096","16384","65536"],"unit":"GB/s","call":"performance::hash_many_multithreaded","doc":"https://johnservil.github.io/BLAKE3/blake3_servil/performance/fn.hash_many_multithreaded.html","cases":false,"per":[1024,4096,16384,65536,262144,1048576,4194304],"what":"a batch","axis":"messages in the batch (64 B each)","series":[[0.397945,0.383633,0.380223,0.377670,0.381147,0.376482,0.379080],[0.571641,0.564972,0.554887,0.551587,0.552777,0.556035,0.548209],[2.867175,2.801626,2.860215,2.888759,2.939171,2.920101,2.991539],[0.358068,0.346494,0.299192,0.287411,0.271727,0.232314,0.254114],[0.866671,0.854030,0.858076,0.853382,0.855449,0.848108,0.850936],[0.358192,0.344196,0.297688,0.289012,0.267789,0.126917,0.085065],[2.160704,2.172863,2.155156,2.155642,2.135555,2.122174,2.165702]],"before":[],"cpu":[null,null,null,null,null,null,null],"energy":[null,null,null,null,null,null,null],"cores":[null,null,null,null,null,null,null]},"solo|coll|piped":{"sizes":["git objects","Nix files"],"unit":"GB/s","call":"performance::Stream::submit_with","doc":"https://johnservil.github.io/BLAKE3/blake3_servil/performance/struct.Stream.html#method.submit_with","cases":true,"per":[43216008,34764744],"what":"the collection","axis":"collection","series":[[0.424145,0.439997],[0.341462,0.343686],[1.282476,1.287615],[0.267389,0.247357],[0.309519,0.313696],[0.057292,0.063213],[0.938705,0.937652]],"before":[],"cpu":[[0.424190,0.440053],[0.341548,0.343757],[1.282548,1.287693],[0.267449,0.247428],[0.309562,0.313711],[0.507757,0.534530],[0.938788,0.937739]],"energy":[null,null,null,null,null,null,null],"cores":[null,null,null,null,null,null,null]},"shared|coll|piped":{"sizes":["git objects","Nix files"],"unit":"GB/s","call":"performance::Stream::submit_with","doc":"https://johnservil.github.io/BLAKE3/blake3_servil/performance/struct.Stream.html#method.submit_with","cases":true,"per":[43216008,34764744],"what":"the collection","axis":"collection","series":[[0.434047,0.447073],[0.347490,0.347762],[1.292175,1.297069],[0.308013,0.299621],[0.319157,0.318529],[0.059450,0.067911],[0.942284,0.950109]],"before":[],"cpu":[null,null,null,null,null,null,null],"energy":[null,null,null,null,null,null,null],"cores":[null,null,null,null,null,null,null]},"solo|merkle|lent":{"sizes":["1024","4096","16384","65536","262144"],"unit":"GB/s","call":"performance::hash_many_multithreaded","doc":"https://johnservil.github.io/BLAKE3/blake3_servil/performance/fn.hash_many_multithreaded.html","cases":false,"per":[262144,1048576,4194304,16777216,67108864],"what":"a tree","axis":"leaves (256 B each)","series":[[0.478592,0.486119,0.487041,0.473366,0.484431],[0.523458,0.522070,0.518466,0.524037,0.518422],[1.969536,2.025359,2.083598,2.130698,2.134948],[0.251339,0.232832,0.225473,0.218735,0.218067],[0.656022,0.679401,0.665711,0.671739,0.672070],[0.251078,0.192281,0.133800,0.096860,0.071647],[1.486089,1.515892,1.542692,1.587342,1.594623]],"before":[],"cpu":[[0.479304,0.486811,0.487440,0.473451,0.484469],[0.524104,0.522756,0.518890,0.524160,0.518460],[1.972080,2.026829,2.083990,2.130833,2.134928],[0.251703,0.233218,0.225897,0.218879,0.218111],[0.656914,0.680705,0.666117,0.671890,0.672109],[0.251457,0.843329,0.681556,0.640520,0.561318],[1.488699,1.517474,1.543128,1.587460,1.594669]],"energy":[null,null,null,null,null,null,null],"cores":[null,null,null,null,null,null,null]},"shared|merkle|lent":{"sizes":["1024","4096","16384","65536","262144"],"unit":"GB/s","call":"performance::hash_many_multithreaded","doc":"https://johnservil.github.io/BLAKE3/blake3_servil/performance/fn.hash_many_multithreaded.html","cases":false,"per":[262144,1048576,4194304,16777216,67108864],"what":"a tree","axis":"leaves (256 B each)","series":[[0.482298,0.485324,0.482592,0.489698,0.497831],[0.532519,0.533260,0.532067,0.528596,0.538391],[2.165324,2.171407,2.187270,2.231287,2.253575],[0.317419,0.294043,0.307081,0.285718,0.283784],[0.674873,0.683314,0.658486,0.666178,0.674100],[0.323108,0.185468,0.127489,0.094368,0.084131],[1.542330,1.518250,1.549342,1.589929,1.612267]],"before":[],"cpu":[null,null,null,null,null,null,null],"energy":[null,null,null,null,null,null,null],"cores":[null,null,null,null,null,null,null]},"solo|many|busy":{"sizes":["256"],"unit":"GB/s","call":"performance::update_each_multithreaded","doc":"https://johnservil.github.io/BLAKE3/blake3_servil/performance/fn.update_each_multithreaded.html","cases":true,"per":[262144],"what":"a turn","axis":"messages open at once","series":[[0.735693],[0.401748],[1.357278],[0.358329],[0.392119],[0.369482],[0.980087]],"before":[],"cpu":[null,null,null,null,null,null,null],"energy":[null,null,null,null,null,null,null],"cores":[null,null,null,null,null,null,null]},"solo|many|idle":{"sizes":["256"],"unit":"GB/s","call":"performance::update_each_multithreaded","doc":"https://johnservil.github.io/BLAKE3/blake3_servil/performance/fn.update_each_multithreaded.html","cases":true,"per":[262144],"what":"a turn","axis":"messages open at once","series":[[1.045054],[0.589159],[1.899706],[0.537846],[0.526548],[0.525223],[1.361275]],"before":[],"cpu":[null,null,null,null,null,null,null],"energy":[null,null,null,null,null,null,null],"cores":[null,null,null,null,null,null,null]}},"about":"aarch64, 16 CPUs, Linux · 2026-10-27 · the machine quiet","details":[["Measured","2026-10-27 18:21:53 UTC",""],["Machine","aarch64, 16 CPUs, linux6.18.52-0-virt",""],["Power","not reported by this OS",""],["Other programs","quiet: other programs kept 0.01 CPUs busy on average, 0.05 in the busiest window",""],["bench-hashes","0.18.0",""],["bench-hashes commit","github.com/johnservil/bench-hashes at 67bae864751ae766f170be94ac38a9b3723fc181 (dirty-5e5dddb01c2e8c5b60992a84aecbfb542abe9a6b1e1143bd99144ddb3dbf96e5)","https://github.com/johnservil/bench-hashes/tree/67bae864751ae766f170be94ac38a9b3723fc181"],["BLAKE3 servil","github.com/johnservil/BLAKE3 at 934dee8902889186e3da9b62edf43699dd1c6305","https://github.com/johnservil/BLAKE3/tree/934dee8902889186e3da9b62edf43699dd1c6305"],["BLAKE3 official","blake3 1.8.7",""],["SHA-256","sha2 0.11.0",""],["SHA-1DC","sha1-checked 0.10.0",""],["SHA-256 ring","ring 0.17.14",""],["SHA3-256","sha3 0.11.0",""],["Rust compiler","rustc 1.98.1 (48a229cea 2026-09-01)",""],["C compiler","clang-19: Debian clang version 19.1.7 (3~deb12u1)",""],["RUSTFLAGS","none",""],["Dependencies","blake3 b7d0b85e7caae9f4bc635961a22a659be47dd254e334b84eee8ee0ef2a455983 of Cargo.lock",""],["Target","aarch64-unknown-linux-gnu",""],["Samples","bench-hashes.samples.tsv","bench-hashes.samples.tsv"]],"run":"bench-hashes 0.18.0, BLAKE3 servil 934dee8","before":["",""]}];
+/* A library's multi-threaded form wears its single-threaded form's colour
+   as a double line: the colour, a white core along it (Zooko, October 24).
+   `rest` is the line's other attributes (dashes, caps, opacity). */
+function line(S, i, points, width, rest = "") {
+  const one = (stroke, w) => `<polyline points="${points}" fill="none" stroke="${stroke}" stroke-width="${w}" ${rest}/>`;
+  return S.striped && S.striped[i] ? one(S.colors[i], width + 1.6) + one("#fff", Math.max(0.8, width * 0.55)) : one(S.colors[i], width);
+}
+/* A dot: filled for a single-threaded form, a ring for a multi-threaded one. */
+function dot(S, i, cx, cy, r) {
+  return S.striped && S.striped[i] ? `<circle cx="${cx}" cy="${cy}" r="${r}" fill="#fff" stroke="${S.colors[i]}" stroke-width="1.8"/>` : `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${S.colors[i]}"/>`;
+}
+/* A swatch's background: the colour, or its stripes. */
+function swatch(S, i) {
+  const c = S.colors[i];
+  return S.striped && S.striped[i] ? `repeating-linear-gradient(135deg, ${c} 0 2px, #fff 2px 3.5px)` : c;
+}
+function glyph(kind, size = 20, color = "#4b5563") {
+  const r = (x, y, w, h, o = 1) => `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="1.2" fill="${color}" opacity="${o}"/>`;
+  const g = {
+    one: r(2, 8, 18, 6),
+    batch: [0, 1, 2].map(j => r(7, 2 + j * 6.5, 8, 5)).join(""),
+    long: [0, 1, 2].map(j => r(2, 2 + j * 6.5, 18, 5)).join(""),
+    many: [0, 1, 2].map(j => r(1 + j * 2, 3 + j * 6, 8 + (j % 2) * 6, 4)).join(""),
+    coll: [[1, 3, 6], [9, 3, 11], [1, 10, 14], [17, 10, 4], [1, 17, 9], [12, 17, 9]].map(([x, y, w]) => r(x, y, w, 4)).join(""),
+    merkle: `<path d="M11 4 L6 10 M11 4 L16 10 M6 10 L3.5 16 M6 10 L8.5 16 M16 10 L13.5 16 M16 10 L18.5 16" stroke="${color}" stroke-width="1.4" fill="none"/><circle cx="11" cy="3.5" r="2.2" fill="${color}"/><circle cx="6" cy="10" r="1.8" fill="${color}"/><circle cx="16" cy="10" r="1.8" fill="${color}"/>` + [1.5, 6.5, 11.5, 16.5].map(x => r(x, 16, 4, 4)).join(""),
+    outb: r(1, 15, 20, 5) + `<path d="M11 13 V9 M5 13 V10 H17 V13 M11 9 V4" stroke="${color}" stroke-width="1.6" fill="none"/>` + `<circle cx="11" cy="3.5" r="2.2" fill="${color}"/>`,
+    busy: `<circle cx="11" cy="11" r="4" fill="none" stroke="${color}" stroke-width="2.5"/>` + [0, 45, 90, 135, 180, 225, 270, 315].map(a => `<rect x="10" y="2" width="2" height="4" fill="${color}" transform="rotate(${a} 11 11)"/>`).join(""),
+    idle: `<path d="M14 3 a8 8 0 1 0 5 13 a6.5 6.5 0 1 1 -5 -13 z" fill="${color}"/>`,
+    lent: r(1, 7, 7, 8) + `<path d="M10 11 h6 M14 11 l-2.5 -2.5 M14 11 l-2.5 2.5" stroke="${color}" stroke-width="1.8" fill="none" stroke-linecap="round"/><rect x="17" y="7" width="4" height="8" rx="1" fill="none" stroke="${color}" stroke-width="1.5"/>`,
+    piped: [0, 1, 2].map(j => r(1 + j * 7, 8, 5.5, 6, 1 - j * .3)).join("") + `<path d="M2 18 h18 m-3 -2.5 l3 2.5 l-3 2.5" stroke="${color}" stroke-width="1.5" fill="none" stroke-linecap="round"/>`,
+    solo: `<circle cx="11" cy="6" r="3.5" fill="${color}"/><path d="M4.5 20 a6.5 6.5 0 0 1 13 0 z" fill="${color}"/>`,
+    shared: `<circle cx="7" cy="7" r="3" fill="${color}"/><path d="M1.5 20 a5.5 5.5 0 0 1 11 0 z" fill="${color}"/><circle cx="15.5" cy="7" r="3" fill="${color}"/><path d="M10 20 a5.5 5.5 0 0 1 11 0 z" fill="${color}"/>`,
+    file: `<path d="M5 2 h8 l5 5 v13 h-13 z" fill="none" stroke="${color}" stroke-width="1.8"/><path d="M13 2 v5 h5" fill="none" stroke="${color}" stroke-width="1.5"/>`,
+    tree: `<path d="M3 3 h6 l2 2 h8 v13 h-16 z" fill="none" stroke="${color}" stroke-width="1.8"/>` + r(6, 9, 10, 2) + r(6, 13, 7, 2),
+    cached: r(3, 4, 16, 14) + [6, 10, 14].map(x => `<rect x="${x}" y="1" width="1.6" height="3" fill="${color}"/><rect x="${x}" y="18" width="1.6" height="3" fill="${color}"/>`).join(""),
+    storage: `<ellipse cx="11" cy="5" rx="8" ry="3" fill="none" stroke="${color}" stroke-width="1.8"/><path d="M3 5 v12 a8 3 0 0 0 16 0 v-12" fill="none" stroke="${color}" stroke-width="1.8"/>`,
+  }[kind] || "";
+  return `<svg width="${size}" height="${size}" viewBox="0 0 22 22">${g}</svg>`;
+}
+/* One rate axis for the whole page: every chart of every section, every
+   contender and measure, so a line's height reads the same everywhere,
+   whatever is set aside, and one chart's level compares with another's. */
+let AXIS = null;
+function axisOf() {
+  if (!AXIS) {
+    /* Over the measures shown: a hidden one (energy's joules) would stretch the scale. */
+    const lines = c => [].concat(MEASURES.wall ? c.series.concat(c.before) : [], MEASURES.cpu ? c.cpu : [], MEASURES.energy ? c.energy : []);
+    const vals = SECTIONS.flatMap(S => Object.values(S.cells).flatMap(c => lines(c).filter(Boolean).flat())).filter(v => v).map(shown);
+    AXIS = [Math.log(Math.min(...vals)) - 0.1, Math.log(Math.max(...vals)) + 0.1];
+  }
+  return AXIS;
+}
+/* A row's shared axis: the page's one scale at the cards' height, its
+   powers of ten named once for the row (each card's faint lines meet them). */
+function rowAxis() {
+  const [lo, hi] = axisOf(), h = 94, T = 8, B = 14;
+  const y = v => h - B - (Math.log(v) - lo) / (hi - lo) * (h - T - B);
+  let s = `<svg width="38" height="${h}">`;
+  for (let e = Math.ceil(lo / Math.LN10); e <= Math.floor(hi / Math.LN10); e++) {
+    s += `<line x1="32" x2="38" y1="${y(10 ** e)}" y2="${y(10 ** e)}" stroke="#d6d2cb"/>`;
+    s += `<text x="30" y="${y(10 ** e) + 3}" font-size="9.5" fill="#4b5563" text-anchor="end">${+(10 ** e).toPrecision(1)}</text>`;
+  }
+  return s + "</svg>";
+}
+/* One chart's lines, rates (bytes over each mean time) on the section's log scale; the opened one with axes. */
+/* How many times one figure is another, in plain digits to two significant
+   figures: ×1.5, ×15, ×150, ×1,500 (toPrecision alone writes ×1.5e+2 from
+   100 up, which readers took for 1,500). */
+function timesText(r) {
+  return "×" + Number(r.toPrecision(2)).toLocaleString("en-US", { maximumFractionDigits: 1 });
+}
+/* The duel at point k of chart c: BLAKE3 servil (the faster of its forms
+   shown) against its strongest rival (the fastest other shown), as the
+   overview's brackets (Zooko, October 24): {r, w, a, b}, the factor, the
+   winner's index, servil's and the rival's times; null without both. */
+function duel(S, c, live, k) {
+  const best = is => is.filter(i => c.series[i][k]).reduce((m, i) => (m < 0 || c.series[i][k] < c.series[m][k] ? i : m), -1);
+  const ours = best(live.filter(i => S.ours[i])), rival = best(live.filter(i => !S.ours[i]));
+  if (ours < 0 || rival < 0) return null;
+  const [a, b] = [c.series[ours][k], c.series[rival][k]];
+  return { r: Math.max(a, b) / Math.min(a, b), w: a <= b ? ours : rival, a, b };
+}
+function spanText(S, c, live, k) {
+  const d = duel(S, c, live, k);
+  return d ? timesText(d.r) : null;
+}
+/* The right margin a chart's last span label needs: the bracket's offset,
+   the gap, and the label at about 0.62 em a character (bold digits), so a
+   long one (×1,500) is never cut off at the chart's edge. */
+function spanRoom(S, c, live, axes) {
+  const label = spanText(S, c, live, c.sizes.length - 1);
+  return label ? (axes ? 12 : 8) + 3 + Math.ceil(label.length * (axes ? 12 : 10) * 0.62) + 4 : 0;
+}
+function draw(S, c, w, h, axes) {
+  const live = c.series.map((s, i) => s && S.shownNow[i] ? i : -1).filter(i => i >= 0);
+  const [lo, hi] = axisOf();
+  /* An opened chart names its contenders above the plot, the names its
+     toggles (open() places them), a phone's title taking two lines and two
+     names to a row; case labels may take two lines below it. */
+  const listed = axes ? c.series.filter(Boolean).length : 0;
+  const tall = axes && narrow(), top = tall ? 72 : 40;
+  const n = c.sizes.length, L = axes ? (tall ? 50 : 70) : 8, R = Math.max(axes ? 52 : 34, spanRoom(S, c, live, axes)), T = axes ? top + 22 * Math.ceil(listed / (tall ? 2 : 5)) + 8 : 8, B = axes ? (c.cases ? 84 : 62) : 14;
+  /* Sizes run edge to edge; separate cases sit in the middles of equal slots. */
+  const x = k => n === 1 || c.cases ? L + (k + 0.5) * (w - L - R) / n : L + k * (w - L - R) / (n - 1);
+  const y = v => h - B - (Math.log(v) - lo) / (hi - lo) * (h - T - B);
+  let s = `<svg width="${w}" height="${h}">`;
+  /* Every chart shares the page's log scale: faint lines at each power of
+     ten, labelled small, show it in equal steps per factor of ten. */
+  if (!axes) for (let e = Math.ceil(lo / Math.LN10); e <= Math.floor(hi / Math.LN10); e++) {
+    s += `<line x1="0" x2="${w}" y1="${y(10 ** e)}" y2="${y(10 ** e)}" stroke="#e7e5e0"/>`;
+  }
+  if (axes) {
+    for (let e = Math.floor(Math.log10(Math.exp(lo))) - 1; e <= Math.ceil(Math.log10(Math.exp(hi))); e++) for (const m of [1, 2, 5]) {
+      const v = m * 10 ** e; if (Math.log(v) < lo || Math.log(v) > hi) continue;
+      const onNow = ["wall", "cpu", "energy"].filter(m => MEASURES[m]);
+      const unit = onNow.length === 1 && onNow[0] === "wall" ? (SHOW.cost ? " ns/B" : " GB/s") : "";
+      s += `<line x1="${L}" x2="${w - R}" y1="${y(v)}" y2="${y(v)}" stroke="#f3f4f6"/><text x="${L - 6}" y="${y(v) + 4}" font-size="11" fill="#6b7280" text-anchor="end">${+v.toPrecision(2)}${unit}</text>`;
+    }
+    /* The title runs up the axis; its arrow, beside its end, points up, as faster lines lie. */
+    /* The axis names every selected measure: solid, dotted, dashed. */
+    /* The unit of every measure shown, in one short phrase (the chips say which line is which). */
+    const M = MEASURES, on = ["wall", "cpu", "energy"].filter(m => M[m]);
+    const title0 = on.length === 1 && on[0] === "wall" && !SHOW.cost ? "gigibytes per second"
+      : SHOW.cost ? on.map(m => ({ wall: "ns", cpu: "CPU ns", energy: "nJ" })[m]).join(" / ") + " per byte" : "GB per " + on.map(m => ({ wall: "second", cpu: "CPU second", energy: "joule" })[m]).join(" / ");
+    const mid = (T + h - B) / 2, title = `${title0} (log scale), ${SHOW.cost ? "lower" : "higher"} is better`, half = title.length * 3.1;
+    s += `<text x="14" y="${mid}" font-size="11" fill="#6b7280" transform="rotate(-90 14 ${mid})" text-anchor="middle">${title}</text>`;
+    s += SHOW.cost
+      ? `<path d="M10 ${mid + half + 4} V${mid + half + 18} M6.5 ${mid + half + 13} L10 ${mid + half + 18} L13.5 ${mid + half + 13}" stroke="#6b7280" stroke-width="1.3" fill="none"/>`
+      : `<path d="M10 ${mid - half - 4} V${mid - half - 18} M6.5 ${mid - half - 13} L10 ${mid - half - 18} L13.5 ${mid - half - 13}" stroke="#6b7280" stroke-width="1.3" fill="none"/>`;
+    /* As many size labels as fit, about 48 px each. */
+    const every = Math.max(1, Math.ceil(n * 48 / (w - L - R)));
+    /* Case labels wrap to the width of their slot, so neighbours never overlap. */
+    const slot = (w - L - R) / Math.max(n, 1), chars = Math.max(6, Math.floor(slot / 6.2));
+    const wrap = lab => lab.split(" ").reduce((lines, word) => { const last = lines[lines.length - 1]; if (last && (last + " " + word).length <= chars) lines[lines.length - 1] = last + " " + word; else lines.push(word); return lines; }, []);
+    s += `<text x="${(L + w - R) / 2}" y="${h - 8}" font-size="11" fill="#6b7280" text-anchor="middle">${c.axis} (log scale)</text>`;
+    c.sizes.forEach((lab, k) => { if (c.cases || k % every === 0 || k === n - 1) s += `<text x="${x(k)}" y="${h - B + 16}" font-size="11" fill="#6b7280" text-anchor="middle">${(c.cases ? wrap(lab) : [lab]).map((t, j) => `<tspan x="${x(k)}" dy="${j ? 13 : 0}">${t}</tspan>`).join("")}</text>`; });
+    s += `<line class="cursor" x1="0" x2="0" y1="${T}" y2="${h - B}" stroke="#9ca3af" stroke-dasharray="3 3" visibility="hidden"/>`;
+  }
+  /* An earlier run beside this one: its lines dashed and pale, under the run's own. */
+  if (S.besideNow) for (const i of live) {
+    const was = c.before[i]; if (!was) continue;
+    const pts = was.map((v, k) => v ? [x(k), y(shown(v))] : null);
+    if (!(pts.filter(Boolean).length === 1 || c.cases)) {
+      let run = [];
+      for (const p of pts.concat([null])) {
+        if (p) { run.push(p); continue; }
+        if (run.length > 1) s += line(S, i, run.map(p => p.map(q => q.toFixed(1)).join(",")).join(" "), axes ? 2 : 1.3, `stroke-opacity=".55" stroke-dasharray="4 3"`);
+        run = [];
+      }
+    }
+    if (pts.length <= 3 || c.cases) s += pts.filter(Boolean).map(p => `<circle cx="${p[0]}" cy="${p[1]}" r="${axes ? 5 : 3}" fill="none" stroke="${S.colors[i]}" stroke-opacity=".7" stroke-width="1.5"/>`).join("");
+  }
+  /* CPU time (the processor time a unit took, all the program's threads)
+     dotted; energy (the CPU package's, a unit's share) dashed. */
+  for (const [m, dash, cap] of [["cpu", `0.1 ${axes ? 4 : 3}`, "round"], ["energy", axes ? "7 4" : "5 3", "butt"]]) if (MEASURES[m]) for (const i of live) {
+    const values = c[m][i]; if (!values) continue;
+    const pts = values.map((v, k) => v ? [x(k), y(shown(v))] : null);
+    let run = [];
+    for (const p of pts.concat([null])) {
+      if (p) { run.push(p); continue; }
+      if (run.length > 1 && !c.cases) s += line(S, i, run.map(p => p.map(q => q.toFixed(1)).join(",")).join(" "), axes ? (m === "cpu" ? 2.6 : 2) : (m === "cpu" ? 1.8 : 1.4), `stroke-dasharray="${dash}" stroke-linecap="${cap}"`);
+      run = [];
+    }
+    if (pts.length <= 3 || c.cases) s += pts.filter(Boolean).map(p => `<circle cx="${p[0]}" cy="${p[1]}" r="${axes ? 4 : 2.5}" fill="#fff" stroke="${S.colors[i]}" stroke-width="1.6" stroke-dasharray="${m === "cpu" ? "1.5 1.5" : "3 1.5"}"/>`).join("");
+  }
+  /* Dots after every line, the fastest at each point drawn last, on top:
+     where two overlap, the faster one shows. */
+  const dots = [];
+  if (MEASURES.wall) for (const i of live) {
+    const pts = c.series[i].map((v, k) => [x(k), y(shown(v))]);
+    s += pts.length === 1 || c.cases ? "" : line(S, i, pts.map(p => p.map(q => q.toFixed(1)).join(",")).join(" "), axes ? 2.2 : 1.5);
+    if (pts.length <= 3 || c.cases) dots.push(...pts.map((p, k) => [1 / c.series[i][k], dot(S, i, p[0], p[1], axes ? 5 : 3)]));
+  }
+  /* Slowest first, fastest last: where dots overlap, the fastest shows. */
+  s += dots.sort((a, b) => a[0] - b[0]).map(d => d[1]).join("");
+  /* A small chart's span: at its last point, a bracket from the worst line
+     shown to the best, and how many times better the best is. */
+  /* The bracket: servil's line to its strongest rival's, the factor in
+     the winner's colour, at a chart's last point, and in an opened chart
+     of separate cases at every case. */
+  if (MEASURES.wall) {
+    const at = axes && c.cases ? [...Array(n).keys()] : [n - 1];
+    for (const k of at) {
+      const d = duel(S, c, live, k);
+      if (!d) continue;
+      const y1 = y(shown(d.a)), y2 = y(shown(d.b));
+      const bx = x(k) + (axes ? 12 : 8), fs = axes ? 12 : 10;
+      s += `<path d="M${bx - 3} ${y1} H${bx} V${y2} H${bx - 3}" fill="none" stroke="#6b7280" stroke-width="1"/><text x="${bx + 3}" y="${(y1 + y2) / 2 + fs / 3}" font-size="${fs}" font-weight="700" fill="${S.colors[d.w]}">${timesText(d.r)}</text>`;
+    }
+  }
+  if (!axes) s += `<line class="cursor" x1="0" x2="0" y1="${T}" y2="${h - B}" stroke="#9ca3af" stroke-dasharray="3 3" visibility="hidden"/>`;
+  return { svg: s + "</svg>", x, n, L, R, w };
+}
+/* The page is narrow (a phone): grids scale to fit, charts open across it. */
+/* The screen's width: clientWidth (a phone widens innerWidth to fit content
+   wider than itself, so it would never read narrow). */
+const screenWidth = () => document.documentElement.clientWidth;
+const narrow = () => screenWidth() < 1000;
+let GRIDS = [];
+function fitGrids() {
+  for (const g of GRIDS) {
+    g.style.zoom = 1;
+    g.style.zoom = narrow() ? Math.min(1, (screenWidth() - 20) / g.scrollWidth) : 1;
+  }
+}
+window.addEventListener("resize", () => { const was = OPEN; render(); if (was) { OPEN = was; reopen(); } });
+/* What the lines measure, for the whole page: wall-clock time by default. */
+const MEASURES = { wall: true, cpu: false, energy: false };
+/* What a line's height is: a rate (bytes per second, higher is faster) by
+   default, or a cost (nanoseconds per byte, lower is faster). */
+const SHOW = { cost: false };
+const shown = nsPerByte => SHOW.cost ? nsPerByte : 1 / nsPerByte;
+/* The chart open now (its cell's key), so a chip that redraws the page keeps it open. */
+let OPEN = null;
+function render() {
+  /* A redraw keeps the reader's place on the page. */
+  const scrolled = window.scrollY;
+  requestAnimationFrame(() => window.scrollTo(0, scrolled));
+  const root = document.getElementById("sections");
+  document.removeEventListener("keydown", window.onZoomKey || (() => {}));
+  document.getElementById("tip").style.display = "none";
+  root.style.minHeight = root.offsetHeight + "px"; root.innerHTML = ""; GRIDS = [];
+  /* A phone's opened chart lives outside the sections: it goes with them. */
+  document.querySelectorAll(".zoom.phone").forEach(z => z.remove());
+    /* What the lines measure: wall-clock time by default; CPU time where the
+     run recorded it; energy once the benchmark counts it. */
+  const measures = document.createElement("div"); measures.className = "measures";
+  /* First the view: a switch between a rate (higher is faster) and a cost
+     (lower is faster); then which lines, each named for what its height is. */
+  const sw = document.createElement("button"); sw.className = "switch" + (SHOW.cost ? " on" : "");
+  sw.setAttribute("role", "switch"); sw.setAttribute("aria-checked", SHOW.cost);
+  sw.title = SHOW.cost ? "Lines are costs, nanoseconds per byte: lower is better. Click to show rates (higher is better)." : "Lines are rates, bytes per second: higher is better. Click to show costs (lower is better).";
+  sw.innerHTML = `<span class="track"><span class="knob"></span></span><span class="dir">${SHOW.cost ? "↓ lower is better" : "↑ higher is better"}<span class="scale">, log scale</span></span>`;
+  sw.onclick = () => { SHOW.cost = !SHOW.cost; AXIS = null; render(); reopen(); };
+  measures.append(sw, "·");
+  const icon = m => `<svg width="20" height="10"><line x1="2" x2="18" y1="5" y2="5" stroke="currentColor" stroke-width="${m === "cpu" ? 2.2 : 1.8}" ${m === "cpu" ? 'stroke-dasharray="0.1 3.5" stroke-linecap="round"' : m === "energy" ? 'stroke-dasharray="5 3"' : ""}/></svg>`;
+  /* Energy where any run counted it (a quiet machine's CPU package, solo cells). */
+  const counted = m => SECTIONS.some(S => Object.values(S.cells).some(c => c[m].some(Boolean)));
+  const lines = SHOW.cost
+    ? [["wall", "wall-clock ns per byte", false, "Nanoseconds the program waits per byte hashed."], ["cpu", "CPU ns per byte", true, "Nanoseconds of processor time per byte hashed, every thread of the program summed: what the hash costs the machine."], ["energy", "nJ per byte", false, "Nanojoules the CPU package used per byte hashed (solo cells; the whole package's, on a quiet machine)."]]
+    : [["wall", "GB per wall-clock second", false, "Bytes hashed per second the program waits."], ["cpu", "GB per CPU second", true, "Bytes hashed per second of processor time, every thread of the program summed: higher is cheaper for the machine. A hash on one thread draws both lines together."], ["energy", "GB per joule", false, "Bytes hashed per joule the CPU package used (solo cells; the whole package's, on a quiet machine): higher is cheaper."]];
+  for (const [m, label, dots, why] of lines) {
+    const b = document.createElement("button"); b.innerHTML = icon(m) + label; b.title = why;
+    if (m !== "wall" && !counted(m)) { b.disabled = true; b.classList.add("off"); b.title = `This run counted no ${m === "cpu" ? "CPU time" : "energy"}.`; }
+    else {
+      if (!MEASURES[m]) b.classList.add("off");
+      b.onclick = () => { MEASURES[m] = !MEASURES[m]; AXIS = null; render(); reopen(); };
+    }
+    measures.appendChild(b);
+  }
+  root.appendChild(measures);
+  /* The names stick just under the panel, whatever its height (it wraps on a phone). */
+  requestAnimationFrame(() => document.documentElement.style.setProperty("--bar", measures.offsetHeight + "px"));
+
+  SECTIONS.forEach((S, si) => {
+    S.shownNow = S.shownNow || S.shown.slice();
+    if (S.besideNow === undefined) S.besideNow = !!S.before[0];
+    const box = document.createElement("div");
+    const esc = t => t.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+    const rows = S.details.map(([k, v, a]) => `<dt>${esc(k)}</dt><dd>${a ? `<a href="${esc(a)}">${esc(v)}</a>` : esc(v)}</dd>`).join("");
+    const vs = S.before[0] ? `<p class="about">Solid lines: ${esc(S.run)}. Dashed lines: ${esc(S.before[0])}, ${esc(S.before[1])}.</p>` : "";
+    box.innerHTML = `<h2>${S.title}</h2><p class="about">${esc(S.about)}</p>${vs}<details class="run"><summary>About this run</summary><dl>${rows}</dl></details>`;
+    const legend = document.createElement("div"); legend.className = "legend";
+    S.names.forEach((nm, i) => {
+      const b = document.createElement("button"); b.textContent = nm; b.style.setProperty("--c", swatch(S, i));
+      if (!S.shownNow[i]) b.classList.add("off");
+      b.onclick = () => { S.shownNow[i] = !S.shownNow[i]; render(); reopen(); };
+      legend.appendChild(b);
+    });
+    /* The earlier run beside this one: a chip that hides or shows its dashed lines. */
+    if (S.before[0]) {
+      const b = document.createElement("button"); b.className = "beside" + (S.besideNow ? "" : " off");
+      b.innerHTML = `<svg width="22" height="10"><line x1="1" x2="21" y1="5" y2="5" stroke="#6b7280" stroke-dasharray="4 3" stroke-width="1.6"/></svg> ${esc(S.before[0])}`;
+      b.title = S.before[1];
+      b.onclick = () => { S.besideNow = !S.besideNow; render(); reopen(); };
+      legend.appendChild(b);
+    }
+    box.appendChild(legend);
+    for (const [layer, lname, lnote] of S.layers) {
+      if (S.layers.length > 1) {
+        const lay = document.createElement("div");
+        lay.className = "layer";
+        lay.innerHTML = glyph(layer, 18) + lname + `<span class="means">${lnote}</span>`;
+        lay.onclick = () => lay.classList.toggle("show");
+        box.appendChild(lay);
+      }
+      const g = document.createElement("div"); g.className = "grid"; g.style.setProperty("--cols", S.cols.length); box.appendChild(g);
+      GRIDS.push(g);
+      g.appendChild(document.createElement("div"));
+      g.appendChild(document.createElement("div"));
+      for (const [c, cname, cmeans] of S.cols) {
+        const h = document.createElement("div"); h.className = "h";
+        h.innerHTML = glyph(c) + cname + `<span class="means">${cmeans}</span>`; h.dataset.key = "col:" + c; h.onclick = () => h.classList.toggle("show"); g.appendChild(h);
+      }
+      for (const [r, rname, rmeans] of S.rows) {
+        const h = document.createElement("div"); h.className = "h row";
+        h.innerHTML = glyph(r) + `<span>${rname}</span><span class="means">${rmeans}</span>`; h.dataset.key = "row:" + r; h.onclick = () => h.classList.toggle("show"); g.appendChild(h);
+        const ax = document.createElement("div"); ax.className = "axis-cell"; ax.innerHTML = rowAxis(); g.appendChild(ax);
+        for (const [c] of S.cols) {
+          const cell = document.createElement("div"); cell.className = "cell";
+          const key = `${layer}|${r}|${c}`, q = S.cells[key];
+          if (q) {
+            const nothing = (MEASURES.wall || MEASURES.cpu || MEASURES.energy) && !MEASURES.wall && !(MEASURES.cpu && q.cpu.some(Boolean)) && !(MEASURES.energy && q.energy.some(Boolean));
+            const d = draw(S, q, 208, 94, false);
+            cell.innerHTML = d.svg + (nothing ? `<span class="note">nothing selected is recorded for this way of calling</span>` : "") + `<span class="call"><a class="doc" href="${q.doc}" target="_blank" title="${q.call}: its documentation">${q.call}</a></span>`;
+            if (!nothing) hoverTip(cell, S, q, d);
+            cell.querySelector("a.doc").onclick = e => e.stopPropagation();
+            cell.dataset.key = si + ":" + key;
+            cell.onclick = () => open(S, g, cell, q, r, c, layer);
+          } else {
+            cell.classList.add("empty");
+          }
+          g.appendChild(cell);
+        }
+      }
+    }
+    root.appendChild(box);
+  });
+  fitGrids();
+}
+function tipHTML(S, q, k) {
+  const M = MEASURES;
+  const rows = q.series.map((s, i) => s && S.shownNow[i] ? [i, 1 / s[k], s[k]] : null).filter(Boolean).sort((a, b) => b[1] - a[1]);
+  /* Beside an earlier run: its rate, and how many times faster the run is. */
+  const was = i => { const v = S.besideNow && q.before[i] && q.before[i][k]; return v ? ` <span class="was">(before: ${(1 / v).toPrecision(3)}; now ×${(v / q.series[i][k]).toFixed(2)})</span>` : ""; };
+  const time = ns => ns >= 1e6 ? (ns / 1e6).toPrecision(3) + " ms" : ns >= 1e3 ? (ns / 1e3).toPrecision(3) + " µs" : ns.toPrecision(3) + " ns";
+  const cpuOf = i => { const v = q.cpu[i] && q.cpu[i][k]; return v ? `${M.wall ? "; " : ""}CPU ${SHOW.cost ? v.toPrecision(3) + " ns/B · " : ""}${time(v * q.per[k])} ${q.what}` : M.wall ? "" : "no CPU time recorded"; };
+  const energyOf = i => { const v = q.energy[i] && q.energy[i][k]; if (!v) return ""; const nj = v * q.per[k]; return `${M.wall || M.cpu ? "; " : ""}energy ${SHOW.cost ? v.toPrecision(3) + " nJ/B · " : (1 / v).toPrecision(3) + " GB/J · "}${nj >= 1e6 ? (nj / 1e6).toPrecision(3) + " mJ" : nj >= 1e3 ? (nj / 1e3).toPrecision(3) + " µJ" : nj.toPrecision(3) + " nJ"} ${q.what}`; };
+  /* Where the caller ran: its E-core share and the clocks, where counted. */
+  const ran = i => { const c = q.cores && q.cores[i] && q.cores[i][k]; if (!c) return ""; const [e, p, ee] = c; return ` <span class="was">[${e < 0.005 ? `P cores, ${p.toFixed(2)} GHz` : e > 0.995 ? `E cores, ${ee.toFixed(2)} GHz` : `${(100 * e).toFixed(0)}% on E cores; P ${p.toFixed(2)}, E ${ee.toFixed(2)} GHz`}]</span>`; };
+  /* A contender a block: what wraps indents under its name. */
+  return `${q.axis}: <b>${q.sizes[k]}</b>` + rows.map(([i, rate, t]) => `<div class="row"><span class="sw" style="background:${swatch(S, i)}"></span>${S.names[i]}: ` + (M.wall ? `${SHOW.cost ? t.toPrecision(3) + " ns/B" : rate.toPrecision(3) + " " + q.unit} · ${time(t * q.per[k])} ${q.what}${was(i)}${ran(i)}` : "") + (M.cpu ? cpuOf(i) : "") + (M.energy ? energyOf(i) : "") + "</div>").join("");
+}
+/* A collapsed card's hover: the opened chart's values at the pointer's
+   point, the cursor on that point; a click still opens the chart. */
+function hoverTip(cell, S, q, d) {
+  const cur = cell.querySelector(".cursor"), tip = document.getElementById("tip"), svg = cell.querySelector("svg");
+  if (!cur) return;
+  cell.onmousemove = e => {
+    const r = svg.getBoundingClientRect(), mx = (e.clientX - r.left) / r.width * d.w;
+    const slot = (d.w - d.L - d.R) / (q.cases ? d.n : Math.max(d.n - 1, 1));
+    const k = d.n === 1 ? 0 : Math.max(0, Math.min(d.n - 1, Math.round((mx - d.L) / slot - (q.cases ? 0.5 : 0))));
+    cur.setAttribute("x1", d.x(k)); cur.setAttribute("x2", d.x(k)); cur.setAttribute("visibility", "visible");
+    tip.innerHTML = tipHTML(S, q, k);
+    tip.style.display = "block";
+    tip.style.left = "0px";
+    tip.style.left = Math.max(4, Math.min(e.clientX + 14, screenWidth() - tip.offsetWidth - 4)) + "px";
+    tip.style.top = Math.max(4, Math.min(e.clientY + 10, innerHeight - tip.offsetHeight - 4)) + "px";
+  };
+  cell.onmouseleave = () => { cur.setAttribute("visibility", "hidden"); tip.style.display = "none"; };
+}
+/* Opening: the chart grows from its own cell over the cells' area, the headers in view, and shrinks back into it. */
+function open(S, grid, cell, q, row, col, layer) {
+  const gr = grid.getBoundingClientRect(), cr = cell.getBoundingClientRect();
+  const first = grid.querySelector(".cell").getBoundingClientRect();
+  const phone = narrow();
+  /* A phone: a panel across the screen under the bar, at full size (the
+     grid is scaled down); else over the grid's cells, the headers in view. */
+  const bar = document.querySelector(".measures").getBoundingClientRect().bottom;
+  const X0 = phone ? 6 : first.left - gr.left, Y0 = phone ? bar + 4 : first.top - gr.top;
+  const W = phone ? screenWidth() - 12 : Math.max(Math.min(gr.width - X0, window.innerWidth - first.left - 6), 640);
+  const H = phone ? Math.max(360, window.innerHeight - Y0 - 6) : Math.max(gr.height - Y0, 340);
+  const z = document.createElement("div"); z.className = "zoom" + (phone ? " phone" : "");
+  const start = phone ? { left: cr.left, top: cr.top, width: cr.width, height: cr.height } : { left: cr.left - gr.left, top: cr.top - gr.top, width: cr.width, height: cr.height };
+  const place = r => Object.assign(z.style, Object.fromEntries(Object.entries(r).map(([k, v]) => [k, v + "px"])));
+  const instant = cell.dataset.instant === "1";
+  OPEN = cell.dataset.key;
+  if (instant) z.style.transition = "none";
+  place(start); (phone ? document.body : grid).appendChild(z);
+  const d = draw(S, q, W, H, true);
+  const rn = S.rows.find(r => r[0] === row)[1], cn = S.cols.find(c => c[0] === col)[1];
+  const ln = S.layers.length > 1 ? ", " + S.layers.find(l => l[0] === layer)[1] : "";
+  z.innerHTML = d.svg + `<div class="title">${glyph(row, 16)}${glyph(col, 16)} ${rn}, ${cn}${ln}: <code><a class="doc" href="${q.doc}" target="_blank" title="its documentation">${q.call}</a></code></div><button class="close">✕<span class="word"> put back</span></button>`;
+  z.querySelector("a.doc").onclick = e => e.stopPropagation();
+  /* The chart's contenders under its title, each name its toggle. */
+  const key = document.createElement("div"); key.className = "key";
+  key.style.left = d.L + "px"; key.style.top = (phone && narrow() ? 72 : 40) - 10 + "px";
+  q.series.forEach((v, i) => {
+    if (!v) return;
+    const b = document.createElement("button"); b.style.setProperty("--c", S.colors[i]);
+    b.textContent = S.names[i];
+    if (!S.shownNow[i]) b.classList.add("off");
+    b.title = S.shownNow[i] ? "hide its lines" : "show its lines";
+    b.onclick = e => { e.stopPropagation(); S.shownNow[i] = !S.shownNow[i]; render(); reopen(); };
+    key.appendChild(b);
+  });
+  z.appendChild(key);
+  if (instant) { place({ left: X0, top: Y0, width: W, height: H }); requestAnimationFrame(() => { z.style.transition = ""; }); }
+  else requestAnimationFrame(() => place({ left: X0, top: Y0, width: W, height: H }));
+  const lit = [...grid.querySelectorAll(".h")].filter(h => h.dataset.key === "row:" + row || h.dataset.key === "col:" + col);
+  lit.forEach(h => h.classList.add("lit"));
+  const tip = document.getElementById("tip"), cur = z.querySelector(".cursor");
+  /* A touch's tap shows the values at its point (the finger moves no
+     pointer); a mouse's click, or the button, puts the chart back. */
+  let touch = false;
+  z.onpointerdown = e => { touch = e.pointerType !== "mouse"; };
+  const show = e => {
+    const zr = z.getBoundingClientRect(), mx = e.clientX - zr.left;
+    const slot = (d.w - d.L - d.R) / (q.cases ? d.n : Math.max(d.n - 1, 1));
+    const k = d.n === 1 ? 0 : Math.max(0, Math.min(d.n - 1, Math.round((mx - d.L) / slot - (q.cases ? 0.5 : 0))));
+    cur.setAttribute("x1", d.x(k)); cur.setAttribute("x2", d.x(k)); cur.setAttribute("visibility", "visible");
+    tip.innerHTML = tipHTML(S, q, k);
+    tip.style.display = "block";
+    /* Measured at the left edge, at its full width, then placed. */
+    tip.style.left = "0px";
+    tip.style.left = Math.max(4, Math.min(e.clientX + 14, screenWidth() - tip.offsetWidth - 4)) + "px";
+    /* Above a finger, which would hide it; below a mouse pointer. */
+    tip.style.top = Math.max(4, Math.min(touch ? e.clientY - tip.offsetHeight - 24 : e.clientY + 10, innerHeight - tip.offsetHeight - 4)) + "px";
+  };
+  z.onmousemove = e => { if (!touch) show(e); };
+  /* A mouse leaving hides the values; after a touch, the emulated mouse events that follow a tap would hide what the tap showed, so they wait for the next tap. */
+  z.onmouseleave = () => { if (touch) return; tip.style.display = "none"; cur.setAttribute("visibility", "hidden"); };
+  const close = () => { OPEN = null; document.removeEventListener("click", outside); document.removeEventListener("keydown", onKey); tip.style.display = "none"; lit.forEach(h => h.classList.remove("lit")); place(start); setTimeout(() => z.remove(), 220); };
+  z.querySelector(".close").onclick = e => { e.stopPropagation(); close(); };
+  /* Escape puts it back too. */
+  const onKey = e => { if (e.key === "Escape") { document.removeEventListener("keydown", onKey); close(); } };
+  document.addEventListener("keydown", onKey); window.onZoomKey = onKey;
+  z.onclick = e => { if (touch) show(e); else close(); };
+  /* A click anywhere else on the page puts it back too, except on the
+     chips, which redraw it in place. */
+  const outside = e => { if (!z.isConnected) return document.removeEventListener("click", outside); if (!z.contains(e.target) && !e.target.closest(".measures, .legend")) close(); };
+  setTimeout(() => document.addEventListener("click", outside));
+}
+render();
+/* A chip clicked inside an open chart: redraw, and open it again at full size at once. */
+function reopen() {
+  const key = OPEN; if (!key) return;
+  const cell = document.querySelector(`.cell[data-key="${CSS.escape(key)}"]`);
+  if (cell) { cell.dataset.instant = "1"; cell.click(); delete cell.dataset.instant; } else OPEN = null;
+}
+/* A link to one chart (#solo|one|lent, or #1:solo|file|cached for a later section) opens it. */
+function openFromHash() {
+  if (location.hash.length < 2) return;
+  const want = decodeURIComponent(location.hash.slice(1)), key = want.includes(":") ? want : "0:" + want;
+  const cell = document.querySelector(`.cell[data-key="${CSS.escape(key)}"]`);
+  if (!cell || document.querySelector(".zoom")) return;
+  cell.scrollIntoView({ block: "center" });
+  cell.click();
+  // The chart grows from the small cell into a larger box (.zoom's 0.2 s
+  // transition), which can reach below the screen: once grown, bring the
+  // opened chart itself into view, centred if it fits, else from its top
+  // (a link from the overview opened it below the fold, Zooko, October 24).
+  const zoom = document.querySelector(".zoom");
+  if (!zoom) return;
+  let done = false;
+  const show = () => {
+    if (done) return;
+    done = true;
+    zoom.scrollIntoView({ block: zoom.offsetHeight <= innerHeight ? "center" : "start" });
+  };
+  // When its growth ends (the last of its transitions), or soon after in
+  // any case.
+  zoom.addEventListener("transitionend", () => setTimeout(show, 30));
+  setTimeout(show, 600);
+}
+// After the page has laid out, so nothing moves the chart afterwards.
+if (document.readyState === "complete") openFromHash(); else addEventListener("load", openFromHash);
+window.addEventListener("hashchange", openFromHash);
+</script></body></html>

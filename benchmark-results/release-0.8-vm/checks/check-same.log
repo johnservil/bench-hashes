@@ -1,0 +1,35 @@
+check: the fork's working tree (e7b8e7687162) against 934dee8902889186e3da9b62edf43699dd1c6305 (934dee890288)
+check: the old side with the bench at 3f9edd139b2b1388c762ab82b4584cd09f3c53a7 (3f9edd139b2b)
+regress: 4 new builds against 4 old, 4 pairs over --contenders blake3-servil-st,blake3-servil-mt
+regress: pair 1 of 4 in 54.6 s
+regress: pair 2 of 4 in 54.7 s
+regress: pair 3 of 4 in 54.9 s
+regress: pair 4 of 4 in 56.0 s
+regress: no cell slower
+regress: suspects: blake3-servil-mt|solo|LentBatches|16;blake3-servil-st|solo|LentBatches|16;blake3-servil-st|solo|ContinuousBatches|16;blake3-servil-mt|solo|IdleManyMessages|256;blake3-servil-mt|shared|ContinuousMessages|16 KiB;blake3-servil-st|solo|IdleManyMessages|3;blake3-servil-mt|solo|ContinuousMessages|1 KiB;blake3-servil-st|solo|IdleManyMessages|24
+regress: power during the check: not reported by this OS
+check: a second stage for 8 suspects on 16 fresh pairs: blake3-servil-mt|solo|LentBatches|16, blake3-servil-st|solo|LentBatches|16, blake3-servil-st|solo|ContinuousBatches|16, blake3-servil-mt|solo|IdleManyMessages|256, blake3-servil-mt|shared|ContinuousMessages|16 KiB, blake3-servil-st|solo|IdleManyMessages|3, blake3-servil-mt|solo|ContinuousMessages|1 KiB, blake3-servil-st|solo|IdleManyMessages|24
+regress: 16 new builds against 16 old, 16 pairs over --contenders blake3-servil-mt,blake3-servil-st --points "continuous 1 KiB,continuous 16 KiB,continuous batch 16,idle 24,idle 256,idle 3,lent batch 16"
+regress: pair 1 of 16 in 1.3 s
+regress: pair 2 of 16 in 1.3 s
+regress: pair 3 of 16 in 1.3 s
+regress: pair 4 of 16 in 1.3 s
+regress: pair 5 of 16 in 1.3 s
+regress: pair 6 of 16 in 1.3 s
+regress: pair 7 of 16 in 1.3 s
+regress: pair 8 of 16 in 1.3 s
+regress: pair 9 of 16 in 1.3 s
+regress: pair 10 of 16 in 1.3 s
+regress: pair 11 of 16 in 1.3 s
+regress: pair 12 of 16 in 1.3 s
+regress: pair 13 of 16 in 1.3 s
+regress: pair 14 of 16 in 1.3 s
+regress: pair 15 of 16 in 1.3 s
+regress: pair 16 of 16 in 1.3 s
+  faster blake3-servil-mt|shared|ContinuousMessages|16 KiB: -12.4% (the pairs' geometric mean; 16 pairs: -10.5% +3.2% +14.5% -21.0% +1.6% -17.2% -5.7% -19.9% -24.1% -28.5% +6.7% -28.8% -20.5% -32.9% -12.4% +17.0%)
+  faster blake3-servil-mt|solo|LentBatches|16: -20.9% (the pairs' geometric mean; 16 pairs: -18.9% -27.8% -18.7% -23.9% -14.5% -21.0% -15.9% -17.9% -19.3% -20.2% -21.2% -20.8% -20.8% -22.3% -28.7% -21.1%)
+  faster blake3-servil-st|solo|ContinuousBatches|16: -23.2% (the pairs' geometric mean; 16 pairs: -22.5% -25.3% -21.7% -25.2% -21.9% -24.0% -17.6% -24.2% -21.0% -22.4% -24.5% -23.1% -21.4% -24.0% -29.8% -22.4%)
+  faster blake3-servil-st|solo|LentBatches|16: -21.7% (the pairs' geometric mean; 16 pairs: -20.9% -23.9% -21.3% -20.8% -17.2% -23.6% -20.7% -21.7% -19.8% -20.5% -21.6% -18.9% -19.3% -24.1% -30.5% -20.7%)
+regress: no cell slower
+regress: suspects: blake3-servil-st|solo|IdleManyMessages|3
+regress: power during the check: not reported by this OS

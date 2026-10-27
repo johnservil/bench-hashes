@@ -1,0 +1,14 @@
+check: the fork's working tree (e7b8e7687162) against bfbda1920283335ff3802723db11c209159f47fc (bfbda1920283)
+check: the old side with the bench at 5be5f23699ee7146ada56a08777173a4ee1c7bde (5be5f23699ee)
+regress: 4 new builds against 4 old, 4 pairs over --contenders blake3-servil-st,blake3-servil-mt
+regress: pair 1 of 4 in 56.0 s
+regress: pair 2 of 4 in 56.0 s
+regress: pair 3 of 4 in 56.3 s
+regress: pair 4 of 4 in 56.3 s
+  faster blake3-servil-mt|solo|IdleOneMessage|512 KiB: -38.5% (the pairs' geometric mean; 4 pairs: -34.1% -42.5% -38.7% -38.3%)
+  SLOWER blake3-servil-mt|solo|LentMessages|64 B: +5.2% (the pairs' geometric mean; 4 pairs: +6.0% +5.1% +4.6% +5.0%)
+  faster blake3-servil-mt|solo|ManyMessages|8192: -51.3% (the pairs' geometric mean; 4 pairs: -51.9% -50.3% -49.0% -54.0%)
+  faster blake3-servil-mt|solo|OneMessage|512 KiB: -42.4% (the pairs' geometric mean; 4 pairs: -41.7% -45.5% -39.5% -42.9%)
+  SLOWER blake3-servil-st|solo|LentMessages|64 B: +6.7% (the pairs' geometric mean; 4 pairs: +7.4% +6.4% +6.5% +6.4%)
+regress: REGRESSION: 2 cells slower
+regress: power during the check: not reported by this OS
