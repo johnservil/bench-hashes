@@ -364,6 +364,22 @@ calibrated separately: a continuous cell's timed samples last about 1 ms
 each (and hold at least twice the buffers its program keeps in flight), a
 synchronous cell's sum about 2 µs of calls after the gap.
 
+A run keeps its calibration in the user's cache directory
+(`$XDG_CACHE_HOME/bench-hashes`, or `~/.cache/bench-hashes`), one file
+for each context. The context covers the bench's version, commit and
+clean status, the machine, the power source and mode, and the run's
+contenders, points and threads. A later run in the same context reuses
+those sizes and skips calibrating, which saves about a minute on an M4
+Max. The fork under test is left out of the context, because a size only
+sets how much work fills a sample. A slower fork lengthens samples, which
+costs time alone. A faster one shortens them, so a run on cached sizes
+checks each cell: if a cell's median sample falls under half its target,
+the run deletes that file and the next run calibrates again. Each samples
+file's `sample sizes` line says where its sizes came from: calibrated in
+the run, given by `--sizes`, or taken from the cache, with when that
+calibration ran and against which fork. `regress` and `check` give their
+runs sizes of their own and never read the cache.
+
 A full run has 96 rounds, a `--quick` one 24 (and stops below 1 MiB and
 10,000 messages). Each point samples at least 12 visits, rounded up to
 whole cycles of its orders and spread over the rounds at an offset of its

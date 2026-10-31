@@ -1517,6 +1517,9 @@ struct Roster {
     train: Train,
     /// A nonstop cell's visits when --nonstop-visits sets them.
     nonstop_visits: Option<usize>,
+    /// Where the run's sample sizes came from, for its samples file's
+    /// `sample sizes` line.
+    sample_sizes: String,
 }
 
 impl Roster {
@@ -1567,6 +1570,7 @@ impl Roster {
             visits,
             train: NONSTOP_TRAIN,
             nonstop_visits: None,
+            sample_sizes: "calibrated in this run".to_owned(),
         }
     }
 
@@ -1753,6 +1757,8 @@ struct Options {
     rounds: Option<usize>,
     quick: bool,
     sizes: Sizes,
+    /// The file --sizes named, for the samples file's `sample sizes` line.
+    sizes_file: Option<String>,
     /// BLAKE3 servil mt's threads (--threads N; None: one a CPU).
     threads: Option<std::num::NonZeroUsize>,
     /// The run's visits: TO_CHECK_FOR_REGRESSIONS with --for-regression-check
@@ -1828,6 +1834,14 @@ impl Sizes {
         for (key, value) in context {
             writeln!(out, "# {key}: {value}").unwrap();
         }
+        // The calibration's record (when, and of which fork): no part of
+        // a cache file's key.
+        writeln!(
+            out,
+            "## calibrated: {}; {BLAKE3_SERVIL_SOURCE_INFO}",
+            utc_timestamp()
+        )
+        .unwrap();
         for (a, algorithm) in roster.algorithms.iter().enumerate() {
             for &p in roster
                 .points
@@ -1940,15 +1954,20 @@ fn sizes_cache_path(context: &[(String, String)]) -> Option<std::path::PathBuf> 
 
 /// The cached sizes for a context, where a file holds them with that very
 /// context.
-fn cached_sizes(path: &std::path::Path, context: &[(String, String)]) -> Option<Sizes> {
+fn cached_sizes(path: &std::path::Path, context: &[(String, String)]) -> Option<(Sizes, String)> {
     let text = fs::read_to_string(path).ok()?;
+    let record = text
+        .lines()
+        .find_map(|l| l.strip_prefix("## calibrated: "))
+        .unwrap_or("at an unrecorded time")
+        .to_owned();
     let lines: Vec<&str> = text
         .lines()
         .skip(1)
         .take_while(|l| l.starts_with("# "))
         .collect();
     let wanted: Vec<String> = context.iter().map(|(k, v)| format!("# {k}: {v}")).collect();
-    (lines == wanted).then(|| Sizes::read(path.to_str().expect("a UTF-8 path")))
+    (lines == wanted).then(|| (Sizes::read(path.to_str().expect("a UTF-8 path")), record))
 }
 
 /// Whether a run on cached sizes found them stale: a cell, sampled more
@@ -2080,10 +2099,11 @@ fn parse_arguments() -> Options {
         expect_servil(&commit, BLAKE3_SERVIL_SOURCE_INFO);
     }
     /* --calibrate-only PATH or --sizes PATH may accompany any selection. */
-    let sizes = match (take_value("--calibrate-only"), take_value("--sizes")) {
+    let sizes_file = take_value("--sizes");
+    let sizes = match (take_value("--calibrate-only"), &sizes_file) {
         (None, None) => Sizes::Calibrate,
         (Some(path), None) => Sizes::CalibrateOnly(path.into()),
-        (None, Some(path)) => Sizes::read(&path),
+        (None, Some(path)) => Sizes::read(path),
         (Some(_), Some(_)) => {
             panic!("--calibrate-only writes sizes and --sizes reads them; take one\n\n{USAGE}")
         }
@@ -2105,6 +2125,7 @@ fn parse_arguments() -> Options {
         visits,
         train,
         nonstop_visits,
+        sizes_file,
     }
 }
 
@@ -2257,6 +2278,7 @@ fn main() {
         visits,
         train,
         nonstop_visits,
+        sizes_file,
     } = parse_arguments();
     let mut machine = machine_metadata();
 
@@ -2319,12 +2341,18 @@ fn main() {
         .as_deref()
         .and_then(|path| cached_sizes(path, &context));
     let from_cache = cached.is_some();
-    let sizes = cached.unwrap_or(sizes);
-    let selection_note = if from_cache {
-        format!("{selection_note}; sample sizes from the calibration cache")
-    } else {
-        selection_note
+    let cache_name = cache
+        .as_deref()
+        .map(|p| p.file_name().unwrap().to_string_lossy().into_owned());
+    roster.sample_sizes = match (&cached, &sizes_file, &cache_name) {
+        (Some((_, record)), _, Some(name)) => {
+            format!("from the calibration cache ({name}), calibrated {record}")
+        }
+        (None, Some(file), _) => format!("from {file} (--sizes)"),
+        (None, None, Some(name)) => format!("calibrated in this run, cached as {name}"),
+        _ => "calibrated in this run".to_owned(),
     };
+    let sizes = cached.map_or(sizes, |(sizes, _)| sizes);
     let (results, samples, load, iterations) = measure_all(&roster, &sizes);
     if let Some(path) = &cache {
         if from_cache {
@@ -6375,6 +6403,7 @@ fn generate_samples_tsv(
     run.extend([
         ("contenders".to_owned(), selection_note.to_owned()),
         ("rounds".to_owned(), roster.rounds.to_string()),
+        ("sample sizes".to_owned(), roster.sample_sizes.clone()),
         (
             "buffers owned".to_owned(),
             "where a contender's calls are those of buffers lent (owned_runs_lent), its cell is the lent cell's samples".to_owned(),
@@ -7207,7 +7236,7 @@ mod correctness_tests {
         let mut iterations = vec![vec![0; POINT_COUNT]];
         iterations[0][point("64 B", UseCase::OneMessage)] = 7;
         Sizes::write(&path, &context, &roster, &iterations);
-        let Some(Sizes::From(given)) = cached_sizes(&path, &context) else {
+        let Some((Sizes::From(given), _)) = cached_sizes(&path, &context) else {
             panic!("its own context's sizes")
         };
         assert_eq!(

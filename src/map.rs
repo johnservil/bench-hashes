@@ -634,7 +634,7 @@ fn hashing(path: &Path) -> Section {
         ],
         // A run with --threads N names servil mt's count (its pool is the run's).
         names: {
-            let threads = header(&file.headers, "contenders").split("; --threads ").nth(1).map(str::to_owned);
+            let threads = header(&file.headers, "contenders").split("; --threads ").nth(1).and_then(|rest| rest.split("; ").next()).map(str::to_owned);
             algorithms.iter().map(|a| match (&threads, a) {
                 (Some(n), Algorithm::Blake3ServilMt) => format!("{}, {n} threads", a.name()),
                 _ => a.name().to_owned(),
