@@ -2005,6 +2005,9 @@ fn main() {
     // Once per process, before any other call: blake3-servil's contract.
     blake3_servil::initialize();
     let arguments: Vec<String> = std::env::args().skip(1).collect();
+    if arguments.first().map(String::as_str) == Some("means") {
+        return means_command(&arguments[1..]);
+    }
     if arguments.first().map(String::as_str) == Some("alike") {
         return alike_command(&arguments[1..]);
     }
@@ -5342,6 +5345,45 @@ fn read_samples(path: &str) -> SamplesFile {
         cpu,
         energy,
         cores,
+    }
+}
+
+/*
+ * `bench-hashes means RUN.tsv...`: every cell's mean (clocks::summary::mean),
+ * as picoseconds a unit rounded once, a row a cell, with the point's size
+ * on its axis (bytes a message, or messages a batch) and its unit: what a
+ * tool that studies results (the fork's and this repository's Python
+ * tools) reads, so that only this program reads samples files.
+ */
+fn means_command(paths: &[String]) {
+    assert!(!paths.is_empty(), "usage: bench-hashes means RUN.tsv...");
+    println!("file\tcontender\tscenario\tuse case\tpoint\taxis\tunit\tsamples\tps a unit");
+    for path in paths {
+        let file = read_samples(path);
+        for (key, samples) in &file.cells {
+            let fields: Vec<&str> = key.split('|').collect();
+            // A point this bench no longer has (an older run's): no axis.
+            let point = POINTS
+                .iter()
+                .find(|p| format!("{:?}", p.use_case) == fields[2] && p.label == fields[3]);
+            let (axis, unit) = match point {
+                Some(p) if p.use_case.batch() || p.use_case.call() == UseCase::ManyMessages => {
+                    (p.messages.to_string(), "message")
+                }
+                Some(p) => (p.bytes.to_string(), "byte"),
+                None => ("-".to_owned(), "-"),
+            };
+            let (ns, units) = clocks::summary::mean_totals(samples.iter().map(|m| (m.ns, m.units)));
+            let ps = (ns * 1000 + units / 2) / units;
+            println!(
+                "{path}\t{}\t{}\t{}\t{}\t{axis}\t{unit}\t{}\t{ps}",
+                fields[0],
+                fields[1],
+                fields[2],
+                fields[3],
+                samples.len()
+            );
+        }
     }
 }
 
