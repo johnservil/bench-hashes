@@ -121,7 +121,7 @@ struct Visits {
 /// buy agreement this reader does not need.
 const TO_MEASURE_SPEED: Visits = Visits {
     gap: 12,
-    nonstop: 2,
+    nonstop: 1,
 };
 
 /// To check for performance regressions: `regress`'s runs, for a reader
@@ -135,7 +135,7 @@ const TO_MEASURE_SPEED: Visits = Visits {
 /// check-validation).
 const TO_CHECK_FOR_REGRESSIONS: Visits = Visits {
     gap: 24,
-    nonstop: 2,
+    nonstop: 1,
 };
 
 /*
@@ -156,8 +156,8 @@ struct Train {
     samples: usize,
 }
 const NONSTOP_TRAIN: Train = Train {
-    warm_ns: 100_000_000,
-    samples: 6,
+    warm_ns: 0_000_000,
+    samples: 2000,
 };
 
 /// Points on the one-message axis, and on each many-messages axis.
