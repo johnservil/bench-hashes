@@ -43,9 +43,9 @@ default-features = false
 # crate: wall time, and the thread's counts per core kind). Each pin names
 # its full commit hash: the contender's code, and the instrument's clocks.
 # build-against replaces the contender and keeps the instrument pinned.
-# To measure a local checkout of the fork instead, with this repository
-# inside it, build with `bench-hashes build-against ..` and run the
-# executable it prints (CONTRIBUTING.md); pass `--expect-servil COMMIT` to
+# To measure a local checkout of the fork instead, build with
+# `bench-hashes build-against DIR` and run the executable it prints
+# (CONTRIBUTING.md); pass `--expect-servil COMMIT` to
 # have the run refuse any other servil. Not a bare `--config` patch: Cargo
 # applies a patch only at a version the lock allows, and otherwise builds
 # this pin with a warning (0.3.0 here; the fork's 0.8 releases are 0.8.x).
@@ -58,7 +58,7 @@ features = ["std"]
 
 [dependencies.clocks]
 git = "https://github.com/johnservil/BLAKE3"
-rev = "f448bb32aff6b1f3c542405282d797887fe869ff"
+rev = "c7cb21d345fb870d6a54637b211c8760fdb345fd"
 
 # SHA-1 with collision detection (the SHA-1DC construction git uses), pure
 # Rust; there is no hardware path for the detection.

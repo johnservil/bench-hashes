@@ -623,11 +623,18 @@ change: `bench-hashes compare` gives the verdicts).
 
 ## Load from other programs
 
-While it measures, the run reads how much CPU time the whole machine
-spent busy and how much this process used; the difference is CPU time
+While it measures, the run reads how much user time the whole machine
+spent and how much of it this process used; the difference is CPU time
 other programs took. Linux also reports steal time, CPU time a
 hypervisor withheld from a virtual machine's CPUs for other work on the
-host. The OS counts both in 10 ms ticks, so the run sums them over
+host. User time, because the kernel's own work for the run (waking its
+threads, starting and ending the processes it spawns) is system time
+charged to no process, and would read as other programs' load: a cell
+that starts a thousand processes read 0.61 CPUs of it on an EPYC 9255.
+Programs that disturb a measurement run in user time: on an Apple M4
+Max, a busy loop read 1.04-1.13 CPUs, and a Linux VM's two busy vCPUs
+2.0 more. Another program's system time (heavy disk or network work)
+goes unseen. The OS counts both in 10 ms ticks, so the run sums them over
 windows of about a second, read between samples (a reading takes about
 9 µs, once a second, outside every timed interval); on 16 CPUs a window
 reads within 0.16 CPUs. The report, the samples file, and the line under
@@ -638,8 +645,9 @@ lists every window and when each sample started, so a sample's window
 is known. Measured in a quiet 16-CPU Linux
 VM: 0.00 CPUs on average, 0.02 in the busiest window; two busy loops
 beside the run read 1.98-2.01 in each of their windows. An
-Apple M4 Max desktop running a Linux VM keeps 0.40-0.56 CPUs busy, and
-its results then match a quieter run's to about 1%.
+Apple M4 Max desktop running an idle Linux VM reads about 0.2 CPUs of
+user time, its own background, and its results then match a quieter
+run's to about 1%.
 
 A program that runs others to measure them, `regress` and `bench-hashes
 b3sum`, counts each child's CPU time as its own: reaped children through
