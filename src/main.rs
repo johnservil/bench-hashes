@@ -3722,6 +3722,14 @@ fn free_place<'a, D: FnMut(&'a mut [blake3_servil::Hash])>(
  * and hashing take turns; the fork's queue takes the program's buffers
  * and hashes while the next are read.
  */
+/// THE BENCHMARKS REPRESENT THIS IN TWO DIFFERENT WAYS TO USERS (the
+/// map's and the report's "buffers owned" and "buffers lent" rows), so if
+/// you change the way these cells call a contender (this predicate, or
+/// hash_continuous_messages, hash_continuous_batches, hash_lent), you need
+/// to update the benchmarks: FROZEN.md's calls, and how the two rows are
+/// measured and drawn. `bench-hashes alike` shows whether two such cells
+/// still read alike.
+///
 /// Whether a contender's continuous cell with buffers owned runs the same
 /// calls on the same input as its cell with buffers lent, at a message of
 /// `len` bytes (a batch: `None`): every contender but the fork's stream,
