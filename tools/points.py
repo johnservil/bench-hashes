@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Which points of the benchmark's size axes could go, losing least.
 
-    python3 tools/points.py --bench EXE [--tolerance PERMILLE...] [--protect USECASE:LABEL...] RUN.tsv...
+    python3 tools/points.py [--tolerance P,...] [--quantile Q] [--axes A,...] [--protect USECASE:LABEL...] RUN.tsv...
 
-EXE is a bench-hashes executable (it reads the samples files: `bench-hashes
-means`; this tool reads none itself). For each axis (a use case and a
+It reads the samples files through tools/samples.py. For each axis (a use case and a
 scenario: OneMessage, IdleOneMessage, ManyMessages, IdleManyMessages,
 ContinuousMessages, LentMessages, ContinuousBatches, LentBatches), every
 series the runs measured (a run's contender in that use case and
@@ -31,7 +30,9 @@ and for each point dropped, its largest error and the series it came from.
 import argparse
 import collections
 import math
-import subprocess
+import re
+
+import samples
 
 AXES = ["OneMessage", "IdleOneMessage", "ManyMessages", "IdleManyMessages",
         "ContinuousMessages", "LentMessages", "ContinuousBatches", "LentBatches"]
@@ -62,32 +63,36 @@ PROTECTED = {
 }
 
 
-def means(bench, paths):
+def axis_value(label):
+    """A point's place on its axis from its label: bytes ("1536 B", "3 MiB")
+    or messages ("1024"); None for a label of no size ("git objects")."""
+    m = re.fullmatch(r"(\d+)(?: (B|KiB|MiB))?", label)
+    if not m:
+        return None
+    return int(m.group(1)) * {None: 1, "B": 1, "KiB": 1 << 10, "MiB": 1 << 20}[m.group(2)]
+
+
+def means(paths):
     """{(machine, contender, scenario, use case): {axis value: (label, ps a unit)}}:
     each machine's runs of a cell averaged (the geometric mean of their
     means), so that a point's departure from its neighbours counts as it
-    repeats over runs rather than as one run's noise (bench-hashes alike:
-    two cells of the same calls in one run differ by up to 40%)."""
-    out = subprocess.run([bench, "means", *paths], check=True, capture_output=True, text=True).stdout
+    repeats over runs rather than as one run's noise (tools/alike.py: two
+    cells of the same calls in one run differ by up to 40%)."""
     runs = collections.defaultdict(lambda: collections.defaultdict(list))
     labels = {}
-    for line in out.splitlines()[1:]:
-        f, contender, scenario, use_case, label, axis, _unit, _n, ps = line.split("\t")
-        if axis != "-":
-            runs[(machine(f), contender, scenario, use_case)][int(axis)].append(int(ps))
-            labels[(use_case, int(axis))] = label
+    for path in paths:
+        run = samples.read(path)
+        for (contender, scenario, use_case, label), cell in run.cells.items():
+            x = axis_value(label)
+            if x is not None:
+                runs[(samples.machine(path), contender, scenario, use_case)][x].append(samples.mean_ps(cell))
+                labels[(use_case, x)] = label
     series = {}
     for key, points in runs.items():
         series[key] = {x: (labels[(key[3], x)], math.exp(sum(map(math.log, v)) / len(v))) for x, v in points.items()}
-    counts = collections.Counter(machine(f) for f in paths)
+    counts = collections.Counter(samples.machine(f) for f in paths)
     print("# runs a machine: " + ", ".join(f"{m} {n}" for m, n in sorted(counts.items())))
     return series
-
-
-def machine(path):
-    """A run's machine, from its samples file's path (benchmark-results/MACHINE/...)."""
-    parts = path.split("/")
-    return parts[-2] if parts[-1] == "bench-hashes.samples.tsv" else parts[-1].removesuffix(".tsv")
 
 
 def error_at(curves, kept, x):
@@ -160,7 +165,6 @@ def worst(curves, kept):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--bench", required=True, help="a bench-hashes executable (it reads the samples files)")
     ap.add_argument("--tolerance", type=lambda v: [int(x) for x in v.split(",")], default=[30, 50, 100],
                     help="largest interpolation errors to accept, permille, A,B,... (default 30,50,100)")
     ap.add_argument("--protect", nargs="*", default=[], help="more points to keep, USECASE:LABEL")
@@ -173,7 +177,7 @@ def main():
     for p in args.protect:
         uc, label = p.split(":", 1)
         protected[(uc, label)] = "named on the command line"
-    series = means(args.bench, args.runs)
+    series = means(args.runs)
     print(f"# {len(args.runs)} runs, {len(series)} series")
     q = args.quantile / 100
     for use_case in args.axes:

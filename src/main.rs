@@ -2005,12 +2005,6 @@ fn main() {
     // Once per process, before any other call: blake3-servil's contract.
     blake3_servil::initialize();
     let arguments: Vec<String> = std::env::args().skip(1).collect();
-    if arguments.first().map(String::as_str) == Some("means") {
-        return means_command(&arguments[1..]);
-    }
-    if arguments.first().map(String::as_str) == Some("alike") {
-        return alike_command(&arguments[1..]);
-    }
     if arguments.first().map(String::as_str) == Some("compare") {
         return compare_command(&arguments[1..]);
     }
@@ -3730,8 +3724,8 @@ fn free_place<'a, D: FnMut(&'a mut [blake3_servil::Hash])>(
 /// you change the way these cells call a contender (this predicate, or
 /// hash_continuous_messages, hash_continuous_batches, hash_lent), you need
 /// to update the benchmarks: FROZEN.md's calls, and how the two rows are
-/// measured and drawn. `bench-hashes alike` shows whether two such cells
-/// still read alike.
+/// measured and drawn. tools/alike.py shows whether two such cells still
+/// read alike.
 ///
 /// Whether a contender's continuous cell with buffers owned runs the same
 /// calls on the same input as its cell with buffers lent, at a message of
@@ -3739,8 +3733,8 @@ fn free_place<'a, D: FnMut(&'a mut [blake3_servil::Hash])>(
 /// at messages that arrive in one buffer (up to PIECE_LEN) and at batches.
 /// The owned cells dispatch through it (hash_continuous_messages,
 /// hash_continuous_batches), so a contender that gains a path of its own
-/// for owned buffers changes it, and `bench-hashes alike` stops comparing
-/// its two cells.
+/// for owned buffers changes it (and tools/alike.py, which says the same,
+/// with it).
 fn owned_runs_lent(algorithm: Algorithm, len: Option<usize>) -> bool {
     algorithm != Algorithm::Blake3ServilMt && len.is_none_or(|len| len <= PIECE_LEN)
 }
@@ -5345,114 +5339,6 @@ fn read_samples(path: &str) -> SamplesFile {
         cpu,
         energy,
         cores,
-    }
-}
-
-/*
- * `bench-hashes means RUN.tsv...`: every cell's mean (clocks::summary::mean),
- * as picoseconds a unit rounded once, a row a cell, with the point's size
- * on its axis (bytes a message, or messages a batch) and its unit: what a
- * tool that studies results (the fork's and this repository's Python
- * tools) reads, so that only this program reads samples files.
- */
-fn means_command(paths: &[String]) {
-    assert!(!paths.is_empty(), "usage: bench-hashes means RUN.tsv...");
-    println!("file\tcontender\tscenario\tuse case\tpoint\taxis\tunit\tsamples\tps a unit");
-    for path in paths {
-        let file = read_samples(path);
-        for (key, samples) in &file.cells {
-            let fields: Vec<&str> = key.split('|').collect();
-            // A point this bench no longer has (an older run's): no axis.
-            let point = POINTS
-                .iter()
-                .find(|p| format!("{:?}", p.use_case) == fields[2] && p.label == fields[3]);
-            let (axis, unit) = match point {
-                Some(p) if p.use_case.batch() || p.use_case.call() == UseCase::ManyMessages => {
-                    (p.messages.to_string(), "message")
-                }
-                Some(p) => (p.bytes.to_string(), "byte"),
-                None => ("-".to_owned(), "-"),
-            };
-            let (ns, units) = clocks::summary::mean_totals(samples.iter().map(|m| (m.ns, m.units)));
-            let ps = (ns * 1000 + units / 2) / units;
-            println!(
-                "{path}\t{}\t{}\t{}\t{}\t{axis}\t{unit}\t{}\t{ps}",
-                fields[0],
-                fields[1],
-                fields[2],
-                fields[3],
-                samples.len()
-            );
-        }
-    }
-}
-
-/*
- * `bench-hashes alike RUN.tsv...`: for each contender whose continuous
- * cell with buffers owned runs the same calls as its cell with buffers
- * lent (owned_runs_lent), at each point and scenario both measured, the
- * owned cell's mean against the lent cell's (permille): two measurements
- * of the same calls, so their spread is the run's own between cells
- * visited apart. Then, by file, how many pairs and the median and largest
- * departure from 1000.
- */
-fn alike_command(paths: &[String]) {
-    assert!(!paths.is_empty(), "usage: bench-hashes alike RUN.tsv...");
-    let pairs = [
-        (UseCase::ContinuousMessages, UseCase::LentMessages),
-        (UseCase::ContinuousBatches, UseCase::LentBatches),
-    ];
-    for path in paths {
-        let file = read_samples(path);
-        let cells: std::collections::BTreeMap<&str, &Vec<Measured>> =
-            file.cells.iter().map(|(k, v)| (k.as_str(), v)).collect();
-        let mut departures = Vec::new();
-        println!("# {path}");
-        println!("contender\tscenario\tuse case\tpoint\towned against lent (permille)");
-        for algorithm in Algorithm::ALL {
-            for scenario in ["solo", "shared"] {
-                for (owned, lent) in pairs {
-                    for point in POINTS.iter().filter(|p| p.use_case == owned) {
-                        let len = (!owned.batch()).then_some(point.bytes);
-                        if !owned_runs_lent(algorithm, len) {
-                            continue;
-                        }
-                        let key = |u: UseCase| {
-                            format!("{}|{scenario}|{u:?}|{}", algorithm.key(), point.label)
-                        };
-                        let (Some(a), Some(b)) = (
-                            cells.get(key(owned).as_str()),
-                            cells.get(key(lent).as_str()),
-                        ) else {
-                            continue;
-                        };
-                        let mean = |v: &Vec<Measured>| {
-                            clocks::summary::mean(v.iter().map(|m| (m.ns, m.units)))
-                        };
-                        let (a, b) = (mean(a), mean(b));
-                        let permille = (a * 1000 + b / 2) / b;
-                        println!(
-                            "{}\t{scenario}\t{owned:?}\t{}\t{permille}",
-                            algorithm.key(),
-                            point.label
-                        );
-                        departures.push(permille.abs_diff(1000));
-                    }
-                }
-            }
-        }
-        departures.sort_unstable();
-        if departures.is_empty() {
-            println!("# no pairs");
-        } else {
-            println!(
-                "# {} pairs: departure from 1000 median {} permille, 90th percentile {}, largest {}",
-                departures.len(),
-                departures[departures.len() / 2],
-                departures[departures.len() * 9 / 10],
-                departures[departures.len() - 1]
-            );
-        }
     }
 }
 
