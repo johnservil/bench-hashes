@@ -76,8 +76,8 @@ def means(paths):
     """{(machine, contender, scenario, use case): {axis value: (label, ps a unit)}}:
     each machine's runs of a cell averaged (the geometric mean of their
     means), so that a point's departure from its neighbours counts as it
-    repeats over runs rather than as one run's noise (tools/alike.py: two
-    cells of the same calls in one run differ by up to 40%)."""
+    repeats over runs rather than as one run's noise (two cells of the same
+    calls in one run differed by up to 40%, FROZEN.md for 0.19)."""
     runs = collections.defaultdict(lambda: collections.defaultdict(list))
     labels = {}
     for path in paths:

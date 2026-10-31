@@ -383,11 +383,16 @@ calibration ran and against which fork. `regress` and `check` give their
 runs sizes of their own and never read the cache.
 
 A full run has 96 rounds, a `--quick` one 24 (and stops below 1 MiB and
-10,000 messages). Each point samples at least 12 visits, rounded up to
-whole cycles of its orders and spread over the rounds at an offset of its
-own; every contender that takes part samples at each, long hashes
-included, so each meets every position and every predecessor equally
-often. A shared visit gives two samples, one per copy. The starting
+10,000 messages). A point after a gap samples at least 12 visits, and a
+nonstop point 2, each rounded up to whole cycles of its orders and spread
+over the rounds at an offset of its own; every contender that takes part
+samples at each, long hashes included, so each meets every position and
+every predecessor equally often. A visit after a gap is one sample, and
+a shared one gives two, one per copy. A nonstop visit is a train: the
+cell's own load, untimed, for 100 ms, then 6 samples back to back, solo,
+then the same for the two shared copies together. So each sample meets
+the machine as the cell's own sustained load leaves it: its cores'
+clocks, its threads' placement, a GPU's clock. The starting
 point's rotation is even only when the round count is a multiple of the
 point count.
 
@@ -477,7 +482,8 @@ runs every cell.
 
 Underneath, `bench-hashes regress` runs the pairs back to back in
 alternating order (four pairs by default in `check`, eight in `regress`),
-with 24 visits per run for cells after a gap and 6 for nonstop cells.
+with 24 visits per run for cells after a gap and 2 trains for nonstop
+cells.
 Before the pairs start, `regress` calibrates sample sizes once per side
 so both sides perform the same work per sample and no timed run pays for
 calibration. Giving each pair a fresh link layout averages out code
@@ -497,7 +503,7 @@ high. The stage adds about five minutes, most of it the relinks.
 |---|---|---|
 | A run's cell is its **mean**, total time over total work, every sample counted (`clocks::summary::mean`; Zooko, October 2 and 23) | Planted slowdowns on the Mac: at +6% a fast speed never caught 1 MiB, while the mean caught every cell nearly every time. At the check's budgets (6 and 24 samples per cell), setting the slowest sample aside erased a slow state occurring once in ten samples (`2026-10-22/mean-trim-controls`), whereas the untrimmed mean shows it in full. | A stall moves a cell's figure in full; a run whose load reading is busy carries no verdict. |
 | **Pairs of runs**, alternating, a **fresh link layout** on each side per pair (October 2 and 16) | Most uncertainty lies between processes (placement, the speed a cell settles into): one binary's run means varied 1.49 times what its samples predict; 12 samples or 24 gave the same between-run spread. A layout moves the cells of calls made now and then by several percent, fixed for every run of that binary, so alternation cannot cancel it: two links of one source gave 27 false verdicts in 700 cells. | A second side's runs and a relink per pair. |
-| **4 pairs** by default, each run with **the regression check's visits** (24 after a gap, 6 nonstop; October 20) | Calibrated on the i7-12700K (`data` branch `2026-10-20/check-validation`) and the M4 Max: on both, an A/A over every cell found no cell slower (the Mac at 8 pairs, 16 min; the i7 over 146 cells), and the two planted 6% slowdowns were caught at 4 pairs: `hash()`'s in servil st's cells (the Mac: +5% to +28% in the continuous cells, 11 min; the i7: 48 cells), the pool split's in servil mt's cells from 512 KiB, the cells after a gap among them (the Mac: +7% to +25%, 7 min; the i7: 22 of 28), in half the time of 8 pairs. At 12 visits after a gap instead of 24, the cells after a gap caught a plant 3 times in 10. Of the budget, pairs buy more than samples: 18 pairs of 4 samples judged 40% more narrowly than 8 of 12 in the same minutes. | A check takes 2 to 6 minutes. |
+| **4 pairs** by default, each run with **the regression check's visits** (24 after a gap, 6 nonstop; October 20; nonstop 2 trains of 6 samples from 0.19, October 31, the safety checks below) | Calibrated on the i7-12700K (`data` branch `2026-10-20/check-validation`) and the M4 Max: on both, an A/A over every cell found no cell slower (the Mac at 8 pairs, 16 min; the i7 over 146 cells), and the two planted 6% slowdowns were caught at 4 pairs: `hash()`'s in servil st's cells (the Mac: +5% to +28% in the continuous cells, 11 min; the i7: 48 cells), the pool split's in servil mt's cells from 512 KiB, the cells after a gap among them (the Mac: +7% to +25%, 7 min; the i7: 22 of 28), in half the time of 8 pairs. At 12 visits after a gap instead of 24, the cells after a gap caught a plant 3 times in 10. Of the budget, pairs buy more than samples: 18 pairs of 4 samples judged 40% more narrowly than 8 of 12 in the same minutes. | A check takes 2 to 6 minutes. |
 | **All cells judged at once**: a paired t-test per cell on the log ratios, Benjamini-Hochberg at a 5% false discovery rate (Zooko, October 16) | A per-cell test over 700 cells flags 15-27 cells of unchanged code; a sign test cannot go stricter with few pairs. With the rule: 0 of 700 in three unchanged-code controls, and the code's real changes found. | Floating point inside the t-test. |
 | **A second stage** for the suspects, 16 fresh pairs, judged among themselves (Zooko, October 24; bench #66) | One input length planted slower in `hash()` (`data` branch, `2026-10-24/check-one-point` and `check-second-stage`): judged among 75 cells, +20% of calls (the cell +23% to +77% in every pair) was level. With the stage, +20% and +10% were caught, +6% not (cells after a gap swing 10-25% a pair); three A/A checks found no cell slower. | About five minutes a check; one cell beside the planted ones judged slower at +10%. |
 | **A 3% margin** (October 2) | +3% planted was caught about half the time, +6% nearly always; one layout-only change in eight sat near 3% at lent 64 B. | Changes under 3% pass one commit at a time; the release check (`--against` the last release) sees their sum. |

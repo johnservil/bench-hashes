@@ -2365,7 +2365,11 @@ fn main() {
         } else {
             fs::create_dir_all(path.parent().unwrap())
                 .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-            Sizes::write(path, &context, &roster, &iterations);
+            // Written whole, then renamed into place: a run reading the
+            // cache meanwhile finds the file complete or absent.
+            let part = path.with_extension(format!("part{}", std::process::id()));
+            Sizes::write(&part, &context, &roster, &iterations);
+            fs::rename(&part, path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
         }
     }
     machine.load = load;
@@ -4089,8 +4093,8 @@ fn free_place<'a, D: FnMut(&'a mut [blake3_servil::Hash])>(
 /// you change the way these cells call a contender (this predicate, or
 /// hash_continuous_messages, hash_continuous_batches, hash_lent), you need
 /// to update the benchmarks: FROZEN.md's calls, and how the two rows are
-/// measured and drawn. tools/alike.py shows whether two such cells still
-/// read alike.
+/// measured and drawn. Where it holds, the run measures such an owned cell
+/// once, as its lent twin (lent_twin).
 ///
 /// Whether a contender's continuous cell with buffers owned runs the same
 /// calls on the same input as its cell with buffers lent, at a message of
@@ -4098,8 +4102,7 @@ fn free_place<'a, D: FnMut(&'a mut [blake3_servil::Hash])>(
 /// at messages that arrive in one buffer (up to PIECE_LEN) and at batches.
 /// The owned cells dispatch through it (hash_continuous_messages,
 /// hash_continuous_batches), so a contender that gains a path of its own
-/// for owned buffers changes it (and tools/alike.py, which says the same,
-/// with it).
+/// for owned buffers changes it.
 fn owned_runs_lent(algorithm: Algorithm, len: Option<usize>) -> bool {
     algorithm != Algorithm::Blake3ServilMt && len.is_none_or(|len| len <= PIECE_LEN)
 }

@@ -69,7 +69,8 @@ anything", John Servil releasing it):
   (`owned_runs_lent`): every contender but servil mt's stream, messages up
   to a piece, measures the lent cell, and its samples stand for the owned
   row too, as the samples file's header says. Two measurements of
-  identical calls in one run differed by up to 40% (`tools/alike.py`).
+  identical calls in one run differed by up to 40% (0.18's runs on the
+  M4 Max and the EPYC 9255; median 0.3-1.3%, the worst in batch cells).
 - **Calibration is cached** (`sizes_context`): a run keeps its sample
   sizes in the user's cache directory, a file for each context, and a
   later run in that context reuses them (about 50 s on the Mac). The
@@ -82,10 +83,9 @@ anything", John Servil releasing it):
   fork's clocks at c7cb21d3, where its probes are): the machine's user
   time less this process's, so the kernel's own work for the run reads as
   none.
-- **Studies read samples in Python** (`tools/samples.py`): `means`,
-  `alike` and `settle` left the program for `tools/points.py`,
-  `tools/alike.py` and `tools/settle.py`; comparisons and verdicts stay in
-  it.
+- **Studies read samples in Python** (`tools/samples.py`): `means` and
+  `settle` left the program for `tools/points.py` and `tools/settle.py`,
+  beside `tools/variance.py`; comparisons and verdicts stay in it.
 
 **Changes for the next release** (Zooko, October 16, 2026):
 - **The batch calls take a `Batch`** (Zooko, October 28; BLAKE3 #205):
