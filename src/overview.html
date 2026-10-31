@@ -194,6 +194,14 @@ h2 { font-size: 17px; font-weight: 600; color: #111827; margin: 22px 0 6px; }
       const shown = [...bars.querySelectorAll("i")].filter(i => !hidden(i));
       // servil's fastest form shown against the fastest other hash shown.
       const fastest = list => list.reduce((a, i) => (!a || +i.dataset.g > +a.dataset.g ? i : a), null);
+      // The fastest bar shown fills the cell, and its speed is the one
+      // written under the cell's end: a hidden bar sets neither.
+      const top = fastest(shown);
+      if (top) {
+        for (const i of bars.querySelectorAll("i")) i.style.width = `${Math.min(100, (100 * +i.dataset.g) / +top.dataset.g).toFixed(1)}%`;
+        const scale = bars.closest(".pick")?.querySelector(".scale");
+        if (scale) scale.textContent = fmt(+top.dataset.g);
+      }
       const ours = fastest(shown.filter(i => SERVIL.includes(i.dataset.k)));
       const rival = fastest(shown.filter(i => !SERVIL.includes(i.dataset.k)));
       if (!ours || !rival) continue;
@@ -201,8 +209,8 @@ h2 { font-size: 17px; font-weight: 600; color: #111827; margin: 22px 0 6px; }
       const pair = [ours, rival].map(i => i.parentElement).sort((a, b) => a.offsetTop - b.offsetTop);
       // Just past the longer of the two, from the upper bar to the lower.
       const longest = Math.max(parseFloat(ours.style.width), parseFloat(rival.style.width));
-      const top = pair[0].offsetTop, bottom = pair[1].offsetTop + pair[1].offsetHeight;
-      bars.insertAdjacentHTML("beforeend", `<span class="span" title="servil against the fastest other" style="left:calc(${longest}% + 3px);top:${top}px;height:${bottom - top + 2}px"><b style="color:${(w === 0 ? ours : rival).dataset.color}">${times(m)}</b></span>`);
+      const upper = pair[0].offsetTop, bottom = pair[1].offsetTop + pair[1].offsetHeight;
+      bars.insertAdjacentHTML("beforeend", `<span class="span" title="servil against the fastest other" style="left:calc(${longest}% + 3px);top:${upper}px;height:${bottom - upper + 2}px"><b style="color:${(w === 0 ? ours : rival).dataset.color}">${times(m)}</b></span>`);
     }
   };
   const apply = (b, off) => {
