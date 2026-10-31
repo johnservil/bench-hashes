@@ -769,6 +769,16 @@ struct Side<'a> {
 /// `src/`, cached by the bench's source and the fork's commit; the diff
 /// (old..new, `src/`) gives the lines. Assembly, the build script or a
 /// manifest changed: every point.
+///
+/// A touched line no cell can be seen to execute is either inert or acts
+/// from where it stands: a comment, a blank line, punctuation, test code
+/// (an item under `#[cfg(test)]`) and a file this target does not compile
+/// change nothing here; an attribute acts on its item, and measures the
+/// cells that execute it; a constant, a type or a `use`, which no coverage
+/// region holds, can change any code that uses it, so it measures every
+/// point. (A `const SPIN` from 5 us to 0, which the old
+/// protocol measured 41% slower in servil mt's 16 KiB stream, once read as
+/// "nothing to measure": the fork's plant/spin0, Mac job 1801.)
 fn touched_cells(
     fork: &Path,
     old_side: Side,
@@ -807,35 +817,240 @@ fn touched_cells(
     if added.is_empty() && deleted.is_empty() {
         return Vec::new();
     }
+    let new_cov = coverage(new_side, cache);
+    let old_cov = if deleted.is_empty() {
+        Coverage::default()
+    } else {
+        coverage(old_side, cache)
+    };
+    let mut sides = Vec::new();
+    for (touched, cov, commit) in [(&added, &new_cov, new), (&deleted, &old_cov, old)] {
+        match seen_lines(fork, commit, touched, cov) {
+            Ok(lines) => sides.push(lines),
+            Err(at) => {
+                eprintln!(
+                    "check: the change touches code no coverage region holds ({at}): it can act anywhere, so every point"
+                );
+                return every();
+            }
+        }
+    }
+    let deleted = sides.pop().unwrap();
+    let added = sides.pop().unwrap();
     let reaches = |reached: &BTreeMap<String, BTreeSet<usize>>,
                    touched: &BTreeMap<String, BTreeSet<usize>>| {
         reached
             .iter()
             .any(|(f, lines)| touched.get(f).is_some_and(|t| !t.is_disjoint(lines)))
     };
-    let new_reached = coverage(new_side, cache);
-    let old_reached = if deleted.is_empty() {
-        BTreeMap::new()
-    } else {
-        coverage(old_side, cache)
-    };
-    new_reached
+    new_cov
+        .cells
         .iter()
         .filter(|(cell, files)| {
-            reaches(files, &added) || old_reached.get(*cell).is_some_and(|f| reaches(f, &deleted))
+            reaches(files, &added)
+                || old_cov
+                    .cells
+                    .get(*cell)
+                    .is_some_and(|f| reaches(f, &deleted))
         })
         .map(|(cell, _)| cell.clone())
         .collect()
 }
 
-/// A `--unified=0` diff's touched lines, by file: the new side's (each
-/// hunk's `+c,d`) and the old side's (`-a,b`). A hunk that adds nothing
-/// (`+c,0`) touches no new line, and one that deletes nothing no old one.
+/// The touched lines, on the side at `commit`, that cells can be seen to
+/// execute, by file: each line a coverage region holds, and for an
+/// attribute the first line of the item it is attached to, where a region
+/// holds that (an attribute acts on its item alone). Err names the first
+/// touched line that is code this target compiles but no region holds
+/// ("src/lanes.rs:760: const SPIN ..."), which can act anywhere.
+fn seen_lines(
+    fork: &Path,
+    commit: &str,
+    touched: &BTreeMap<String, BTreeMap<usize, String>>,
+    cov: &Coverage,
+) -> Result<BTreeMap<String, BTreeSet<usize>>, String> {
+    let test_files = test_files(fork, commit);
+    let mut seen = BTreeMap::new();
+    for (file, lines) in touched {
+        if !cov.compiled.contains(file) || test_files.contains(file) {
+            continue;
+        }
+        let text = git(fork, &["show", &format!("{commit}:{file}")]);
+        let source: Vec<&str> = text.lines().collect();
+        let tests = test_lines(&text);
+        let held = |n: usize| cov.instrumented.get(file).is_some_and(|h| h.contains(&n));
+        let into: &mut BTreeSet<usize> = seen.entry(file.clone()).or_default();
+        for (&n, line) in lines {
+            if inert(line) || tests.contains(&n) {
+                continue;
+            }
+            if held(n) {
+                into.insert(n);
+                continue;
+            }
+            // An attribute: the line its item starts on (past further
+            // attributes and comments).
+            let item = line.trim().starts_with("#[").then(|| {
+                (n + 1..=source.len()).find(|&m| {
+                    let t = source[m - 1].trim();
+                    !(t.starts_with("#[") || inert(t))
+                })
+            });
+            match item.flatten() {
+                Some(m) if held(m) => {
+                    into.insert(m);
+                }
+                _ => return Err(format!("{file}:{n}: {}", line.trim())),
+            }
+        }
+    }
+    Ok(seen)
+}
+
+/// A line that is no code: blank, a comment, or punctuation alone (a
+/// closing brace).
+fn inert(text: &str) -> bool {
+    let t = text.trim();
+    t.is_empty()
+        || t.starts_with("//")
+        || t.starts_with("/*")
+        || t.starts_with("*/")
+        || t.starts_with("* ")
+        || t == "*"
+        || t.chars().all(|c| "{}()[];,".contains(c))
+}
+
+/// Whether an attribute line makes the item after it test code alone.
+fn test_only(attribute: &str) -> bool {
+    let t = attribute.trim();
+    t.starts_with("#[cfg(test)]")
+        || t.starts_with("#[cfg(all(test,")
+        || t.starts_with("#[cfg(all(test ,")
+}
+
+/// The lines (from 1) of a source file's test items: each item under
+/// `#[cfg(test)]` (or `cfg(all(test, ...))`), from its attribute to its end,
+/// a line ending in `;` before any brace or the brace that closes its
+/// first one. Braces in string and character literals and comments are
+/// skipped.
+fn test_lines(text: &str) -> BTreeSet<usize> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut out = BTreeSet::new();
+    let mut i = 0;
+    while i < lines.len() {
+        if !test_only(lines[i]) {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        let mut depth = 0i64;
+        let mut opened = false;
+        let mut end = i;
+        'item: for (j, line) in lines.iter().enumerate().skip(i + 1) {
+            end = j;
+            let t = line.trim();
+            if !opened && (t.starts_with("#[") || t.starts_with("//") || t.is_empty()) {
+                continue;
+            }
+            let mut chars = t.chars().peekable();
+            let mut in_str = false;
+            while let Some(c) = chars.next() {
+                match c {
+                    '\\' if in_str => {
+                        chars.next();
+                    }
+                    '"' => in_str = !in_str,
+                    '/' if !in_str && chars.peek() == Some(&'/') => break,
+                    '\'' if !in_str => {
+                        // A character literal ('{', '\''), or a lifetime.
+                        let rest: String = chars.clone().take(3).collect();
+                        if rest.starts_with("\\") {
+                            chars.nth(2);
+                        } else if rest.chars().nth(1) == Some('\'') {
+                            chars.nth(1);
+                        }
+                    }
+                    '{' if !in_str => {
+                        depth += 1;
+                        opened = true;
+                    }
+                    '}' if !in_str => depth -= 1,
+                    ';' if !in_str && !opened => break 'item,
+                    _ => {}
+                }
+            }
+            if opened && depth == 0 {
+                break;
+            }
+        }
+        out.extend(start + 1..=end + 1);
+        i = end + 1;
+    }
+    out
+}
+
+/// The files that are test modules at `commit`: each `mod NAME;` under
+/// `#[cfg(test)]`, as `src/NAME.rs` beside the declaring file (or in its
+/// directory, for `lib.rs` and `mod.rs`).
+fn test_files(fork: &Path, commit: &str) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    for file in git(
+        fork,
+        &["ls-tree", "-r", "--name-only", commit, "src", "capi/src"],
+    )
+    .lines()
+    {
+        if !file.ends_with(".rs") {
+            continue;
+        }
+        let text = git(fork, &["show", &format!("{commit}:{file}")]);
+        let lines: Vec<&str> = text.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
+            if !test_only(line) {
+                continue;
+            }
+            let Some(next) = lines[i + 1..].iter().find(|l| !l.trim().starts_with("#[")) else {
+                continue;
+            };
+            let t = next
+                .trim()
+                .trim_start_matches("pub ")
+                .trim_start_matches("pub(crate) ");
+            if let Some(name) = t.strip_prefix("mod ").and_then(|r| r.strip_suffix(';')) {
+                let path = Path::new(file);
+                let dir = match path.file_name().and_then(|n| n.to_str()) {
+                    Some("lib.rs" | "mod.rs" | "main.rs") => path.parent().unwrap().to_path_buf(),
+                    _ => path.with_extension(""),
+                };
+                out.insert(dir.join(format!("{name}.rs")).display().to_string());
+                out.insert(dir.join(name).join("mod.rs").display().to_string());
+            }
+        }
+    }
+    out
+}
+
+/// One side's coverage: the lines each cell executes, the lines any
+/// coverage region holds (whether a cell ran them or not), and the source
+/// files the fork's crate compiles for this target (rustc's dep-info).
+#[derive(Default)]
+struct Coverage {
+    cells: BTreeMap<(String, String), BTreeMap<String, BTreeSet<usize>>>,
+    instrumented: BTreeMap<String, BTreeSet<usize>>,
+    compiled: BTreeSet<String>,
+}
+
+/// A `--unified=0` diff's touched lines, by file, each with its text: the
+/// new side's (each hunk's `+c,d`) and the old side's (`-a,b`). A hunk
+/// that adds nothing (`+c,0`) touches no new line, and one that deletes
+/// nothing no old one. A hunk's lines are counted, so a deleted line that
+/// reads "-- x" is no file header.
+#[allow(clippy::type_complexity)]
 fn touched_lines(
     diff: &str,
 ) -> (
-    BTreeMap<String, BTreeSet<usize>>,
-    BTreeMap<String, BTreeSet<usize>>,
+    BTreeMap<String, BTreeMap<usize, String>>,
+    BTreeMap<String, BTreeMap<usize, String>>,
 ) {
     let (mut added, mut deleted) = (BTreeMap::new(), BTreeMap::new());
     let (mut old_file, mut new_file) = (None::<String>, None::<String>);
@@ -844,8 +1059,25 @@ fn touched_lines(
             .map(|(s, c)| (s.parse().unwrap(), c.parse().unwrap()))
             .unwrap_or_else(|| (r.parse().unwrap(), 1))
     };
+    let (mut old_at, mut old_left, mut new_at, mut new_left) = (0, 0, 0, 0);
     for line in diff.lines() {
-        if let Some(f) = line.strip_prefix("--- ") {
+        if old_left > 0 && line.starts_with('-') {
+            let f: &String = old_file.as_ref().expect("a hunk's old file");
+            deleted
+                .entry(f.clone())
+                .or_insert_with(BTreeMap::new)
+                .insert(old_at, line[1..].to_string());
+            old_at += 1;
+            old_left -= 1;
+        } else if new_left > 0 && line.starts_with('+') {
+            let f: &String = new_file.as_ref().expect("a hunk's new file");
+            added
+                .entry(f.clone())
+                .or_insert_with(BTreeMap::new)
+                .insert(new_at, line[1..].to_string());
+            new_at += 1;
+            new_left -= 1;
+        } else if let Some(f) = line.strip_prefix("--- ") {
             old_file = f.strip_prefix("a/").map(str::to_string);
         } else if let Some(f) = line.strip_prefix("+++ ") {
             new_file = f.strip_prefix("b/").map(str::to_string);
@@ -854,18 +1086,7 @@ fn touched_lines(
             let mut parts = line.split_whitespace().skip(1);
             let (a, b) = range(parts.next().unwrap().trim_start_matches('-'));
             let (c, d) = range(parts.next().unwrap().trim_start_matches('+'));
-            if let (Some(f), true) = (&old_file, b > 0) {
-                deleted
-                    .entry(f.clone())
-                    .or_insert_with(BTreeSet::new)
-                    .extend(a..a + b);
-            }
-            if let (Some(f), true) = (&new_file, d > 0) {
-                added
-                    .entry(f.clone())
-                    .or_insert_with(BTreeSet::new)
-                    .extend(c..c + d);
-            }
+            (old_at, old_left, new_at, new_left) = (a, b, c, d);
         }
     }
     (added, deleted)
@@ -912,10 +1133,7 @@ fn all_cells(exe: &Path, bench: &Path) -> Vec<(String, String)> {
 /// Each point's executed lines of the fork's `src/`, from a coverage build
 /// of `side` run one point at a time; cached as JSON-free TSV under the
 /// cache, keyed by the bench's source and the fork's commit.
-fn coverage(
-    side: Side,
-    cache: &Path,
-) -> BTreeMap<(String, String), BTreeMap<String, BTreeSet<usize>>> {
+fn coverage(side: Side, cache: &Path) -> Coverage {
     let (bench, new, new_exe) = (side.bench, side.commit, side.exe);
     let bench_source = {
         let mut h = blake3_servil::performance::Hasher::new(blake3_servil::Mode::Plain);
@@ -924,25 +1142,38 @@ fn coverage(
         }
         h.finalize().to_hex().to_string()
     };
-    let cached = cache
-        .join("coverage")
-        .join(format!("{}-{}.tsv", &new[..12], &bench_source[..12]));
+    // The cache's rows: a cell's lines, or "*instrumented*" (every line a
+    // region holds) and "*compiled*" (a file the crate compiles) for the
+    // side.
+    let cached =
+        cache
+            .join("coverage")
+            .join(format!("{}-{}-v2.tsv", &new[..12], &bench_source[..12]));
     if let Ok(text) = std::fs::read_to_string(&cached) {
-        let mut map: BTreeMap<(String, String), BTreeMap<String, BTreeSet<usize>>> =
-            BTreeMap::new();
+        let mut cov = Coverage::default();
         for line in text.lines() {
             let f: Vec<&str> = line.split('\t').collect();
-            map.entry((f[0].to_string(), f[1].to_string()))
-                .or_default()
-                .insert(
-                    f[2].to_string(),
-                    f[3].split(',')
-                        .filter(|s| !s.is_empty())
-                        .map(|s| s.parse().unwrap())
-                        .collect(),
-                );
+            let lines: BTreeSet<usize> = f[3]
+                .split(',')
+                .filter(|s| !s.is_empty())
+                .map(|s| s.parse().unwrap())
+                .collect();
+            match f[0] {
+                "*instrumented*" => {
+                    cov.instrumented.insert(f[2].to_string(), lines);
+                }
+                "*compiled*" => {
+                    cov.compiled.insert(f[2].to_string());
+                }
+                _ => {
+                    cov.cells
+                        .entry((f[0].to_string(), f[1].to_string()))
+                        .or_default()
+                        .insert(f[2].to_string(), lines);
+                }
+            }
         }
-        return map;
+        return cov;
     }
     eprintln!(
         "check: recording which lines each point executes on the {} side (once per change to the bench or the fork)",
@@ -967,6 +1198,37 @@ fn coverage(
         String::from_utf8_lossy(&out.stderr)
     );
     let cov_exe = target.join("release").join("bench-hashes");
+    // The files rustc compiled into the fork's crate for this target: its
+    // dep-info, the newest of the crate's (this build's).
+    let compiled: BTreeSet<String> = {
+        let deps = target.join("release").join("deps");
+        let newest = std::fs::read_dir(&deps)
+            .unwrap_or_else(|e| panic!("{}: {e}", deps.display()))
+            .flatten()
+            .filter(|e| {
+                let n = e.file_name().to_string_lossy().into_owned();
+                n.starts_with("blake3_servil-") && n.ends_with(".d")
+            })
+            .max_by_key(|e| e.metadata().and_then(|m| m.modified()).ok())
+            .expect("the fork's crate's dep-info")
+            .path();
+        std::fs::read_to_string(&newest)
+            .unwrap()
+            .split_whitespace()
+            .filter_map(|w| {
+                Path::new(w.trim_end_matches(':'))
+                    .strip_prefix(&checkout)
+                    .ok()
+                    .filter(|r| r.starts_with("src") || r.starts_with("capi"))
+                    .map(|r| r.display().to_string())
+            })
+            .collect()
+    };
+    assert!(
+        compiled.iter().any(|f| f == "src/lib.rs"),
+        "check: the fork's dep-info names its lib.rs: {compiled:?}"
+    );
+    let mut instrumented: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
     let (profdata, llvm_cov) = (llvm_tool("llvm-profdata"), llvm_tool("llvm-cov"));
     let work = cache.join("coverage-work");
     let mut map: BTreeMap<(String, String), BTreeMap<String, BTreeSet<usize>>> = BTreeMap::new();
@@ -1030,6 +1292,7 @@ fn coverage(
                     parts.next().unwrap().parse::<usize>().unwrap(),
                     parts.next().unwrap().parse::<u64>().unwrap(),
                 );
+                instrumented.entry(f.clone()).or_default().insert(number);
                 if count > 0 {
                     files.entry(f.clone()).or_default().insert(number);
                 }
@@ -1050,9 +1313,26 @@ fn coverage(
             );
         }
     }
+    for (f, lines) in &instrumented {
+        text += &format!(
+            "*instrumented*\t\t{f}\t{}\n",
+            lines
+                .iter()
+                .map(|n| n.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+    }
+    for f in &compiled {
+        text += &format!("*compiled*\t\t{f}\t\n");
+    }
     std::fs::create_dir_all(cached.parent().unwrap()).unwrap();
     std::fs::write(&cached, text).unwrap();
-    map
+    Coverage {
+        cells: map,
+        instrumented,
+        compiled,
+    }
 }
 
 /// llvm-profdata or llvm-cov: the toolchain's own llvm-tools first
@@ -1225,11 +1505,62 @@ mod tests {
         let (added, deleted) = touched_lines(diff);
         // The deleted arm: no new line, but its old one (the case the new
         // side alone missed: "nothing to measure", BLAKE3 #183).
-        assert_eq!(deleted["src/lanes.rs"], BTreeSet::from([1247, 1300, 1301]));
-        assert_eq!(added["src/lanes.rs"], BTreeSet::from([1299, 1300]));
+        let keys = |m: &std::collections::BTreeMap<usize, String>| {
+            m.keys().copied().collect::<BTreeSet<_>>()
+        };
+        assert_eq!(
+            keys(&deleted["src/lanes.rs"]),
+            BTreeSet::from([1247, 1300, 1301])
+        );
+        assert_eq!(keys(&added["src/lanes.rs"]), BTreeSet::from([1299, 1300]));
+        assert_eq!(
+            deleted["src/lanes.rs"][&1247],
+            "                128 => return,"
+        );
+        assert_eq!(added["src/lanes.rs"][&1300], "d");
         // A new file has no old side.
-        assert_eq!(added["src/new.rs"], BTreeSet::from([1, 2, 3]));
+        assert_eq!(keys(&added["src/new.rs"]), BTreeSet::from([1, 2, 3]));
         assert!(!deleted.contains_key("src/new.rs"));
+    }
+
+    /// A deleted line that reads "-- x" is a hunk's line, not a file
+    /// header: the hunk's counts say where it ends.
+    #[test]
+    fn a_hunk_line_like_a_header_is_the_hunks() {
+        let diff = "--- a/src/a.rs\n+++ b/src/a.rs\n@@ -3 +3 @@\n--- x\n+++ y\n";
+        let (added, deleted) = touched_lines(diff);
+        assert_eq!(deleted["src/a.rs"][&3], "-- x");
+        assert_eq!(added["src/a.rs"][&3], "++ y");
+    }
+
+    /// What can act unseen: code outside every coverage region; and what
+    /// cannot: comments, blank lines, punctuation, test items.
+    #[test]
+    fn inert_lines_and_test_items() {
+        use super::{inert, test_lines};
+        for t in [
+            "", "   ", "// x", "/// doc", "//! m", "/* x", " * x", " */", "}", "    });", "],",
+        ] {
+            assert!(inert(t), "{t:?}");
+        }
+        for t in [
+            "const SPIN: Duration = Duration::from_micros(0);",
+            "#[inline(always)]",
+            "use crate::x;",
+            "*p = 1;",
+            "pub struct A;",
+        ] {
+            assert!(!inert(t), "{t:?}");
+        }
+        let text = "fn a() {}\n#[cfg(test)]\nmod test {\n    fn b() { let c = '{'; let s = \"}\"; }\n}\nconst X: u8 = 1;\n\
+                    #[cfg(test)]\nuse std::x;\n#[cfg(all(test, target_arch = \"aarch64\"))]\n#[test]\nfn t() {\n    x();\n}\n\
+                    #[cfg(any(test, feature = \"f\"))]\nfn both() {}\n";
+        let got = test_lines(text);
+        assert_eq!(
+            got,
+            BTreeSet::from([2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13]),
+            "{got:?}"
+        );
     }
 
     #[test]
