@@ -3860,6 +3860,26 @@ fn free_place<'a, D: FnMut(&'a mut [blake3_servil::Hash])>(
  * and hashing take turns; the fork's queue takes the program's buffers
  * and hashes while the next are read.
  */
+/// THE BENCHMARKS REPRESENT THIS IN TWO DIFFERENT WAYS TO USERS (the
+/// map's and the report's "buffers owned" and "buffers lent" rows), so if
+/// you change the way these cells call a contender (this predicate, or
+/// hash_continuous_messages, hash_continuous_batches, hash_lent), you need
+/// to update the benchmarks: FROZEN.md's calls, and how the two rows are
+/// measured and drawn. tools/alike.py shows whether two such cells still
+/// read alike.
+///
+/// Whether a contender's continuous cell with buffers owned runs the same
+/// calls on the same input as its cell with buffers lent, at a message of
+/// `len` bytes (a batch: `None`): every contender but the fork's stream,
+/// at messages that arrive in one buffer (up to PIECE_LEN) and at batches.
+/// The owned cells dispatch through it (hash_continuous_messages,
+/// hash_continuous_batches), so a contender that gains a path of its own
+/// for owned buffers changes it (and tools/alike.py, which says the same,
+/// with it).
+fn owned_runs_lent(algorithm: Algorithm, len: Option<usize>) -> bool {
+    algorithm != Algorithm::Blake3ServilMt && len.is_none_or(|len| len <= PIECE_LEN)
+}
+
 fn hash_continuous_messages(
     algorithm: Algorithm,
     blocks: &[u8],
@@ -3900,28 +3920,18 @@ fn hash_continuous_messages(
         drop(free);
         return keep_places(places);
     }
-    if input.len() > PIECE_LEN {
+    if !owned_runs_lent(algorithm, Some(len)) {
         return hash_stream(algorithm, input, iterations, consume);
     }
+    // The lent cell's calls (owned_runs_lent): each message read into a
+    // kept buffer, then hashed through the one-shot call.
     let one = Point {
         label: "",
         bytes: len,
         messages: 1,
-        use_case: UseCase::OneMessage,
+        use_case: UseCase::LentMessages,
     };
-    let mut buffers = take_buffers(1, len + BLOCK_SPARE);
-    for _ in 0..iterations {
-        let buffer = &mut buffers[0];
-        let at = block_message(buffer, black_box(input));
-        hash_in_memory(
-            algorithm,
-            &buffer[at..][..len.next_multiple_of(BLOCK_LEN)],
-            one,
-            1,
-            &mut consume,
-        );
-    }
-    keep_buffers(1, len + BLOCK_SPARE, buffers);
+    hash_lent(algorithm, input, one, iterations, consume)
 }
 
 /*
@@ -3939,7 +3949,7 @@ fn hash_continuous_batches(
     iterations: usize,
     mut consume: impl FnMut(&[u8]),
 ) {
-    if algorithm == Algorithm::Blake3ServilMt {
+    if !owned_runs_lent(algorithm, None) {
         // Each batch read straight into the stream's ring (submit_batch_with),
         // its digests into a kept place of the batch's size, handed to
         // `consume` whole as the place comes back, as the queue's batch is,
@@ -3976,23 +3986,13 @@ fn hash_continuous_batches(
         drop(free);
         return keep_places(places);
     }
-    let batch = Point {
-        use_case: UseCase::ManyMessages,
+    // The lent cell's calls (owned_runs_lent): each batch read into a kept
+    // buffer, then hashed through the batch call.
+    let lent = Point {
+        use_case: UseCase::LentBatches,
         ..point
     };
-    let mut buffers = take_buffers(1, input.len() + BLOCK_SPARE);
-    for _ in 0..iterations {
-        let buffer = &mut buffers[0];
-        let at = block_message(buffer, black_box(input));
-        hash_in_memory(
-            algorithm,
-            &buffer[at..][..input.len().next_multiple_of(BLOCK_LEN)],
-            batch,
-            1,
-            &mut consume,
-        );
-    }
-    keep_buffers(1, input.len() + BLOCK_SPARE, buffers);
+    hash_lent(algorithm, input, lent, iterations, consume)
 }
 
 /// The producer lends a whole message or batch for one synchronous call.
