@@ -450,7 +450,7 @@ run (the pool is the process's): the samples' `contenders` line records it,
 and the map names the contender "BLAKE3 servil mt, N threads". `--threads 2`
 measures the smallest pipeline, one worker beside the program's thread.
 
-`bench-hashes check [--against REV]` checks whether a change to
+`bench-hashes check --fork DIR [--against REV]` checks whether a change to
 `blake3-servil` slowed any cell. It builds the working tree and the
 target commit, relinks each side with a fresh random function order for
 each pair of runs, and runs the cells whose code the change touches

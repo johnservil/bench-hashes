@@ -57,18 +57,20 @@ the crate `blake3-servil`, a git dependency on
 [github.com/johnservil/BLAKE3](https://github.com/johnservil/BLAKE3) at
 the commit whose full hash `Cargo.toml` names (`rev`). The separate
 `clocks` pin names the instrument used on both sides of a comparison.
-To measure your own checkout of the fork,
-put this repository inside it and let the fork's tool build it there:
+To measure your own checkout of the fork, keep this repository beside
+it (anywhere: neither holds the other) and name the fork's checkout:
 
 ```sh
 git clone --branch servil https://github.com/johnservil/BLAKE3
-git clone https://github.com/johnservil/bench-hashes BLAKE3/bench-hashes
-cd BLAKE3/bench-hashes && cargo run --release -- check   # the fork's working tree against its HEAD
+git clone https://github.com/johnservil/bench-hashes
+cd bench-hashes && cargo run --release -- check --fork ../BLAKE3   # the fork's working tree against its HEAD
+cd bench-hashes && "$(cargo run --release --quiet -- build-against ../BLAKE3)" --quick   # one run of it
 ```
 
-`check` builds in directories of its own (the fork's `target/check/`), with a
-copy of this repository whose `Cargo.lock` points at the fork checkout,
-and leaves your checkouts' files as they were. It chooses the cells a
+`check` builds in directories of its own (the fork's `target/check/`), and
+`build-against DIR` in DIR's `target/build-against/`, each from a copy of
+this repository whose `Cargo.lock` points at the fork checkout, and leaves
+your checkouts' files as they were. It chooses the cells a
 change touches from coverage, with the toolchain's `llvm-profdata` and
 `llvm-cov` (`rustup component add llvm-tools`). Run the executable from a
 scratch directory (it writes `benchmark-results/` there); the report
