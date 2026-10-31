@@ -1,4 +1,4 @@
-//! `bench-hashes check [--against REV] [--old-bench REV] [--cells all] [--pairs N] [--keep DIR]`:
+//! `bench-hashes check --fork DIR [--against REV] [--old-bench REV] [--cells all] [--pairs N] [--keep DIR]`:
 //! did a change to the fork hurt its speed anywhere? Run from a checkout of
 //! bench-hashes inside a checkout of the fork (the fork at `..`), it
 //! compares the fork's working tree with a commit (`--against`, HEAD by
@@ -71,13 +71,19 @@ const SECOND_PAIRS: usize = 16;
 const SUBJECTS: [&str; 2] = ["blake3-servil-st", "blake3-servil-mt"];
 
 pub fn command(arguments: &[String]) -> i32 {
-    let usage = "usage: bench-hashes check [--against REV] [--old-bench REV] [--cells all] [--pairs N] [--keep DIR]";
+    let usage = "usage: bench-hashes check --fork DIR [--against REV] [--old-bench REV] [--cells all] [--pairs N] [--keep DIR]";
     let (mut against, mut all, mut pairs, mut keep) =
         ("HEAD".to_string(), false, PAIRS, None::<PathBuf>);
     let mut old_bench_rev = None::<String>;
+    let mut fork = None::<PathBuf>;
     let mut it = arguments.iter();
     while let Some(name) = it.next() {
         match name.as_str() {
+            "--fork" => {
+                fork = Some(PathBuf::from(it.next().unwrap_or_else(|| {
+                    panic!("--fork needs the fork's checkout\n{usage}")
+                })))
+            }
             "--against" => {
                 against = it
                     .next()
@@ -115,7 +121,9 @@ pub fn command(arguments: &[String]) -> i32 {
         }
     }
     let bench = std::env::current_dir().expect("the current directory");
-    let fork = fork_root(&bench);
+    let fork = fork_checkout(
+        &fork.unwrap_or_else(|| panic!("check: --fork DIR names the fork's checkout\n{usage}")),
+    );
     let old = git(&fork, &["rev-parse", &format!("{against}^{{commit}}")]);
     let new = working_tree_commit(&fork);
     eprintln!(
@@ -302,14 +310,17 @@ fn run_regress(exe: &Path, bench: &Path, arguments: &[String]) -> (i32, String) 
     (out.status.code().unwrap_or(2), text)
 }
 
-/// The fork checkout this bench sits in: `..` from the bench, a git
-/// repository holding `Cargo.toml` with `name = "blake3-servil"`.
-fn fork_root(bench: &Path) -> PathBuf {
-    let fork = bench
-        .parent()
-        .expect("the bench sits inside a checkout of the fork")
-        .to_path_buf();
-    let manifest = std::fs::read_to_string(fork.join("Cargo.toml")).unwrap_or_else(|e| panic!("check: {} holds no Cargo.toml: {e}; run from a bench-hashes checkout inside the fork's", fork.display()));
+/// The fork's checkout that --fork names: a git repository holding
+/// `Cargo.toml` with `name = "blake3-servil"`, wherever it sits.
+fn fork_checkout(dir: &Path) -> PathBuf {
+    let fork = std::fs::canonicalize(dir)
+        .unwrap_or_else(|e| panic!("check: --fork {}: {e}", dir.display()));
+    let manifest = std::fs::read_to_string(fork.join("Cargo.toml")).unwrap_or_else(|e| {
+        panic!(
+            "check: {} holds no Cargo.toml: {e}; --fork names the fork's checkout",
+            fork.display()
+        )
+    });
     assert!(
         manifest.contains("name = \"blake3-servil\""),
         "check: {} is not the fork",
@@ -412,7 +423,8 @@ fn side(fork: &Path, bench: &Path, cache: &Path, name: &str, commit: &str) -> Pa
 /// `bench-hashes build-against DIR`: this bench built against the fork
 /// checkout at DIR as it is, into DIR's `target/build-against/`; the
 /// executable's path on stdout (the Mac runner's benchmark jobs, and a
-/// maintainer measuring the working tree, run it from there).
+/// maintainer measuring the working tree, run it from there). The two
+/// checkouts sit anywhere; neither holds the other.
 pub fn build_against_command(arguments: &[String]) -> i32 {
     let usage = "usage: bench-hashes build-against DIR    (DIR: a checkout of the fork)";
     let [dir] = arguments else { panic!("{usage}") };
@@ -438,24 +450,23 @@ pub fn build_against_command(arguments: &[String]) -> i32 {
     0
 }
 
+/// The copy of the bench a build against the fork compiles, in the build's
+/// target directory: outside both checkouts, so neither reads as changed.
+fn bench_copy(target: &Path) -> PathBuf {
+    target.join("bench-src")
+}
+
 /// This bench, built against the fork checkout at `checkout` as it is:
-/// its sources copied beside the fork (`checkout/bench-hashes`), Cargo
-/// pointed at the checkout for the fork, keeping the bench's pinned clocks,
-/// a lock and a target directory of the build's own (the committed lock is never
+/// its sources copied into the build's target directory (bench_copy),
+/// Cargo pointed at the checkout for the fork (and build.rs told where it
+/// is, BENCH_HASHES_FORK), keeping the bench's pinned clocks, a lock and a
+/// target directory of the build's own (the committed lock is never
 /// written); the executable's path. `check`'s two sides and the Mac
 /// runner's benchmark jobs build this way, and so does a maintainer
-/// measuring the working tree (`bench-hashes build-against ..`).
+/// measuring a working tree (`bench-hashes build-against DIR`).
 pub fn build_against(checkout: &Path, bench: &Path, target: &Path, name: &str) -> PathBuf {
     let commit = git(checkout, &["rev-parse", "HEAD"]);
-    // The copy sits directly in the checkout (build.rs finds the fork at
-    // ..). Where the bench itself is nested there, as bench-hashes, that
-    // directory is the bench: building in it would rewrite its committed
-    // Cargo.lock (the update below) and read the bench as dirty (BLAKE3
-    // #125, October 27). It then builds from a copy of its own beside it.
-    let mut copy = checkout.join("bench-hashes");
-    if std::fs::canonicalize(&copy).ok() == std::fs::canonicalize(bench).ok() {
-        copy = checkout.join(".bench-hashes-build");
-    }
+    let copy = bench_copy(target);
     copy_bench(bench, &copy);
     let target = target.to_path_buf();
     let patch_fork = fork_patch(&copy, &checkout);
@@ -474,6 +485,7 @@ pub fn build_against(checkout: &Path, bench: &Path, target: &Path, name: &str) -
         .current_dir(&copy)
         .env("CARGO_TARGET_DIR", &target)
         .env("BENCH_HASHES_CHECKOUT", bench)
+        .env("BENCH_HASHES_FORK", checkout)
         .output()
         .expect("cargo runs");
     assert!(
@@ -486,6 +498,7 @@ pub fn build_against(checkout: &Path, bench: &Path, target: &Path, name: &str) -
         .current_dir(&copy)
         .env("CARGO_TARGET_DIR", &target)
         .env("BENCH_HASHES_CHECKOUT", bench)
+        .env("BENCH_HASHES_FORK", checkout)
         .output()
         .expect("cargo runs");
     assert!(
@@ -618,7 +631,7 @@ fn layouts(
         .into_iter()
         .collect();
     let side_dir = cache.join(name);
-    let copy = side_dir.join("src").join("bench-hashes");
+    let copy = bench_copy(&side_dir.join("target"));
     let checkout = side_dir.join("src");
     let patch_fork = fork_patch(&copy, &checkout);
     let mut exes = Vec::new();
@@ -652,6 +665,7 @@ fn layouts(
             .current_dir(&copy)
             .env("CARGO_TARGET_DIR", side_dir.join("target"))
             .env("BENCH_HASHES_CHECKOUT", bench)
+            .env("BENCH_HASHES_FORK", &checkout)
             .output()
             .expect("cargo runs");
         assert!(
@@ -927,7 +941,7 @@ fn coverage(
         side.name
     );
     let checkout = cache.join(side.name).join("src");
-    let copy = checkout.join("bench-hashes");
+    let copy = bench_copy(&cache.join(side.name).join("target"));
     let target = cache.join(side.name).join("target-coverage");
     let patch_fork = fork_patch(&copy, &checkout);
     let out = Command::new("cargo")
@@ -936,6 +950,7 @@ fn coverage(
         .env("CARGO_TARGET_DIR", &target)
         .env("RUSTFLAGS", "-C instrument-coverage")
         .env("BENCH_HASHES_CHECKOUT", bench)
+        .env("BENCH_HASHES_FORK", &checkout)
         .output()
         .expect("cargo runs");
     assert!(

@@ -6948,7 +6948,7 @@ mod correctness_tests {
     #[test]
     fn expect_servil_takes_only_the_named_clean_commit() {
         let c = "934dee8902889186e3da9b62edf43699dd1c6305";
-        let patched = format!("blake3-servil 0.8.0+f7ce (local checkout ..); source https://github.com/johnservil/BLAKE3; branch HEAD; commit {c}; clean; single-threaded");
+        let patched = format!("blake3-servil 0.8.0+f7ce (local checkout); source https://github.com/johnservil/BLAKE3; branch HEAD; commit {c}; clean; single-threaded");
         expect_servil(c, &patched);
         let pin = "blake3-servil 0.3.0+2e4f; source https://github.com/johnservil/BLAKE3; commit 49b43b1d317305dbd25e1aa93d56f307430a1205; clean";
         let dirty = patched.replace("; clean;", "; dirty-00ab;");

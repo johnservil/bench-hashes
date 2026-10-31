@@ -36,7 +36,7 @@ fn main() {
     emit_required_package("SHA1_CHECKED_SOURCE_INFO", &lock, "sha1-checked");
     emit_required_package("SHA3_SOURCE_INFO", &lock, "sha3");
     emit_required_package("RING_SOURCE_INFO", &lock, "ring");
-    emit_servil_package(&manifest_dir, &lock);
+    emit_servil_package(&lock);
 
     /*
      * The checkout whose git state is this build's provenance: this
@@ -157,10 +157,10 @@ fn git_text_allow_failure(repository: &Path, arguments: &[&str]) -> Option<Strin
     )
 }
 
-/// Where a local checkout of the fork sits, relative to this crate's
-/// manifest directory, when a `--config` patch replaces the git
-/// dependency: the enclosing checkout, the one layout the tools use.
-const SERVIL_CHECKOUT: &str = "..";
+/// The environment variable naming the local checkout of the fork when a
+/// `--config` patch replaces the git dependency: `bench-hashes
+/// build-against DIR` sets it to DIR, wherever the two checkouts sit.
+const SERVIL_CHECKOUT: &str = "BENCH_HASHES_FORK";
 
 /// The fork's repository, as Cargo.toml names it (its one place: a bench
 /// pinned to another fork changes that line alone) and Cargo.lock records it.
@@ -435,7 +435,7 @@ fn git_output(repository: &Path, arguments: &[&str]) -> Output {
  * identifies the code: origin URL, branch, exact commit, and a clean flag
  * or a hash of the uncommitted changes. Both emit the same fields.
  */
-fn emit_servil_package(manifest_dir: &Path, lock: &str) {
+fn emit_servil_package(lock: &str) {
     let block =
         package_block(lock, "blake3-servil").expect("blake3-servil must be present in Cargo.lock");
     let version = quoted_field(block, "version").expect("Cargo.lock package must have a version");
@@ -454,37 +454,20 @@ fn emit_servil_package(manifest_dir: &Path, lock: &str) {
             )
         }
         None => {
-            let repository = manifest_dir.join(SERVIL_CHECKOUT);
+            println!("cargo:rerun-if-env-changed={SERVIL_CHECKOUT}");
+            let repository = PathBuf::from(env::var_os(SERVIL_CHECKOUT).unwrap_or_else(|| {
+                panic!("blake3-servil is patched to a local checkout, which {SERVIL_CHECKOUT} must name: build with `bench-hashes build-against DIR`")
+            }));
             assert!(
                 repository.join("Cargo.toml").is_file(),
-                "blake3-servil is patched to a local checkout, which must be the enclosing one at {} (this repository inside it)",
+                "{SERVIL_CHECKOUT} names {}, which holds no checkout of the fork",
                 repository.display()
             );
             watch_repository(&repository);
-            let own_name = manifest_dir
-                .file_name()
-                .and_then(|name| name.to_str())
-                .expect("the manifest directory has a UTF-8 name");
-            /* Not the fork's own: this build's directory, and the bench
-            checkout it was copied from where that sits in the fork too (a
-            nested bench built by build-against, BENCH_HASHES_CHECKOUT). */
-            let nested_bench = env::var_os("BENCH_HASHES_CHECKOUT")
-                .map(PathBuf::from)
-                .filter(|bench| {
-                    bench.parent().map(fs::canonicalize).and_then(Result::ok)
-                        == fs::canonicalize(&repository).ok()
-                })
-                .and_then(|bench| {
-                    bench
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .map(str::to_owned)
-                });
-            let mut skip = vec![own_name];
-            skip.extend(nested_bench.as_deref());
-            let state = git_state(&repository, &skip);
+            /* The whole fork's state: nothing of the bench lives in it. */
+            let state = git_state(&repository, &[]);
             format!(
-                "blake3-servil {version} (local checkout {SERVIL_CHECKOUT}); source {}; branch {}; commit {}; {}",
+                "blake3-servil {version} (local checkout); source {}; branch {}; commit {}; {}",
                 state.source, state.branch, state.commit, state.clean_status
             )
         }
