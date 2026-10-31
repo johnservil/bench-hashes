@@ -2005,6 +2005,9 @@ fn main() {
     // Once per process, before any other call: blake3-servil's contract.
     blake3_servil::initialize();
     let arguments: Vec<String> = std::env::args().skip(1).collect();
+    if arguments.first().map(String::as_str) == Some("alike") {
+        return alike_command(&arguments[1..]);
+    }
     if arguments.first().map(String::as_str) == Some("compare") {
         return compare_command(&arguments[1..]);
     }
@@ -3719,6 +3722,18 @@ fn free_place<'a, D: FnMut(&'a mut [blake3_servil::Hash])>(
  * and hashing take turns; the fork's queue takes the program's buffers
  * and hashes while the next are read.
  */
+/// Whether a contender's continuous cell with buffers owned runs the same
+/// calls on the same input as its cell with buffers lent, at a message of
+/// `len` bytes (a batch: `None`): every contender but the fork's stream,
+/// at messages that arrive in one buffer (up to PIECE_LEN) and at batches.
+/// The owned cells dispatch through it (hash_continuous_messages,
+/// hash_continuous_batches), so a contender that gains a path of its own
+/// for owned buffers changes it, and `bench-hashes alike` stops comparing
+/// its two cells.
+fn owned_runs_lent(algorithm: Algorithm, len: Option<usize>) -> bool {
+    algorithm != Algorithm::Blake3ServilMt && len.is_none_or(|len| len <= PIECE_LEN)
+}
+
 fn hash_continuous_messages(
     algorithm: Algorithm,
     blocks: &[u8],
@@ -3759,28 +3774,18 @@ fn hash_continuous_messages(
         drop(free);
         return keep_places(places);
     }
-    if input.len() > PIECE_LEN {
+    if !owned_runs_lent(algorithm, Some(len)) {
         return hash_stream(algorithm, input, iterations, consume);
     }
+    // The lent cell's calls (owned_runs_lent): each message read into a
+    // kept buffer, then hashed through the one-shot call.
     let one = Point {
         label: "",
         bytes: len,
         messages: 1,
-        use_case: UseCase::OneMessage,
+        use_case: UseCase::LentMessages,
     };
-    let mut buffers = take_buffers(1, len + BLOCK_SPARE);
-    for _ in 0..iterations {
-        let buffer = &mut buffers[0];
-        let at = block_message(buffer, black_box(input));
-        hash_in_memory(
-            algorithm,
-            &buffer[at..][..len.next_multiple_of(BLOCK_LEN)],
-            one,
-            1,
-            &mut consume,
-        );
-    }
-    keep_buffers(1, len + BLOCK_SPARE, buffers);
+    hash_lent(algorithm, input, one, iterations, consume)
 }
 
 /*
@@ -3798,7 +3803,7 @@ fn hash_continuous_batches(
     iterations: usize,
     mut consume: impl FnMut(&[u8]),
 ) {
-    if algorithm == Algorithm::Blake3ServilMt {
+    if !owned_runs_lent(algorithm, None) {
         // Each batch read straight into the stream's ring (submit_batch_with),
         // its digests into a kept place of the batch's size, handed to
         // `consume` whole as the place comes back, as the queue's batch is,
@@ -3835,23 +3840,13 @@ fn hash_continuous_batches(
         drop(free);
         return keep_places(places);
     }
-    let batch = Point {
-        use_case: UseCase::ManyMessages,
+    // The lent cell's calls (owned_runs_lent): each batch read into a kept
+    // buffer, then hashed through the batch call.
+    let lent = Point {
+        use_case: UseCase::LentBatches,
         ..point
     };
-    let mut buffers = take_buffers(1, input.len() + BLOCK_SPARE);
-    for _ in 0..iterations {
-        let buffer = &mut buffers[0];
-        let at = block_message(buffer, black_box(input));
-        hash_in_memory(
-            algorithm,
-            &buffer[at..][..input.len().next_multiple_of(BLOCK_LEN)],
-            batch,
-            1,
-            &mut consume,
-        );
-    }
-    keep_buffers(1, input.len() + BLOCK_SPARE, buffers);
+    hash_lent(algorithm, input, lent, iterations, consume)
 }
 
 /// The producer lends a whole message or batch for one synchronous call.
@@ -5339,6 +5334,75 @@ fn read_samples(path: &str) -> SamplesFile {
         cpu,
         energy,
         cores,
+    }
+}
+
+/*
+ * `bench-hashes alike RUN.tsv...`: for each contender whose continuous
+ * cell with buffers owned runs the same calls as its cell with buffers
+ * lent (owned_runs_lent), at each point and scenario both measured, the
+ * owned cell's mean against the lent cell's (permille): two measurements
+ * of the same calls, so their spread is the run's own between cells
+ * visited apart. Then, by file, how many pairs and the median and largest
+ * departure from 1000.
+ */
+fn alike_command(paths: &[String]) {
+    assert!(!paths.is_empty(), "usage: bench-hashes alike RUN.tsv...");
+    let pairs = [
+        (UseCase::ContinuousMessages, UseCase::LentMessages),
+        (UseCase::ContinuousBatches, UseCase::LentBatches),
+    ];
+    for path in paths {
+        let file = read_samples(path);
+        let cells: std::collections::BTreeMap<&str, &Vec<Measured>> =
+            file.cells.iter().map(|(k, v)| (k.as_str(), v)).collect();
+        let mut departures = Vec::new();
+        println!("# {path}");
+        println!("contender\tscenario\tuse case\tpoint\towned against lent (permille)");
+        for algorithm in Algorithm::ALL {
+            for scenario in ["solo", "shared"] {
+                for (owned, lent) in pairs {
+                    for point in POINTS.iter().filter(|p| p.use_case == owned) {
+                        let len = (!owned.batch()).then_some(point.bytes);
+                        if !owned_runs_lent(algorithm, len) {
+                            continue;
+                        }
+                        let key = |u: UseCase| {
+                            format!("{}|{scenario}|{u:?}|{}", algorithm.key(), point.label)
+                        };
+                        let (Some(a), Some(b)) = (
+                            cells.get(key(owned).as_str()),
+                            cells.get(key(lent).as_str()),
+                        ) else {
+                            continue;
+                        };
+                        let mean = |v: &Vec<Measured>| {
+                            clocks::summary::mean(v.iter().map(|m| (m.ns, m.units)))
+                        };
+                        let (a, b) = (mean(a), mean(b));
+                        let permille = (a * 1000 + b / 2) / b;
+                        println!(
+                            "{}\t{scenario}\t{owned:?}\t{}\t{permille}",
+                            algorithm.key(),
+                            point.label
+                        );
+                        departures.push(permille.abs_diff(1000));
+                    }
+                }
+            }
+        }
+        departures.sort_unstable();
+        if departures.is_empty() {
+            println!("# no pairs");
+        } else {
+            println!(
+                "# {} pairs: departure from 1000 median {} permille, 90th percentile {}, largest {}",
+                departures.len(),
+                departures[departures.len() / 2],
+                departures[departures.len() * 9 / 10],
+                departures[departures.len() - 1]
+            );
+        }
     }
 }
 
