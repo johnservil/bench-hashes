@@ -1881,8 +1881,9 @@ impl Sizes {
  * code under test is no part of it (Zooko, October 31): a change to it
  * makes a cell faster or slower, a slower one's samples longer, which
  * costs nothing but time, and a faster one's shorter, which the run's own
- * check catches: a cell whose median sample came out under half its
- * target deletes the file, so the next run calibrates again.
+ * check catches (sizes_stale): a nonstop cell whose median sample came out
+ * under a quarter of its target deletes the file, so the next run
+ * calibrates again.
  */
 fn sizes_context(
     roster: &Roster,
@@ -1970,24 +1971,25 @@ fn cached_sizes(path: &std::path::Path, context: &[(String, String)]) -> Option<
     (lines == wanted).then(|| (Sizes::read(path.to_str().expect("a UTF-8 path")), record))
 }
 
-/// Whether a run on cached sizes found them stale: a cell, sampled more
-/// than one call or batch at a time, whose median sample came out under
-/// half its target.
+/// Whether a run on cached sizes found them stale: a nonstop cell,
+/// sampled more than one call or batch at a time, whose median sample came
+/// out under a quarter of its target (the code under test some 4 times
+/// faster than when the sizes were calibrated). A calibration's own cells
+/// reach half their target (Mac jobs 1786 and 1791: the least 0.49 and
+/// 0.67), so a quarter leaves a margin of two. A sample after a gap sums
+/// calls each timed after its gap, whose length bears on nothing but the
+/// run's time.
 fn sizes_stale(roster: &Roster, samples: &RunSamples, iterations: &[Vec<usize>]) -> Option<String> {
     for a in 0..roster.len() {
         for &p in &roster.points {
             let cell = &samples.solo[a][p];
-            if cell.is_empty() || iterations[a][p] <= 1 {
+            if cell.is_empty() || iterations[a][p] <= 1 || POINTS[p].use_case.after_gap() {
                 continue;
             }
             let mut ns: Vec<u64> = cell.iter().map(|m| m.ns).collect();
             ns.sort_unstable();
-            let target = if POINTS[p].use_case.after_gap() {
-                GAP_SAMPLE_NS
-            } else {
-                TARGET_SAMPLE_NS
-            };
-            if u128::from(ns[ns.len() / 2]) * 2 < target {
+            let target = TARGET_SAMPLE_NS;
+            if u128::from(ns[ns.len() / 2]) * 4 < target {
                 return Some(format!(
                     "{} {}{}: median sample {} ns, target {target} ns",
                     roster.algorithms[a].key(),

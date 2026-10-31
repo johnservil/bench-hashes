@@ -373,8 +373,10 @@ those sizes and skips calibrating, which saves about a minute on an M4
 Max. The fork under test is left out of the context, because a size only
 sets how much work fills a sample. A slower fork lengthens samples, which
 costs time alone. A faster one shortens them, so a run on cached sizes
-checks each cell: if a cell's median sample falls under half its target,
-the run deletes that file and the next run calibrates again. Each samples
+checks each nonstop cell: if a cell's median sample falls under a
+quarter of its target, the run deletes that file and the next run
+calibrates again. (A calibration's own cells come out as short as half
+their target, so a quarter leaves a margin of two.) Each samples
 file's `sample sizes` line says where its sizes came from: calibrated in
 the run, given by `--sizes`, or taken from the cache, with when that
 calibration ran and against which fork. `regress` and `check` give their
