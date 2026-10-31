@@ -1798,6 +1798,7 @@ impl Sizes {
         // measures without a size stops it below.
         Sizes::From(
             lines
+                .filter(|line| !line.starts_with('#'))
                 .filter_map(|line| {
                     let fields: Vec<&str> = line.split('\t').collect();
                     assert_eq!(
@@ -1816,9 +1817,17 @@ impl Sizes {
         )
     }
 
-    /// The sizes file for these cells' sizes.
-    fn write(path: &std::path::Path, roster: &Roster, batch_iterations: &[Vec<usize>]) {
+    /// The sizes file for these cells' sizes, after its context lines.
+    fn write(
+        path: &std::path::Path,
+        context: &[(String, String)],
+        roster: &Roster,
+        batch_iterations: &[Vec<usize>],
+    ) {
         let mut out = format!("{SIZES_VERSION}\n");
+        for (key, value) in context {
+            writeln!(out, "# {key}: {value}").unwrap();
+        }
         for (a, algorithm) in roster.algorithms.iter().enumerate() {
             for &p in roster
                 .points
@@ -1840,6 +1849,137 @@ impl Sizes {
             panic!("--calibrate-only: cannot write {}: {error}", path.display())
         });
     }
+}
+
+/*
+ * The calibration cache (Zooko, October 31, 2026: calibrating took 54 s of
+ * a full run's 230 on the Mac). A run that calibrates writes its sizes,
+ * with what they depend on, to a file of the user's cache directory named
+ * for that context; a later run in the same context takes its sizes from
+ * it and calibrates nothing. A size is how many calls fill a sample, so
+ * what makes one wrong is a change to what a cell does: the bench's own
+ * source, its commit and clean status (a dirty tree's status fingerprints
+ * its diff; the committed lock pins every contender's version). The
+ * context is that, the machine (its CPU, their count and identity, the
+ * OS), the power source and mode at the start, and the run's contenders, points and
+ * threads; each context has a file of its own, kept, so a context that
+ * comes back (battery, mains, battery) finds its sizes still there. The
+ * code under test is no part of it (Zooko, October 31): a change to it
+ * makes a cell faster or slower, a slower one's samples longer, which
+ * costs nothing but time, and a faster one's shorter, which the run's own
+ * check catches: a cell whose median sample came out under half its
+ * target deletes the file, so the next run calibrates again.
+ */
+fn sizes_context(
+    roster: &Roster,
+    machine: &MachineMetadata,
+    threads: Option<std::num::NonZeroUsize>,
+) -> Vec<(String, String)> {
+    [
+        (
+            "bench-hashes".to_owned(),
+            format!("{BENCH_VERSION}; {GIT_COMMIT}; {GIT_CLEAN_STATUS}"),
+        ),
+        (
+            "machine".to_owned(),
+            format!(
+                "{}; {} CPUs; {}; {}",
+                machine.cpu_type, machine.cpu_count, machine.cpu_identity, machine.os_type
+            ),
+        ),
+        (
+            "power".to_owned(),
+            // The source and the mode; the battery's charge changes by the
+            // minute and sizes nothing.
+            machine.power[0]
+                .as_ref()
+                .map_or("not reported".to_owned(), |p| {
+                    Power {
+                        battery_percent: None,
+                        ..p.clone()
+                    }
+                    .describe()
+                }),
+        ),
+        (
+            "contenders".to_owned(),
+            roster
+                .algorithms
+                .iter()
+                .map(|a| a.key())
+                .collect::<Vec<_>>()
+                .join(","),
+        ),
+        (
+            "points".to_owned(),
+            roster
+                .points
+                .iter()
+                .map(|&p| format!("{}{}", POINTS[p].use_case.label_prefix(), POINTS[p].label))
+                .collect::<Vec<_>>()
+                .join(","),
+        ),
+        (
+            "threads".to_owned(),
+            threads.map_or("one a CPU".to_owned(), |n| n.to_string()),
+        ),
+    ]
+    .into()
+}
+
+/// The cache file for a context: in $XDG_CACHE_HOME/bench-hashes, or
+/// ~/.cache/bench-hashes; None where neither is set.
+fn sizes_cache_path(context: &[(String, String)]) -> Option<std::path::PathBuf> {
+    let dir = std::env::var_os("XDG_CACHE_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cache")))?;
+    let text: String = context.iter().map(|(k, v)| format!("{k}: {v}\n")).collect();
+    let name = &blake3::hash(text.as_bytes()).to_hex()[..16];
+    Some(dir.join("bench-hashes").join(format!("sizes-{name}.tsv")))
+}
+
+/// The cached sizes for a context, where a file holds them with that very
+/// context.
+fn cached_sizes(path: &std::path::Path, context: &[(String, String)]) -> Option<Sizes> {
+    let text = fs::read_to_string(path).ok()?;
+    let lines: Vec<&str> = text
+        .lines()
+        .skip(1)
+        .take_while(|l| l.starts_with("# "))
+        .collect();
+    let wanted: Vec<String> = context.iter().map(|(k, v)| format!("# {k}: {v}")).collect();
+    (lines == wanted).then(|| Sizes::read(path.to_str().expect("a UTF-8 path")))
+}
+
+/// Whether a run on cached sizes found them stale: a cell, sampled more
+/// than one call or batch at a time, whose median sample came out under
+/// half its target.
+fn sizes_stale(roster: &Roster, samples: &RunSamples, iterations: &[Vec<usize>]) -> Option<String> {
+    for a in 0..roster.len() {
+        for &p in &roster.points {
+            let cell = &samples.solo[a][p];
+            if cell.is_empty() || iterations[a][p] <= 1 {
+                continue;
+            }
+            let mut ns: Vec<u64> = cell.iter().map(|m| m.ns).collect();
+            ns.sort_unstable();
+            let target = if POINTS[p].use_case.after_gap() {
+                GAP_SAMPLE_NS
+            } else {
+                TARGET_SAMPLE_NS
+            };
+            if u128::from(ns[ns.len() / 2]) * 2 < target {
+                return Some(format!(
+                    "{} {}{}: median sample {} ns, target {target} ns",
+                    roster.algorithms[a].key(),
+                    POINTS[p].use_case.label_prefix(),
+                    POINTS[p].label,
+                    ns[ns.len() / 2]
+                ));
+            }
+        }
+    }
+    None
 }
 
 /// Stops unless `info` (this build's BLAKE3_SERVIL_SOURCE_INFO) names the
@@ -2168,7 +2308,36 @@ fn main() {
     let mut roster = Roster::new(algorithms, quick, points, rounds, visits);
     roster.train = train;
     roster.nonstop_visits = nonstop_visits;
-    let (results, samples, load) = measure_all(&roster, &sizes);
+    // Sizes from the cache where a calibration in this very context left
+    // them (sizes_context); a run given --sizes or --calibrate-only does
+    // as it is told.
+    let context = sizes_context(&roster, &machine, threads);
+    let cache = matches!(sizes, Sizes::Calibrate)
+        .then(|| sizes_cache_path(&context))
+        .flatten();
+    let cached = cache
+        .as_deref()
+        .and_then(|path| cached_sizes(path, &context));
+    let from_cache = cached.is_some();
+    let sizes = cached.unwrap_or(sizes);
+    let selection_note = if from_cache {
+        format!("{selection_note}; sample sizes from the calibration cache")
+    } else {
+        selection_note
+    };
+    let (results, samples, load, iterations) = measure_all(&roster, &sizes);
+    if let Some(path) = &cache {
+        if from_cache {
+            if let Some(why) = sizes_stale(&roster, &samples, &iterations) {
+                eprintln!("bench-hashes: the cached sample sizes ran short ({why}); the next run calibrates again");
+                let _ = fs::remove_file(path);
+            }
+        } else {
+            fs::create_dir_all(path.parent().unwrap())
+                .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            Sizes::write(path, &context, &roster, &iterations);
+        }
+    }
     machine.load = load;
     machine.power[1] = Power::read();
 
@@ -2272,7 +2441,15 @@ fn cell(results: &Results, algorithm_index: usize, point_index: usize) -> &Cell 
         .expect("the contender takes part in this point's use case")
 }
 
-fn measure_all(roster: &Roster, sizes: &Sizes) -> (Results, RunSamples, Vec<clocks::load::Window>) {
+fn measure_all(
+    roster: &Roster,
+    sizes: &Sizes,
+) -> (
+    Results,
+    RunSamples,
+    Vec<clocks::load::Window>,
+    Vec<Vec<usize>>,
+) {
     /* Inputs for the points measured; an empty buffer stands in for the rest. */
     /*
      * The bytes are irrelevant to every contender's speed, so each point
@@ -2391,6 +2568,7 @@ fn measure_all(roster: &Roster, sizes: &Sizes) -> (Results, RunSamples, Vec<cloc
                 if algorithm.takes_part(point.use_case)
                     && roster.measures(point_index)
                     && point.use_case.pattern_key() == pattern
+                    && lent_twin(roster, algorithm, point_index).is_none()
                 {
                     if let Sizes::From(given) = sizes {
                         let iterations = *given
@@ -2444,7 +2622,7 @@ fn measure_all(roster: &Roster, sizes: &Sizes) -> (Results, RunSamples, Vec<cloc
 
         if let Sizes::CalibrateOnly(path) = sizes {
             if pattern == "idle" {
-                Sizes::write(path, roster, &batch_iterations);
+                Sizes::write(path, &[], roster, &batch_iterations);
                 std::process::exit(0);
             }
             continue;
@@ -2495,6 +2673,10 @@ fn measure_all(roster: &Roster, sizes: &Sizes) -> (Results, RunSamples, Vec<cloc
 
                 for &algorithm_index in algorithm_order {
                     let algorithm = roster.algorithms[algorithm_index];
+                    // Measured as its lent twin (copied below).
+                    if lent_twin(roster, algorithm, size_index).is_some() {
+                        continue;
+                    }
                     let iterations = batch_iterations[algorithm_index][size_index];
                     /* A call after a gap: one sample; a nonstop cell: its train. */
                     let train = if point.use_case.after_gap() {
@@ -2559,6 +2741,26 @@ fn measure_all(roster: &Roster, sizes: &Sizes) -> (Results, RunSamples, Vec<cloc
     }
 
     progress.finish(&samples.solo);
+    // Each owned cell measured as its lent twin takes the twin's samples.
+    for a in 0..roster.len() {
+        for p in 0..POINT_COUNT {
+            if let Some(t) = roster
+                .measures(p)
+                .then(|| lent_twin(roster, roster.algorithms[a], p))
+                .flatten()
+            {
+                samples.solo[a][p] = samples.solo[a][t].clone();
+                samples.solo_started_ns[a][p] = samples.solo_started_ns[a][t].clone();
+                samples.solo_cpu_ns[a][p] = samples.solo_cpu_ns[a][t].clone();
+                samples.solo_energy_nj[a][p] = samples.solo_energy_nj[a][t].clone();
+                samples.solo_counts[a][p] = samples.solo_counts[a][t].clone();
+                samples.shared[a][p] = samples.shared[a][t].clone();
+                samples.shared_started_ns[a][p] = samples.shared_started_ns[a][t].clone();
+                samples.shared_counts[a][p] = samples.shared_counts[a][t].clone();
+                batch_iterations[a][p] = batch_iterations[a][t];
+            }
+        }
+    }
     let load: Vec<clocks::load::Window> = clocks::load::windows()
         .into_iter()
         .filter(|window| window.end_ns > measuring_from_ns)
@@ -2601,7 +2803,7 @@ fn measure_all(roster: &Roster, sizes: &Sizes) -> (Results, RunSamples, Vec<cloc
         }
     }
 
-    (results, samples, load)
+    (results, samples, load, batch_iterations)
 }
 
 /*
@@ -3870,6 +4072,27 @@ fn free_place<'a, D: FnMut(&'a mut [blake3_servil::Hash])>(
 /// with it).
 fn owned_runs_lent(algorithm: Algorithm, len: Option<usize>) -> bool {
     algorithm != Algorithm::Blake3ServilMt && len.is_none_or(|len| len <= PIECE_LEN)
+}
+
+/// The lent cell whose samples stand for an owned cell in this run: where
+/// the two run the same calls (owned_runs_lent) and the run measures the
+/// lent one, the owned cell is not measured again, and its samples are the
+/// lent cell's (Zooko, October 31, 2026: one measurement, shown in both
+/// rows, where two measurements of it differed by up to 40% in a run).
+fn lent_twin(roster: &Roster, algorithm: Algorithm, point_index: usize) -> Option<usize> {
+    let point = POINTS[point_index];
+    let (lent, len) = match point.use_case {
+        UseCase::ContinuousMessages => (UseCase::LentMessages, Some(point.bytes)),
+        UseCase::ContinuousBatches => (UseCase::LentBatches, None),
+        _ => return None,
+    };
+    if !owned_runs_lent(algorithm, len) {
+        return None;
+    }
+    let twin = POINTS
+        .iter()
+        .position(|p| p.use_case == lent && p.label == point.label)?;
+    roster.measures(twin).then_some(twin)
 }
 
 fn hash_continuous_messages(
@@ -6153,6 +6376,10 @@ fn generate_samples_tsv(
         ("contenders".to_owned(), selection_note.to_owned()),
         ("rounds".to_owned(), roster.rounds.to_string()),
         (
+            "buffers owned".to_owned(),
+            "where a contender's calls are those of buffers lent (owned_runs_lent), its cell is the lent cell's samples".to_owned(),
+        ),
+        (
             "nonstop train".to_owned(),
             format!(
                 "{} ms warm-up, {} samples a visit",
@@ -6955,6 +7182,87 @@ mod correctness_tests {
         );
     }
 
+    /// The calibration cache gives back a file's sizes for its very
+    /// context, and nothing for another; each context names its own file.
+    #[test]
+    fn cached_sizes_serve_only_their_context() {
+        let roster = Roster::new(
+            vec![Algorithm::Sha256],
+            true,
+            Some(vec![point("64 B", UseCase::OneMessage)]),
+            Some(2),
+            &TO_MEASURE_SPEED,
+        );
+        let context = vec![
+            ("machine".to_owned(), "this one".to_owned()),
+            ("power".to_owned(), "mains power".to_owned()),
+        ];
+        let mut other = context.clone();
+        other[1].1 = "battery power".to_owned();
+        assert_ne!(sizes_cache_path(&context), sizes_cache_path(&other));
+        let path = std::env::temp_dir().join(format!(
+            "bench-hashes-cache-test-{}.tsv",
+            std::process::id()
+        ));
+        let mut iterations = vec![vec![0; POINT_COUNT]];
+        iterations[0][point("64 B", UseCase::OneMessage)] = 7;
+        Sizes::write(&path, &context, &roster, &iterations);
+        let Some(Sizes::From(given)) = cached_sizes(&path, &context) else {
+            panic!("its own context's sizes")
+        };
+        assert_eq!(
+            given.get(&("sha256".to_owned(), point("64 B", UseCase::OneMessage))),
+            Some(&7)
+        );
+        assert!(
+            cached_sizes(&path, &other).is_none(),
+            "another context's file serves nothing"
+        );
+        fs::remove_file(&path).unwrap();
+    }
+
+    /// An owned cell whose calls are its lent twin's (owned_runs_lent) is
+    /// measured once, as the twin: its samples are the twin's; the fork's
+    /// stream, whose owned calls differ, is measured on its own.
+    #[test]
+    fn owned_cells_with_lent_calls_take_the_lent_samples() {
+        blake3_servil::initialize();
+        let mut points = vec![
+            point("4 KiB", UseCase::ContinuousMessages),
+            point("4 KiB", UseCase::LentMessages),
+        ];
+        points.sort_unstable();
+        let mut roster = Roster::new(
+            vec![Algorithm::Blake3ServilSt, Algorithm::Blake3ServilMt],
+            true,
+            Some(points),
+            Some(2),
+            &TO_MEASURE_SPEED,
+        );
+        blake3_servil::initialize_multithreaded(None);
+        roster.train = Train {
+            warm_ns: 1_000_000,
+            samples: 2,
+        };
+        let (_, samples, _, _) = measure_all(&roster, &Sizes::Calibrate);
+        let (owned, lent) = (
+            point("4 KiB", UseCase::ContinuousMessages),
+            point("4 KiB", UseCase::LentMessages),
+        );
+        let ns = |v: &Vec<Measured>| v.iter().map(|m| (m.ns, m.units)).collect::<Vec<_>>();
+        assert_eq!(
+            ns(&samples.solo[0][owned]),
+            ns(&samples.solo[0][lent]),
+            "servil st: the owned cell is the lent cell"
+        );
+        assert_eq!(ns(&samples.shared[0][owned]), ns(&samples.shared[0][lent]));
+        assert_ne!(
+            ns(&samples.solo[1][owned]),
+            ns(&samples.solo[1][lent]),
+            "servil mt's stream is measured on its own"
+        );
+    }
+
     /// A nonstop cell's visit is a train (Train): its warm-up, then its
     /// samples back to back, solo and in the two shared copies; a call
     /// after a gap stays one sample a visit.
@@ -6979,7 +7287,7 @@ mod correctness_tests {
             warm_ns: 2_000_000,
             samples: 3,
         };
-        let (_, samples, _) = measure_all(&roster, &Sizes::Calibrate);
+        let (_, samples, _, _) = measure_all(&roster, &Sizes::Calibrate);
         let nonstop = point("64 KiB", UseCase::ContinuousMessages);
         let gap = point("64 B", UseCase::OneMessage);
         for a in 0..roster.len() {
