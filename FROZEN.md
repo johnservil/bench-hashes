@@ -25,34 +25,67 @@ release, so results of different benchmarks are never read as alike. The
 documents that explain the benchmark (README, METHODOLOGY, CONTRIBUTING,
 the notes) may still change, to say it better.
 
-**Proposed for the next release, awaiting Zooko's decision after its
-tests** (Zooko, October 31, 2026, asking for it; bench-hashes issue to
-follow, with Devon Jonte's and Sam Shackleton's runs):
+**Changes for 0.19** (Zooko, October 31, 2026: "the new protocol is worth
+it for accuracy under sustained load, which the GPU work needs, even if it
+worsens the VM results a bit"; and, the same day, "don't wait for me on
+anything", John Servil releasing it):
 
-- **Continuous means continuous.** The nonstop use cases ("one input after
-  another, as fast as the program can") take each sample of about 1 ms in
-  a visit of its own, between other contenders' samples: each cell meets
-  the machine after other work, for 1 ms, six times a run. At 64 MiB a
-  lent-buffer sample is one call after other work, the measurement
-  OneMessage already makes after a defined gap (the Mac's 0.8 release
-  run: 24.9 against 27.2 GB/s). Whatever settles more slowly than 1 ms is
-  measured cold in every sample: a GPU's clock (30-40 ms of load on an
-  M4 Max, the fork's tmp/metal-night probes), a core's clock, thread
-  placement. A nonstop visit will instead run the cell's own load untimed
-  for a warm-up W, then take S samples back to back, each sized as now,
-  solo, then the same for the shared copies; a cell takes fewer visits, so
-  that a run's samples and time stay close to today's. The calls after a
-  gap keep measuring the intermittent pattern, one call after a defined
-  gap.
-- **W and S from measurement, not guesses**: settling curves first (cells
-  sampled back to back from cold, for a few hundred milliseconds, on every
-  machine), then old against new runs of BLAKE3-Servil 0.8 on every
-  machine: the cells' levels, their agreement between runs, the run's
-  time. A cell whose samples within a visit still drift is reported as
-  not steady, so an untried machine cannot mislead unmarked.
-- **For the GPU work after it** (not part of this change): a cell whose
-  hash uses a GPU shows GPU busy time beside CPU time, and reports energy
-  only where its counter is known to include the GPU.
+- **Continuous means continuous.** A nonstop cell ("one input after
+  another, as fast as the program can") took each 1 ms sample in a visit
+  of its own, between other contenders' samples. Whatever settles more
+  slowly than a millisecond met every sample cold: a core's clock, thread
+  placement, a GPU's clock (30-40 ms of load on an M4 Max, the fork's
+  tmp/metal-night probes). Now a nonstop visit is a train: the cell's own
+  load, untimed, for 100 ms, then 6 samples back to back, solo, then the
+  same for the two shared copies; 2 visits a cell (`NONSTOP_TRAIN`,
+  `Visits::nonstop`). The calls after a gap are unchanged.
+  - Why 100 ms: settling curves (samples back to back from cold,
+    `tools/settle.py`) put every solo cell within 3% by 100 ms on the M4
+    Max, the Linux VM and the EPYC 9255, and the GPU path's engagement and
+    ramp at about 50 ms; 50 ms reads about as well on the CPUs (the Mac's
+    worst solo cell 1.106 against 1.080) and leaves the GPU no margin.
+  - Why 2 visits of 6: the spread of a run's mean splits into the samples
+    within a visit, the visits within a run, and the runs
+    (`tools/variance.py`): on the Mac and the EPYC the runs' part, which
+    no visit count shrinks, and the samples' part lead, so 4 visits of 3
+    would cost twice the nonstop time for a p90 of 2.8% against 3.4%
+    (Mac), 2.2% against 2.6% (EPYC). The widest cells are servil mt's own
+    two speeds (#196 in the fork), which no setting fixes.
+  - What changed in the results, old (0.18.3) against new, three pairs of
+    full runs: the Mac (M4 Max) nonstop cells repeat better, median
+    spread 1.5% to 1.1% (solo) and 1.2% to 0.8% (shared), p90 4.0% to
+    4.6% and 3.5% to 3.8%; the EPYC 9255 (Sam Shackleton, bench #96)
+    median 0.7% to 0.4%, p90 5.2% to 7.6%; the VM read 2-4% slower and
+    slightly less repeatable. Official mt streams read 21-27% faster on
+    the Mac, servil mt's 10-12%. The longer nonstop phase leaves the Mac's
+    cores about 1% slower in the phases after it (P cores 4.02-4.06 GHz
+    against 4.07-4.11; SHA-256's SHA instructions, 4%), so a cell after a
+    gap reads that much slower than under 0.18. A control (0.19's code
+    measuring 0.18's way) read level with 0.18 on every machine (all 1590
+    cells on the EPYC).
+  - Cost: a full run on the Mac takes 352 s (0.18: 230), the owned cells
+    measured once and calibration cached (below) paying part of it.
+- **Owned and lent cells that run the same calls are measured once**
+  (`owned_runs_lent`): every contender but servil mt's stream, messages up
+  to a piece, measures the lent cell, and its samples stand for the owned
+  row too, as the samples file's header says. Two measurements of
+  identical calls in one run differed by up to 40% (`tools/alike.py`).
+- **Calibration is cached** (`sizes_context`): a run keeps its sample
+  sizes in the user's cache directory, a file for each context, and a
+  later run in that context reuses them (about 50 s on the Mac). The
+  context is the bench's version, commit and clean status, the machine,
+  the power source and mode, and the contenders, points and threads. The code under test is no
+  part of the context: a nonstop cell whose median sample falls under a
+  quarter of its target deletes the file. The samples file's `sample
+  sizes` line names the sizes' source.
+- **Load is other programs' user time, measured on macOS again** (the
+  fork's clocks at c7cb21d3, where its probes are): the machine's user
+  time less this process's, so the kernel's own work for the run reads as
+  none.
+- **Studies read samples in Python** (`tools/samples.py`): `means`,
+  `alike` and `settle` left the program for `tools/points.py`,
+  `tools/alike.py` and `tools/settle.py`; comparisons and verdicts stay in
+  it.
 
 **Changes for the next release** (Zooko, October 16, 2026):
 - **The batch calls take a `Batch`** (Zooko, October 28; BLAKE3 #205):
