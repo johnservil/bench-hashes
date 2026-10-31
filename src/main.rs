@@ -5501,42 +5501,50 @@ fn read_samples(path: &str) -> SamplesFile {
  * settling run (`--train 0,N --nonstop-visits 1`) a cell's one train
  * starts from the machine as the contender before it left it. For each
  * nonstop cell, solo and shared (each step the two copies' samples
- * together), over its trains:
- * - first: the train's first sample's time a unit against its last
- *   third's mean, in permille;
- * - settled: how far into the train (ms of its samples) the time a unit
- *   stays within SETTLE_PERMILLE of the last third's mean in every later
- *   window of SETTLE_WINDOW samples (the trains' largest), or never;
- * - drift: the train's last sample against its first, in permille.
- * Then, by use case: the cells, their median and largest settled time, and
- * the cells that never settled.
+ * together), its warm-up curve: the time a unit over the train's first
+ * sample and over its first 5, 20, 50, 100, 200, 500 and 1000 ms (each taking the samples
+ * that start within it), each against the train's last third, in
+ * permille, averaged over its trains; a cell that needs no warm-up reads
+ * about 1000 from the first sample on, and the time where its curve
+ * reaches 1000 is the warm-up it needs. Then, by use case, each column's
+ * median and largest.
  */
-const SETTLE_PERMILLE: u128 = 20;
-const SETTLE_WINDOW: usize = 5;
+const SETTLE_SPANS_MS: [u128; 7] = [5, 20, 50, 100, 200, 500, 1000];
 
-/// A train's steps (ns, units): settled ms (None: never), first sample's
-/// time a unit against the last third's (permille), last against first.
-fn settle_train(steps: &[(u128, u128)]) -> (Option<u128>, u128, u128) {
-    let rate_permille = |(ns, units): (u128, u128), (tail_ns, tail_units): (u128, u128)| {
+/// A train's steps (ns, units): the first sample's time a unit, then the
+/// samples' starting within each of SETTLE_SPANS_MS, each against the
+/// last third's, in permille (a span longer than the train: None).
+fn settle_train(steps: &[(u128, u128)]) -> [Option<u128>; 8] {
+    let permille = |(ns, units): (u128, u128), (tail_ns, tail_units): (u128, u128)| {
         (ns * tail_units * 1000 + units * tail_ns / 2) / (units * tail_ns).max(1)
     };
     let sum = |part: &[(u128, u128)]| part.iter().fold((0, 0), |(n, u), &(a, b)| (n + a, u + b));
     let tail = sum(&steps[steps.len() - steps.len().div_ceil(3)..]);
-    let first = rate_permille(steps[0], tail);
-    let drift = rate_permille(steps[steps.len() - 1], steps[0]);
-    let window = SETTLE_WINDOW.min(steps.len());
-    // The last window that strays; settled from the sample after its first
-    // (every window from there on holds), never when it is the train's last.
-    let strays = (0..=steps.len() - window).rev().find(|&at| {
-        let r = rate_permille(sum(&steps[at..at + window]), tail);
-        r > 1000 + SETTLE_PERMILLE || r + SETTLE_PERMILLE < 1000
-    });
-    let settled = match strays {
-        None => Some(0),
-        Some(at) if at + window < steps.len() => Some(sum(&steps[..=at]).0 / 1_000_000),
-        Some(_) => None,
-    };
-    (settled, first, drift)
+    let total: u128 = steps.iter().map(|s| s.0).sum();
+    let mut curve = [
+        Some(permille(steps[0], tail)),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    ];
+    for (k, span_ms) in SETTLE_SPANS_MS.iter().enumerate() {
+        let span_ns = span_ms * 1_000_000;
+        if span_ns > total {
+            continue;
+        }
+        // The samples that start within the span.
+        let (mut at, mut taken) = (0, 0);
+        while taken < steps.len() && at < span_ns {
+            at += steps[taken].0;
+            taken += 1;
+        }
+        curve[k + 1] = Some(permille(sum(&steps[..taken]), tail));
+    }
+    curve
 }
 
 fn settle_command(paths: &[String]) {
@@ -5558,8 +5566,9 @@ fn settle_command(paths: &[String]) {
             .and_then(|n| n.parse().ok())
             .unwrap_or_else(|| panic!("{path}: nonstop train {:?}", train.1));
         println!("# {path}: nonstop train {}", train.1);
-        println!("contender\tscenario\tuse case\tpoint\ttrains\tfirst (permille of the last third)\tsettled (ms into the train)\tdrift (last against first, permille)");
-        let mut by_use_case: Vec<(String, Vec<Option<u128>>)> = Vec::new();
+        println!("# the time a unit over each part of a train against its last third, permille (1000: as settled)");
+        println!("contender\tscenario\tuse case\tpoint\ttrains\tfirst sample\tfirst 5 ms\tfirst 20 ms\tfirst 50 ms\tfirst 100 ms\tfirst 200 ms\tfirst 500 ms\tfirst 1000 ms");
+        let mut by_use_case: Vec<(String, Vec<[Option<u128>; 8]>)> = Vec::new();
         for (key, samples) in &file.cells {
             let fields: Vec<&str> = key.split('|').collect();
             let use_case = UseCase::ALL
@@ -5569,8 +5578,7 @@ fn settle_command(paths: &[String]) {
             if use_case.after_gap() {
                 continue;
             }
-            let shared = fields[1] == "shared";
-            let steps: Vec<(u128, u128)> = if shared {
+            let steps: Vec<(u128, u128)> = if fields[1] == "shared" {
                 samples
                     .chunks(2)
                     .map(|pair| {
@@ -5590,46 +5598,42 @@ fn settle_command(paths: &[String]) {
                 0,
                 "{path}: {key}: whole trains"
             );
-            let trains: Vec<_> = steps.chunks(samples_a_visit).map(settle_train).collect();
-            let settled = trains
-                .iter()
-                .map(|t| t.0)
-                .try_fold(0, |m, s| s.map(|s| s.max(m)));
-            let mean = |f: fn(&(Option<u128>, u128, u128)) -> u128| {
-                (trains.iter().map(f).sum::<u128>() + trains.len() as u128 / 2)
-                    / trains.len() as u128
-            };
+            let trains: Vec<[Option<u128>; 8]> =
+                steps.chunks(samples_a_visit).map(settle_train).collect();
+            let curve: [Option<u128>; 8] = std::array::from_fn(|k| {
+                let v: Option<Vec<u128>> = trains.iter().map(|t| t[k]).collect();
+                v.map(|v| (v.iter().sum::<u128>() + v.len() as u128 / 2) / v.len() as u128)
+            });
+            let show = |v: Option<u128>| v.map_or("-".to_owned(), |v| v.to_string());
             println!(
-                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                "{}\t{}\t{}\t{}\t{}\t{}",
                 fields[0],
                 fields[1],
                 fields[2],
                 fields[3],
                 trains.len(),
-                mean(|t| t.1),
-                settled.map_or("never".to_owned(), |ms| ms.to_string()),
-                mean(|t| t.2)
+                curve.map(show).join("\t")
             );
             let group = format!("{} {}", fields[2], fields[1]);
             match by_use_case.iter_mut().find(|(g, _)| *g == group) {
-                Some((_, v)) => v.push(settled),
-                None => by_use_case.push((group, vec![settled])),
+                Some((_, v)) => v.push(curve),
+                None => by_use_case.push((group, vec![curve])),
             }
         }
-        println!("# by use case: cells, settled (median, largest ms), never settled");
-        for (group, mut settled) in by_use_case {
-            let never = settled.iter().filter(|s| s.is_none()).count();
-            let mut ms: Vec<u128> = settled.drain(..).flatten().collect();
-            ms.sort_unstable();
-            let (median, largest) = if ms.is_empty() {
-                (0, 0)
-            } else {
-                (ms[ms.len() / 2], ms[ms.len() - 1])
-            };
-            println!(
-                "# {group}: {} cells, settled {median} / {largest} ms, never {never}",
-                ms.len() + never
-            );
+        println!("# by use case: each column's median / largest, permille: first sample, first 5, 20, 50, 100, 200, 500, 1000 ms");
+        for (group, curves) in by_use_case {
+            let columns: Vec<String> = (0..8)
+                .map(|k| {
+                    let mut v: Vec<u128> = curves.iter().filter_map(|c| c[k]).collect();
+                    v.sort_unstable();
+                    if v.is_empty() {
+                        "-".to_owned()
+                    } else {
+                        format!("{} / {}", v[v.len() / 2], v[v.len() - 1])
+                    }
+                })
+                .collect();
+            println!("# {group}: {} cells: {}", curves.len(), columns.join(", "));
         }
     }
 }
@@ -7104,19 +7108,45 @@ mod correctness_tests {
         );
     }
 
-    /// settle_train: a train that starts 50% slow for 10 samples of 1 ms
-    /// and then holds steady settles after them (10 ms); a steady one at
-    /// once; one that never comes within 2% of its last third, never.
+    /// settle_train: a train that starts 50% slow for 10 samples of 1 ms and
+    /// then holds steady reads 1500 for its first sample, its slow start in
+    /// its first 5 ms, and 1000 once the slow start is a small share.
     #[test]
-    fn settle_train_finds_where_a_train_settles() {
+    fn settle_train_draws_a_warm_up_curve() {
         let ms = |ns: u128| (ns, 1_000_000u128);
         let mut slow_start: Vec<(u128, u128)> = (0..10).map(|_| ms(1_500_000)).collect();
-        slow_start.extend((0..50).map(|_| ms(1_000_000)));
-        assert_eq!(settle_train(&slow_start), (Some(15), 1500, 667));
+        slow_start.extend((0..140).map(|_| ms(1_000_000)));
+        // The samples starting within each span: 5 ms, four slow ones (1500);
+        // 20 ms, the ten slow ones (15 ms) and five steady (15-19 ms): 20 ms
+        // over 15 units, 1333; 50 ms, 10 + 35: 50 over 45, 1111; 100 ms,
+        // 10 + 85: 100 over 95, 1053.
+        assert_eq!(
+            settle_train(&slow_start),
+            [
+                Some(1500),
+                Some(1500),
+                Some(1333),
+                Some(1111),
+                Some(1053),
+                None,
+                None,
+                None
+            ]
+        );
         let steady: Vec<(u128, u128)> = (0..30).map(|_| ms(1_000_000)).collect();
-        assert_eq!(settle_train(&steady), (Some(0), 1000, 1000));
-        let climbing: Vec<(u128, u128)> = (0..30).map(|i| ms(1_000_000 + 100_000 * i)).collect();
-        assert_eq!(settle_train(&climbing).0, None);
+        assert_eq!(
+            settle_train(&steady),
+            [
+                Some(1000),
+                Some(1000),
+                Some(1000),
+                None,
+                None,
+                None,
+                None,
+                None
+            ]
+        );
     }
 
     /// A nonstop cell's visit is a train (Train): its warm-up, then its
