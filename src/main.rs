@@ -121,7 +121,7 @@ struct Visits {
 /// buy agreement this reader does not need.
 const TO_MEASURE_SPEED: Visits = Visits {
     gap: 12,
-    nonstop: 6,
+    nonstop: 2,
 };
 
 /// To check for performance regressions: `regress`'s runs, for a reader
@@ -135,7 +135,29 @@ const TO_MEASURE_SPEED: Visits = Visits {
 /// check-validation).
 const TO_CHECK_FOR_REGRESSIONS: Visits = Visits {
     gap: 24,
-    nonstop: 6,
+    nonstop: 2,
+};
+
+/*
+ * A nonstop cell's visit (FROZEN.md, proposed October 31, 2026: continuous
+ * means continuous): the cell's own load, untimed, for `warm_ns` (one batch
+ * at least), then `samples` samples back to back, each sized as calibration
+ * sized it; solo, then the same for the two shared copies, each copy its
+ * own train from one release. Each sample then meets the machine as the
+ * cell's own continuous load leaves it, rather than as the contender
+ * before it left it, which the 1 ms samples of a visit each (6 visits a
+ * cell) measured: a GPU's clock (30-40 ms of load to settle, M4 Max), a
+ * core's clock, thread placement. Provisional: the settling curves
+ * (`--train 0,N`) on every machine set the values.
+ */
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Train {
+    warm_ns: u64,
+    samples: usize,
+}
+const NONSTOP_TRAIN: Train = Train {
+    warm_ns: 100_000_000,
+    samples: 6,
 };
 
 /// Points on the one-message axis, and on each many-messages axis.
@@ -1490,6 +1512,11 @@ struct Roster {
     /// run `regress` starts (--for-regression-check); each cell samples in
     /// its visits of the rounds (cell_wants_sample).
     visits: &'static Visits,
+    /// A nonstop cell's visit: its warm-up and its samples (NONSTOP_TRAIN,
+    /// or --train's, for the settling curves and old-against-new tests).
+    train: Train,
+    /// A nonstop cell's visits when --nonstop-visits sets them.
+    nonstop_visits: Option<usize>,
 }
 
 impl Roster {
@@ -1538,6 +1565,16 @@ impl Roster {
             points,
             rounds,
             visits,
+            train: NONSTOP_TRAIN,
+            nonstop_visits: None,
+        }
+    }
+
+    /// Visits a cell of `use_case` takes in this run.
+    fn visits_of(&self, use_case: UseCase) -> usize {
+        match self.nonstop_visits {
+            Some(n) if !use_case.after_gap() => n,
+            _ => use_case.visits(self.visits),
         }
     }
 
@@ -1680,6 +1717,12 @@ cell sampled in a share of them.
                                    (regress passes it): a cell after a gap in
                                    24 rounds, a nonstop cell in 6 (default:
                                    12 and 6, to measure speed)
+  --train W_MS,S                   a nonstop visit's warm-up (ms) and samples
+                                   (default 100,6), for the tests of the
+                                   continuous-load proposal (FROZEN.md):
+                                   0,1 with --nonstop-visits 6 measures as
+                                   bench 0.18 did; 0,N gives settling curves
+  --nonstop-visits N               a nonstop cell's visits (default 2)
   --threads N                      BLAKE3 servil mt on N threads in all, its
                                    caller among them (default: one a CPU); the
                                    results name the count
@@ -1688,6 +1731,11 @@ cell sampled in a share of them.
                                    hash), from a clean tree: a run says what it
                                    measures, and refuses to measure anything else
 
+  bench-hashes settle RUN.tsv...   how each nonstop cell's samples move within
+                                   a visit: its first sample against the
+                                   visit's last third, when it settles within
+                                   2%, its drift (the continuous-load
+                                   proposal's tests)
   bench-hashes compare OLD.tsv... -- NEW.tsv...
                                    compare runs' samples files in pairs (the
                                    i-th old with the i-th new), each cell's
@@ -1715,6 +1763,10 @@ struct Options {
     /// The run's visits: TO_CHECK_FOR_REGRESSIONS with --for-regression-check
     /// (regress passes it to the runs it starts), else TO_MEASURE_SPEED.
     visits: &'static Visits,
+    /// A nonstop visit's warm-up and samples (--train W_MS,S), and a nonstop
+    /// cell's visits (--nonstop-visits N): for the tests of the proposal.
+    train: Train,
+    nonstop_visits: Option<usize>,
 }
 
 /// How a run sizes each cell's samples. A comparison's runs share one set
@@ -1857,6 +1909,30 @@ fn parse_arguments() -> Options {
     } else {
         &TO_MEASURE_SPEED
     };
+    /* --train W_MS,S and --nonstop-visits N: the proposal's tests. */
+    let train = take_value("--train").map_or(NONSTOP_TRAIN, |value| {
+        let (warm, samples) = value
+            .split_once(',')
+            .expect("--train takes W_MS,S: a warm-up in ms and samples a visit");
+        Train {
+            warm_ns: warm.parse::<u64>().expect("--train's warm-up: whole ms") * 1_000_000,
+            samples: samples
+                .parse::<usize>()
+                .expect("--train's samples: a whole number"),
+        }
+    });
+    assert!(
+        train.samples > 0,
+        "--train takes one sample a visit or more"
+    );
+    let nonstop_visits = take_value("--nonstop-visits").map(|n| {
+        n.parse::<usize>()
+            .expect("--nonstop-visits takes a whole number")
+    });
+    assert!(
+        nonstop_visits != Some(0),
+        "--nonstop-visits takes one visit or more"
+    );
     /* --threads N: BLAKE3 servil mt's pool, N threads in all (its caller among them). */
     let threads = take_value("--threads").map(|n| {
         n.parse::<std::num::NonZeroUsize>()
@@ -1892,6 +1968,8 @@ fn parse_arguments() -> Options {
         sizes,
         threads,
         visits,
+        train,
+        nonstop_visits,
     }
 }
 
@@ -2005,6 +2083,9 @@ fn main() {
     // Once per process, before any other call: blake3-servil's contract.
     blake3_servil::initialize();
     let arguments: Vec<String> = std::env::args().skip(1).collect();
+    if arguments.first().map(String::as_str) == Some("settle") {
+        return settle_command(&arguments[1..]);
+    }
     if arguments.first().map(String::as_str) == Some("compare") {
         return compare_command(&arguments[1..]);
     }
@@ -2042,6 +2123,8 @@ fn main() {
         sizes,
         threads,
         visits,
+        train,
+        nonstop_visits,
     } = parse_arguments();
     let mut machine = machine_metadata();
 
@@ -2073,12 +2156,26 @@ fn main() {
         Some(n) => format!("{selection_note}; --threads {n}"),
         None => selection_note,
     };
+    // A run measured another way than the frozen one says so (the tests of
+    // the proposal: --train, --nonstop-visits).
+    let selection_note = if train != NONSTOP_TRAIN || nonstop_visits.is_some() {
+        format!(
+            "{selection_note}; nonstop visits: {} ms warm-up, {} samples a visit{}",
+            train.warm_ns / 1_000_000,
+            train.samples,
+            nonstop_visits.map_or(String::new(), |n| format!(", {n} visits a cell"))
+        )
+    } else {
+        selection_note
+    };
     // A program that calls the fork's multithreaded entry points or its
     // queue starts their threads once, first: the fork's contract.
     if algorithms.contains(&Algorithm::Blake3ServilMt) {
         blake3_servil::initialize_multithreaded(threads);
     }
-    let roster = Roster::new(algorithms, quick, points, rounds, visits);
+    let mut roster = Roster::new(algorithms, quick, points, rounds, visits);
+    roster.train = train;
+    roster.nonstop_visits = nonstop_visits;
     let (results, samples, load) = measure_all(&roster, &sizes);
     machine.load = load;
     machine.power[1] = Power::read();
@@ -2394,7 +2491,7 @@ fn measure_all(roster: &Roster, sizes: &Sizes) -> (Results, RunSamples, Vec<cloc
                     || !cell_wants_sample(
                         round + size_index,
                         roster.rounds,
-                        point.use_case.visits(roster.visits),
+                        roster.visits_of(point.use_case),
                     )
                 {
                     continue;
@@ -2407,38 +2504,62 @@ fn measure_all(roster: &Roster, sizes: &Sizes) -> (Results, RunSamples, Vec<cloc
                 for &algorithm_index in algorithm_order {
                     let algorithm = roster.algorithms[algorithm_index];
                     let iterations = batch_iterations[algorithm_index][size_index];
+                    /* A call after a gap: one sample; a nonstop cell: its train. */
+                    let train = if point.use_case.after_gap() {
+                        Train {
+                            warm_ns: 0,
+                            samples: 1,
+                        }
+                    } else {
+                        roster.train
+                    };
 
-                    /* The solo sample: this thread runs the batch, alone. */
+                    /* The solo samples: this thread runs the batches, alone. */
                     clocks::load::tick();
-                    let DuoCopy {
-                        elapsed_ns,
-                        counts,
-                        started_ns,
-                        cpu_ns,
-                        energy_nj,
-                    } = take_sample(algorithm, input, point, iterations);
+                    warm_up(algorithm, input, point, iterations, train.warm_ns);
+                    let solo: Vec<DuoCopy> = (0..train.samples)
+                        .map(|_| {
+                            clocks::load::tick();
+                            take_sample(algorithm, input, point, iterations)
+                        })
+                        .collect();
 
                     /*
-                     * The shared sample, under the same conditions, for the
-                     * nonstop use cases: two copies run a batch each at once,
-                     * on two threads, and each copy's own time is a sample.
+                     * The shared samples, under the same conditions, for the
+                     * nonstop use cases: two copies, released together, each
+                     * run its own train on its own thread, and each copy's
+                     * own time is a sample.
                      */
                     let copies = Scenario::Shared.measures(point.use_case).then(|| {
-                        duo.run(algorithm, input, duo_inputs[size_index], point, iterations)
+                        duo.run(
+                            algorithm,
+                            input,
+                            duo_inputs[size_index],
+                            point,
+                            iterations,
+                            train,
+                        )
                     });
 
                     let total_units = point.use_case.units(point, iterations);
                     let per_unit = |ns: u64| Measured::new(ns, total_units);
-                    samples.solo[algorithm_index][size_index].push(per_unit(elapsed_ns));
-                    samples.solo_started_ns[algorithm_index][size_index].push(started_ns);
-                    samples.solo_cpu_ns[algorithm_index][size_index].push(cpu_ns);
-                    samples.solo_energy_nj[algorithm_index][size_index].push(energy_nj);
-                    samples.solo_counts[algorithm_index][size_index].push(counts);
-                    for copy in copies.iter().flatten() {
-                        samples.shared[algorithm_index][size_index].push(per_unit(copy.elapsed_ns));
-                        samples.shared_started_ns[algorithm_index][size_index]
-                            .push(copy.started_ns);
-                        samples.shared_counts[algorithm_index][size_index].push(copy.counts);
+                    for sample in &solo {
+                        samples.solo[algorithm_index][size_index].push(per_unit(sample.elapsed_ns));
+                        samples.solo_started_ns[algorithm_index][size_index]
+                            .push(sample.started_ns);
+                        samples.solo_cpu_ns[algorithm_index][size_index].push(sample.cpu_ns);
+                        samples.solo_energy_nj[algorithm_index][size_index].push(sample.energy_nj);
+                        samples.solo_counts[algorithm_index][size_index].push(sample.counts);
+                    }
+                    // In pairs, copy 0's i-th sample beside copy 1's.
+                    if let Some([first, second]) = &copies {
+                        for copy in first.iter().zip(second).flat_map(|(a, b)| [a, b]) {
+                            samples.shared[algorithm_index][size_index]
+                                .push(per_unit(copy.elapsed_ns));
+                            samples.shared_started_ns[algorithm_index][size_index]
+                                .push(copy.started_ns);
+                            samples.shared_counts[algorithm_index][size_index].push(copy.counts);
+                        }
                     }
                 }
             }
@@ -2467,9 +2588,14 @@ fn measure_all(roster: &Roster, sizes: &Sizes) -> (Results, RunSamples, Vec<cloc
             } else {
                 0
             };
+            let train = if point.use_case.after_gap() {
+                1
+            } else {
+                roster.train.samples
+            };
             assert!(
-                !solo.is_empty() && solo.len() <= roster.rounds,
-                "one solo sample per round at most, and one at least"
+                !solo.is_empty() && solo.len() <= roster.rounds * train,
+                "one solo sample per round (a nonstop cell: one train) at most, and one at least"
             );
             assert_eq!(
                 shared.len(),
@@ -2689,6 +2815,21 @@ fn use_digest(digests: &[u8]) {
             run = &run[n..];
         }
     });
+}
+
+/// The cell's own load, untimed, for `warm_ns` (one batch at least; none
+/// for 0): a nonstop visit's warm-up (Train).
+fn warm_up(algorithm: Algorithm, input: &[u8], point: Point, iterations: usize, warm_ns: u64) {
+    if warm_ns == 0 {
+        return;
+    }
+    let started = clocks::now();
+    loop {
+        run_batch(algorithm, input, point, iterations);
+        if clocks::since_ns(started) >= warm_ns {
+            break;
+        }
+    }
 }
 
 /*
@@ -4526,8 +4667,9 @@ struct Duo {
     ready: std::sync::atomic::AtomicUsize,
     /// Advances once both copies are ready: the release.
     generation: std::sync::atomic::AtomicU64,
-    /// Each copy's elapsed time and counts; None while a copy is still running.
-    finished: std::sync::Mutex<[Option<DuoCopy>; 2]>,
+    /// Each copy's samples (its train's, in order); None while a copy is
+    /// still running.
+    finished: std::sync::Mutex<[Option<Vec<DuoCopy>>; 2]>,
     done: std::sync::Condvar,
 }
 
@@ -4558,6 +4700,8 @@ struct DuoJob {
     inputs: [*const [u8]; 2],
     point: Point,
     iterations: usize,
+    /// Each copy's warm-up and samples, back to back from the release.
+    train: Train,
     /// Which workers have taken this job (a bit each).
     taken: u8,
 }
@@ -4586,9 +4730,10 @@ impl Duo {
         duo
     }
 
-    /// Run `iterations` of `algorithm` on both threads at once, copy 0 over
-    /// `input` and copy 1 over `other`; returns each copy's time from its
-    /// own start and its counts. The sample is the later finish.
+    /// Run `train` of `algorithm`'s batches of `iterations` on both threads
+    /// at once, copy 0 over `input` and copy 1 over `other`, each copy its
+    /// warm-up and then its samples back to back from one release; returns
+    /// each copy's samples, each its time from its own start and its counts.
     fn run(
         &self,
         algorithm: Algorithm,
@@ -4596,7 +4741,8 @@ impl Duo {
         other: &[u8],
         point: Point,
         iterations: usize,
-    ) -> [DuoCopy; 2] {
+        train: Train,
+    ) -> [Vec<DuoCopy>; 2] {
         use std::sync::atomic::Ordering;
         assert_eq!(
             input.len(),
@@ -4611,6 +4757,7 @@ impl Duo {
                 inputs: [input, other],
                 point,
                 iterations,
+                train,
                 taken: 0,
             });
             self.posted.notify_all();
@@ -4630,8 +4777,7 @@ impl Duo {
         while finished.iter().any(Option::is_none) {
             finished = self.done.wait(finished).unwrap();
         }
-        let copies = finished.map(|copy| copy.unwrap());
-        *finished = [None, None];
+        let copies = std::mem::take(&mut *finished).map(|copy| copy.unwrap());
         copies
     }
 
@@ -4672,14 +4818,19 @@ impl Duo {
             }
             seen = self.generation.load(Ordering::Acquire);
             // Sound: run() holds the borrows until both finishes are read.
-            let sample = take_sample(
+            let input = unsafe { &*job.inputs[copy] };
+            warm_up(
                 job.algorithm,
-                unsafe { &*job.inputs[copy] },
+                input,
                 job.point,
                 job.iterations,
+                job.train.warm_ns,
             );
+            let samples: Vec<DuoCopy> = (0..job.train.samples)
+                .map(|_| take_sample(job.algorithm, input, job.point, job.iterations))
+                .collect();
             let mut finished = self.finished.lock().unwrap();
-            finished[copy] = Some(sample);
+            finished[copy] = Some(samples);
             self.done.notify_all();
         }
     }
@@ -5339,6 +5490,147 @@ fn read_samples(path: &str) -> SamplesFile {
         cpu,
         energy,
         cores,
+    }
+}
+
+/*
+ * `bench-hashes settle RUN.tsv...`: how each nonstop cell's samples move
+ * within a visit, for the continuous-load proposal's tests (FROZEN.md,
+ * October 31, 2026). A nonstop cell's samples are its visits' trains, in
+ * order (the file's `nonstop train` line gives S samples a visit); in a
+ * settling run (`--train 0,N --nonstop-visits 1`) a cell's one train
+ * starts from the machine as the contender before it left it. For each
+ * nonstop cell, solo and shared (each step the two copies' samples
+ * together), over its trains:
+ * - first: the train's first sample's time a unit against its last
+ *   third's mean, in permille;
+ * - settled: how far into the train (ms of its samples) the time a unit
+ *   stays within SETTLE_PERMILLE of the last third's mean in every later
+ *   window of SETTLE_WINDOW samples (the trains' largest), or never;
+ * - drift: the train's last sample against its first, in permille.
+ * Then, by use case: the cells, their median and largest settled time, and
+ * the cells that never settled.
+ */
+const SETTLE_PERMILLE: u128 = 20;
+const SETTLE_WINDOW: usize = 5;
+
+/// A train's steps (ns, units): settled ms (None: never), first sample's
+/// time a unit against the last third's (permille), last against first.
+fn settle_train(steps: &[(u128, u128)]) -> (Option<u128>, u128, u128) {
+    let rate_permille = |(ns, units): (u128, u128), (tail_ns, tail_units): (u128, u128)| {
+        (ns * tail_units * 1000 + units * tail_ns / 2) / (units * tail_ns).max(1)
+    };
+    let sum = |part: &[(u128, u128)]| part.iter().fold((0, 0), |(n, u), &(a, b)| (n + a, u + b));
+    let tail = sum(&steps[steps.len() - steps.len().div_ceil(3)..]);
+    let first = rate_permille(steps[0], tail);
+    let drift = rate_permille(steps[steps.len() - 1], steps[0]);
+    let window = SETTLE_WINDOW.min(steps.len());
+    // The last window that strays; settled from the sample after its first
+    // (every window from there on holds), never when it is the train's last.
+    let strays = (0..=steps.len() - window).rev().find(|&at| {
+        let r = rate_permille(sum(&steps[at..at + window]), tail);
+        r > 1000 + SETTLE_PERMILLE || r + SETTLE_PERMILLE < 1000
+    });
+    let settled = match strays {
+        None => Some(0),
+        Some(at) if at + window < steps.len() => Some(sum(&steps[..=at]).0 / 1_000_000),
+        Some(_) => None,
+    };
+    (settled, first, drift)
+}
+
+fn settle_command(paths: &[String]) {
+    assert!(!paths.is_empty(), "usage: bench-hashes settle RUN.tsv...");
+    for path in paths {
+        let file = read_samples(path);
+        let train = file
+            .headers
+            .iter()
+            .find(|(k, _)| k == "nonstop train")
+            .unwrap_or_else(|| {
+                panic!("{path}: a `nonstop train` line (bench-hashes 0.19 or later)")
+            });
+        let samples_a_visit: usize = train
+            .1
+            .split(", ")
+            .nth(1)
+            .and_then(|part| part.strip_suffix(" samples a visit"))
+            .and_then(|n| n.parse().ok())
+            .unwrap_or_else(|| panic!("{path}: nonstop train {:?}", train.1));
+        println!("# {path}: nonstop train {}", train.1);
+        println!("contender\tscenario\tuse case\tpoint\ttrains\tfirst (permille of the last third)\tsettled (ms into the train)\tdrift (last against first, permille)");
+        let mut by_use_case: Vec<(String, Vec<Option<u128>>)> = Vec::new();
+        for (key, samples) in &file.cells {
+            let fields: Vec<&str> = key.split('|').collect();
+            let use_case = UseCase::ALL
+                .iter()
+                .find(|u| format!("{u:?}") == fields[2])
+                .unwrap_or_else(|| panic!("{path}: a use case named {}", fields[2]));
+            if use_case.after_gap() {
+                continue;
+            }
+            let shared = fields[1] == "shared";
+            let steps: Vec<(u128, u128)> = if shared {
+                samples
+                    .chunks(2)
+                    .map(|pair| {
+                        pair.iter().fold((0, 0), |(n, u), m| {
+                            (n + u128::from(m.ns), u + u128::from(m.units))
+                        })
+                    })
+                    .collect()
+            } else {
+                samples
+                    .iter()
+                    .map(|m| (u128::from(m.ns), u128::from(m.units)))
+                    .collect()
+            };
+            assert_eq!(
+                steps.len() % samples_a_visit,
+                0,
+                "{path}: {key}: whole trains"
+            );
+            let trains: Vec<_> = steps.chunks(samples_a_visit).map(settle_train).collect();
+            let settled = trains
+                .iter()
+                .map(|t| t.0)
+                .try_fold(0, |m, s| s.map(|s| s.max(m)));
+            let mean = |f: fn(&(Option<u128>, u128, u128)) -> u128| {
+                (trains.iter().map(f).sum::<u128>() + trains.len() as u128 / 2)
+                    / trains.len() as u128
+            };
+            println!(
+                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                fields[0],
+                fields[1],
+                fields[2],
+                fields[3],
+                trains.len(),
+                mean(|t| t.1),
+                settled.map_or("never".to_owned(), |ms| ms.to_string()),
+                mean(|t| t.2)
+            );
+            let group = format!("{} {}", fields[2], fields[1]);
+            match by_use_case.iter_mut().find(|(g, _)| *g == group) {
+                Some((_, v)) => v.push(settled),
+                None => by_use_case.push((group, vec![settled])),
+            }
+        }
+        println!("# by use case: cells, settled (median, largest ms), never settled");
+        for (group, mut settled) in by_use_case {
+            let never = settled.iter().filter(|s| s.is_none()).count();
+            let mut ms: Vec<u128> = settled.drain(..).flatten().collect();
+            ms.sort_unstable();
+            let (median, largest) = if ms.is_empty() {
+                (0, 0)
+            } else {
+                (ms[ms.len() / 2], ms[ms.len() - 1])
+            };
+            println!(
+                "# {group}: {} cells, settled {median} / {largest} ms, never {never}",
+                ms.len() + never
+            );
+        }
     }
 }
 
@@ -6009,6 +6301,14 @@ fn generate_samples_tsv(
     run.extend([
         ("contenders".to_owned(), selection_note.to_owned()),
         ("rounds".to_owned(), roster.rounds.to_string()),
+        (
+            "nonstop train".to_owned(),
+            format!(
+                "{} ms warm-up, {} samples a visit",
+                roster.train.warm_ns / 1_000_000,
+                roster.train.samples
+            ),
+        ),
         (
             "points".to_owned(),
             roster
@@ -6802,6 +7102,62 @@ mod correctness_tests {
             !tsv.contains("\tshared\tOneMessage\t"),
             "calls after a gap run alone: {tsv}"
         );
+    }
+
+    /// settle_train: a train that starts 50% slow for 10 samples of 1 ms
+    /// and then holds steady settles after them (10 ms); a steady one at
+    /// once; one that never comes within 2% of its last third, never.
+    #[test]
+    fn settle_train_finds_where_a_train_settles() {
+        let ms = |ns: u128| (ns, 1_000_000u128);
+        let mut slow_start: Vec<(u128, u128)> = (0..10).map(|_| ms(1_500_000)).collect();
+        slow_start.extend((0..50).map(|_| ms(1_000_000)));
+        assert_eq!(settle_train(&slow_start), (Some(15), 1500, 667));
+        let steady: Vec<(u128, u128)> = (0..30).map(|_| ms(1_000_000)).collect();
+        assert_eq!(settle_train(&steady), (Some(0), 1000, 1000));
+        let climbing: Vec<(u128, u128)> = (0..30).map(|i| ms(1_000_000 + 100_000 * i)).collect();
+        assert_eq!(settle_train(&climbing).0, None);
+    }
+
+    /// A nonstop cell's visit is a train (Train): its warm-up, then its
+    /// samples back to back, solo and in the two shared copies; a call
+    /// after a gap stays one sample a visit.
+    #[test]
+    fn nonstop_visits_take_trains() {
+        blake3_servil::initialize();
+        let mut roster = Roster::new(
+            vec![Algorithm::Blake3ServilSt, Algorithm::Sha256Ring],
+            true,
+            Some({
+                let mut points = vec![
+                    point("64 KiB", UseCase::ContinuousMessages),
+                    point("64 B", UseCase::OneMessage),
+                ];
+                points.sort_unstable();
+                points
+            }),
+            Some(2),
+            &TO_MEASURE_SPEED,
+        );
+        roster.train = Train {
+            warm_ns: 2_000_000,
+            samples: 3,
+        };
+        let (_, samples, _) = measure_all(&roster, &Sizes::Calibrate);
+        let nonstop = point("64 KiB", UseCase::ContinuousMessages);
+        let gap = point("64 B", UseCase::OneMessage);
+        for a in 0..roster.len() {
+            // Two rounds, a visit each: two trains of three.
+            assert_eq!(samples.solo[a][nonstop].len(), 2 * 3);
+            assert_eq!(samples.shared[a][nonstop].len(), 2 * 2 * 3);
+            assert_eq!(samples.solo[a][gap].len(), 2);
+            // Within a train, each sample starts after the one before.
+            let starts = &samples.solo_started_ns[a][nonstop];
+            assert!(
+                starts[..3].windows(2).all(|w| w[0] <= w[1])
+                    && starts[3..].windows(2).all(|w| w[0] <= w[1])
+            );
+        }
     }
 
     /// The samples file reads back into the figures the report prints:

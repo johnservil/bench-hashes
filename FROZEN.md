@@ -25,6 +25,35 @@ release, so results of different benchmarks are never read as alike. The
 documents that explain the benchmark (README, METHODOLOGY, CONTRIBUTING,
 the notes) may still change, to say it better.
 
+**Proposed for the next release, awaiting Zooko's decision after its
+tests** (Zooko, October 31, 2026, asking for it; bench-hashes issue to
+follow, with Devon Jonte's and Sam Shackleton's runs):
+
+- **Continuous means continuous.** The nonstop use cases ("one input after
+  another, as fast as the program can") take each sample of about 1 ms in
+  a visit of its own, between other contenders' samples: each cell meets
+  the machine after other work, for 1 ms, six times a run. At 64 MiB a
+  lent-buffer sample is one call after other work, the measurement
+  OneMessage already makes after a defined gap (the Mac's 0.8 release
+  run: 24.9 against 27.2 GB/s). Whatever settles more slowly than 1 ms is
+  measured cold in every sample: a GPU's clock (30-40 ms of load on an
+  M4 Max, the fork's tmp/metal-night probes), a core's clock, thread
+  placement. A nonstop visit will instead run the cell's own load untimed
+  for a warm-up W, then take S samples back to back, each sized as now,
+  solo, then the same for the shared copies; a cell takes fewer visits, so
+  that a run's samples and time stay close to today's. The calls after a
+  gap keep measuring the intermittent pattern, one call after a defined
+  gap.
+- **W and S from measurement, not guesses**: settling curves first (cells
+  sampled back to back from cold, for a few hundred milliseconds, on every
+  machine), then old against new runs of BLAKE3-Servil 0.8 on every
+  machine: the cells' levels, their agreement between runs, the run's
+  time. A cell whose samples within a visit still drift is reported as
+  not steady, so an untried machine cannot mislead unmarked.
+- **For the GPU work after it** (not part of this change): a cell whose
+  hash uses a GPU shows GPU busy time beside CPU time, and reports energy
+  only where its counter is known to include the GPU.
+
 **Changes for the next release** (Zooko, October 16, 2026):
 - **The batch calls take a `Batch`** (Zooko, October 28; BLAKE3 #205):
   `hash_many`, `hash_many_multithreaded` and `Stream::submit_batch` take
