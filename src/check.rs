@@ -440,10 +440,18 @@ pub fn build_against_command(arguments: &[String]) -> i32 {
     let target = std::env::var_os("CARGO_TARGET_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| checkout.join("target"));
+    // A directory no bench before the separation (0.18.3 and earlier) builds
+    // in: those built in target/build-against, from a copy at
+    // checkout/bench-hashes, under the same package name and version, so
+    // Cargo gave both layouts' build scripts one unit. Its record of a file
+    // inside the target directory (the copy here) is relative to the
+    // target, so an old bench built after a new one checked the new copy's
+    // build.rs, found it fresh, and ran the new build script (the Mac's job
+    // 1781, October 31).
     let exe = build_against(
         &checkout,
         &bench,
-        &target.join("build-against"),
+        &target.join("bench-hashes-build"),
         "build-against",
     );
     println!("{}", exe.display());
