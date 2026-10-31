@@ -1068,6 +1068,8 @@ impl Point {
  */
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Algorithm {
+    /// Explicit CPU-versus-Metal comparison, enabled by `check --metal`.
+    Blake3ServilMetal,
     Blake3,
     Sha256,
     Sha1Dc,
@@ -1090,7 +1092,8 @@ enum Algorithm {
 }
 
 impl Algorithm {
-    const ALL: [Algorithm; 9] = [
+    const ALL: [Algorithm; 10] = [
+        Algorithm::Blake3ServilMetal,
         Algorithm::Blake3,
         Algorithm::Sha256,
         Algorithm::Sha1Dc,
@@ -1105,6 +1108,7 @@ impl Algorithm {
     /// Command-line key, as in `--contenders blake3,sha256-cc`.
     fn key(self) -> &'static str {
         match self {
+            Self::Blake3ServilMetal => "blake3-servil-metal",
             Self::Blake3 => "blake3-official",
             Self::Sha256 => "sha256",
             Self::Sha1Dc => "sha1dc",
@@ -1135,6 +1139,9 @@ impl Algorithm {
     /// without a stream does, on the program's thread: a program that keeps
     /// to one thread hashes its inputs so (FROZEN.md).
     fn takes_part(self, use_case: UseCase) -> bool {
+        if self == Self::Blake3ServilMetal {
+            return use_case == UseCase::ContinuousMessages;
+        }
         let use_case = use_case.call();
         match use_case {
             UseCase::ManyMessages
@@ -1161,6 +1168,13 @@ impl Algorithm {
     /// CPU's instructions) shows up in the results, never here.
     fn availability(self) -> Result<(), String> {
         match self {
+            Self::Blake3ServilMetal => {
+                if option_env!("BENCH_METAL_SIDE").is_some() {
+                    Ok(())
+                } else {
+                    Err("enabled by check --metal".to_string())
+                }
+            }
             Self::Blake3
             | Self::Sha256
             | Self::Sha1Dc
@@ -1181,6 +1195,7 @@ impl Algorithm {
 
     fn name(self) -> &'static str {
         match self {
+            Self::Blake3ServilMetal => "BLAKE3 servil Metal comparison",
             Self::Blake3 => "BLAKE3 official",
             Self::Sha256 => "SHA-256",
             Self::Sha1Dc => "SHA-1DC",
@@ -1203,6 +1218,7 @@ impl Algorithm {
     /// (Zooko, October 24: one family, two forms, at a glance).
     fn color(self) -> &'static str {
         match self {
+            Self::Blake3ServilMetal => "#7c3aed",
             Self::Blake3 | Self::Blake3Rayon => "#3b82f6",
             Self::Sha256 => "#e07a45",
             Self::Sha1Dc => "#8a7a1e",
@@ -1222,6 +1238,7 @@ impl Algorithm {
     /// The Cargo.lock description of the crate that implements this contender.
     fn source(self) -> &'static str {
         match self {
+            Self::Blake3ServilMetal => BLAKE3_SERVIL_SOURCE_INFO,
             Self::Blake3 => BLAKE3_SOURCE_INFO,
             Self::Sha256 => SHA2_SOURCE_INFO,
             Self::Sha1Dc => SHA1_CHECKED_SOURCE_INFO,
@@ -1238,6 +1255,12 @@ impl Algorithm {
     /// report header.
     fn mode(self) -> &'static str {
         match self {
+            Self::Blake3ServilMetal => {
+                #[cfg(bench_metal)]
+                { "the fork's Metal stream (metal::Hasher::stream): messages of the GPU's threshold and more on the GPU, shorter ones on the CPU pool; a metal::Hasher per calling thread, kept" }
+                #[cfg(not(bench_metal))]
+                { "the fork's CPU stream, the Metal comparison's baseline" }
+            },
             Self::Blake3 => "single-threaded; blake3::hash for one message, the crate's hidden batch function blake3::platform::Platform::hash_many::<N> for a batch, sixteen messages per call",
             Self::Sha256
             | Self::Sha1Dc
@@ -2075,7 +2098,10 @@ fn main() {
     };
     // A program that calls the fork's multithreaded entry points or its
     // queue starts their threads once, first: the fork's contract.
-    if algorithms.contains(&Algorithm::Blake3ServilMt) {
+    if algorithms
+        .iter()
+        .any(|a| matches!(a, Algorithm::Blake3ServilMt | Algorithm::Blake3ServilMetal))
+    {
         blake3_servil::initialize_multithreaded(threads);
     }
     let roster = Roster::new(algorithms, quick, points, rounds, visits);
@@ -2854,6 +2880,9 @@ fn observe_call(call: &'static str) {
 /// once, before the gap; every result remains observable to the optimizer.
 fn one_message_call(algorithm: Algorithm) -> fn(&[u8], usize) {
     match algorithm {
+        Algorithm::Blake3ServilMetal => {
+            unreachable!("Metal takes part in ContinuousMessages alone")
+        }
         Algorithm::Blake3 => |blocks, len| use_digest(blake3::hash(&blocks[..len]).as_bytes()),
         Algorithm::Blake3ServilSt => |blocks, len| {
             let input = &blocks[..len];
@@ -3030,6 +3059,9 @@ fn hash_messages(
     }
     let input = if batch { input } else { &input[..message_len] };
     match algorithm {
+        Algorithm::Blake3ServilMetal => {
+            unreachable!("Metal takes part in ContinuousMessages alone")
+        }
         Algorithm::Blake3 => {
             // The crate's hidden batch function hashes each message as one
             // chunk: longer messages, as a program would, one call each.
@@ -3311,6 +3343,7 @@ fn hash_stream(algorithm: Algorithm, input: &[u8], iterations: usize, consume: i
     use sha1_checked::digest::Update as _;
     use sha2::Digest as _;
     match algorithm {
+        Algorithm::Blake3ServilMetal => unreachable!("Metal has no incremental API"),
         Algorithm::Blake3 => each_stream(
             input,
             iterations,
@@ -3434,6 +3467,7 @@ fn hash_interleaved(
     use sha2::Digest as _;
     let key = algorithm.key();
     match algorithm {
+        Algorithm::Blake3ServilMetal => unreachable!("Metal has no incremental API"),
         Algorithm::Blake3 => each_interleaved(
             key,
             input,
@@ -3728,7 +3762,47 @@ fn hash_continuous_messages(
 ) {
     // The message's `len` bytes; `blocks`, its whole blocks (UseCase::in_blocks).
     let input = &blocks[..len];
-    if algorithm == Algorithm::Blake3ServilMt {
+    #[cfg(bench_metal)]
+    if algorithm == Algorithm::Blake3ServilMetal {
+        // Each message read straight into the Metal stream's own memory
+        // (submit_with), its digest into a kept place, as the fork's stream.
+        let mut places = take_places(STREAM_PLACES_PER_MESSAGE);
+        let free = std::cell::RefCell::new(places.chunks_mut(1).collect::<Vec<_>>());
+        METAL_HASHER.with(|hasher| {
+            hasher.borrow_mut().stream(
+                blake3_servil::Mode::Plain,
+                |place: &mut [blake3_servil::Hash]| {
+                    consume(place[0].as_bytes());
+                    free.borrow_mut().push(place);
+                },
+                |s| {
+                    for _ in 0..iterations {
+                        let message = black_box(input);
+                        let place = loop {
+                            if let Some(place) = free.borrow_mut().pop() {
+                                break place;
+                            }
+                            s.collect();
+                        };
+                        s.submit_with(
+                            message.len(),
+                            |at, room| {
+                                room.copy_from_slice(&message[at..][..room.len()]);
+                                room.len()
+                            },
+                            &mut place[0],
+                        );
+                    }
+                    s.finish();
+                },
+            )
+        });
+        drop(free);
+        return keep_places(places);
+    }
+    // The Metal contender without Metal (the check's baseline) streams on
+    // the CPU, as servil mt does.
+    if algorithm == Algorithm::Blake3ServilMt || algorithm == Algorithm::Blake3ServilMetal {
         // Each message read straight into the stream's ring (submit_with),
         // its digest into a kept place, used as the place comes back and
         // the place used again.
@@ -3943,6 +4017,7 @@ fn hash_tree_layer(
     let messages = input.len() / message_len;
     let prefix = [node.prefix()];
     match algorithm {
+        Algorithm::Blake3ServilMetal => unreachable!("Metal has no keyed API"),
         Algorithm::Blake3 => blake3_batch(input, message_len, Some(node.key()), 1, consume),
         Algorithm::Blake3ServilSt => servil_batch(
             input,
@@ -4666,6 +4741,12 @@ impl Duo {
              * instruction stream when the release comes, within a
              * microsecond of it.
              */
+            // Shared workers have their own context; pipeline compilation
+            // precedes the start barrier, as it does for solo calibration.
+            #[cfg(bench_metal)]
+            if job.algorithm == Algorithm::Blake3ServilMetal {
+                METAL_HASHER.with(|_| ());
+            }
             self.ready.fetch_add(1, Ordering::AcqRel);
             while self.generation.load(Ordering::Acquire) == seen {
                 std::thread::yield_now();
@@ -6004,7 +6085,12 @@ fn generate_samples_tsv(
     let mut run: Vec<(String, String)> = roster
         .algorithms
         .iter()
-        .map(|a| (format!("source {}", a.key()), a.source().to_owned()))
+        .flat_map(|a| {
+            [
+                (format!("source {}", a.key()), a.source().to_owned()),
+                (format!("mode {}", a.key()), a.mode().to_owned()),
+            ]
+        })
         .collect();
     run.extend([
         ("contenders".to_owned(), selection_note.to_owned()),
@@ -7214,4 +7300,19 @@ mod correctness_tests {
         assert!(clocks::since_ns(started) >= 3 * GAP_NS);
         assert!(sample.elapsed_ns < GAP_NS, "{}", sample.elapsed_ns);
     }
+}
+
+#[cfg(all(test, bench_metal))]
+static METAL_CONTEXT_READY: std::sync::Mutex<Vec<u64>> = std::sync::Mutex::new(Vec::new());
+
+// One Metal context per calling thread, initialized before timing and
+// reused; inputs, gaps, completion timing and clocks are the harness's.
+#[cfg(bench_metal)]
+thread_local! {
+    static METAL_HASHER: std::cell::RefCell<blake3_servil::metal::Hasher> = {
+        let hasher = blake3_servil::metal::Hasher::new().expect("Metal device");
+        #[cfg(test)]
+        METAL_CONTEXT_READY.lock().unwrap().push(clocks::load::now_ns());
+        std::cell::RefCell::new(hasher)
+    };
 }

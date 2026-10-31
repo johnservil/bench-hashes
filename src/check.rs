@@ -71,13 +71,21 @@ const SECOND_PAIRS: usize = 16;
 const SUBJECTS: [&str; 2] = ["blake3-servil-st", "blake3-servil-mt"];
 
 pub fn command(arguments: &[String]) -> i32 {
-    let usage = "usage: bench-hashes check [--against REV] [--old-bench REV] [--cells all] [--pairs N] [--keep DIR]";
+    let usage = "usage: bench-hashes check [--against REV] [--old-bench REV] [--cells all] [--pairs N] [--keep DIR] [--metal]";
     let (mut against, mut all, mut pairs, mut keep) =
         ("HEAD".to_string(), false, PAIRS, None::<PathBuf>);
     let mut old_bench_rev = None::<String>;
+    let mut metal = false;
     let mut it = arguments.iter();
     while let Some(name) = it.next() {
         match name.as_str() {
+            "--metal" => {
+                assert!(
+                    cfg!(all(target_os = "macos", target_arch = "aarch64")),
+                    "--metal requires Apple Silicon macOS"
+                );
+                metal = true;
+            }
             "--against" => {
                 against = it
                     .next()
@@ -124,7 +132,12 @@ pub fn command(arguments: &[String]) -> i32 {
         against,
         &old[..12]
     );
-    let cache = fork.join("target").join("check");
+    let cache = fork
+        .join("target")
+        .join(if metal { "check-metal" } else { "check" });
+    if metal {
+        eprintln!("check: the fork's CPU stream (the baseline) versus its Metal stream, every ContinuousMessages size");
+    }
     std::fs::create_dir_all(&cache).expect("the check's cache directory");
     // The old side's bench: this one, or this repository at --old-bench.
     let old_bench = match &old_bench_rev {
@@ -157,12 +170,21 @@ pub fn command(arguments: &[String]) -> i32 {
             dir
         }
     };
-    let old_exe = side(&fork, &old_bench, &cache, "old", &old);
-    let new_exe = side(&fork, &bench, &cache, "new", &new);
+    let old_exe = side(
+        &fork,
+        &old_bench,
+        &cache,
+        "old",
+        &old,
+        metal.then_some("old"),
+    );
+    let new_exe = side(&fork, &bench, &cache, "new", &new, metal.then_some("new"));
     // The cells a change touches, from the new side's coverage.
     // The cells a change touches: (contender, point), from the new side's
     // coverage; a run measures their contenders over their points.
-    let (contenders, points): (Vec<String>, Option<Vec<String>>) = if all {
+    let (contenders, points): (Vec<String>, Option<Vec<String>>) = if metal {
+        (vec!["blake3-servil-metal".to_string()], None)
+    } else if all {
         (SUBJECTS.iter().map(|s| s.to_string()).collect(), None)
     } else {
         let cells = touched_cells(
@@ -199,8 +221,22 @@ pub fn command(arguments: &[String]) -> i32 {
             Some(points.into_iter().collect()),
         )
     };
-    let olds = layouts(&old_bench, &cache, "old", &old_exe, 0..pairs);
-    let news = layouts(&bench, &cache, "new", &new_exe, pairs..2 * pairs);
+    let olds = layouts(
+        &old_bench,
+        &cache,
+        "old",
+        &old_exe,
+        0..pairs,
+        metal.then_some("old"),
+    );
+    let news = layouts(
+        &bench,
+        &cache,
+        "new",
+        &new_exe,
+        pairs..2 * pairs,
+        metal.then_some("new"),
+    );
     let mut regress: Vec<String> = vec![
         "regress".into(),
         "--pairs".into(),
@@ -248,6 +284,7 @@ pub fn command(arguments: &[String]) -> i32 {
         "old",
         &old_exe,
         first..first + SECOND_PAIRS,
+        metal.then_some("old"),
     );
     let news = layouts(
         &bench,
@@ -255,6 +292,7 @@ pub fn command(arguments: &[String]) -> i32 {
         "new",
         &new_exe,
         first + SECOND_PAIRS..first + 2 * SECOND_PAIRS,
+        metal.then_some("new"),
     );
     let mut second: Vec<String> = vec![
         "regress".into(),
@@ -385,7 +423,14 @@ fn working_tree_commit(fork: &Path) -> String {
 /// changes), this bench's sources copied beside it, Cargo pointed at the
 /// worktree for the fork, keeping the bench's pinned clocks, and a target
 /// directory of the side's own, so an unchanged side rebuilds nothing.
-fn side(fork: &Path, bench: &Path, cache: &Path, name: &str, commit: &str) -> PathBuf {
+fn side(
+    fork: &Path,
+    bench: &Path,
+    cache: &Path,
+    name: &str,
+    commit: &str,
+    metal: Option<&'static str>,
+) -> PathBuf {
     let checkout = cache.join(name).join("src");
     if !checkout.exists() {
         git(fork, &["worktree", "prune"]);
@@ -406,7 +451,13 @@ fn side(fork: &Path, bench: &Path, cache: &Path, name: &str, commit: &str) -> Pa
             &["checkout", "--quiet", "--force", "--detach", commit],
         );
     }
-    build_against(&checkout, bench, &cache.join(name).join("target"), name)
+    build_side(
+        &checkout,
+        bench,
+        &cache.join(name).join("target"),
+        name,
+        metal,
+    )
 }
 
 /// `bench-hashes build-against DIR`: this bench built against the fork
@@ -446,6 +497,18 @@ pub fn build_against_command(arguments: &[String]) -> i32 {
 /// runner's benchmark jobs build this way, and so does a maintainer
 /// measuring the working tree (`bench-hashes build-against ..`).
 pub fn build_against(checkout: &Path, bench: &Path, target: &Path, name: &str) -> PathBuf {
+    build_side(checkout, bench, target, name, None)
+}
+
+/// The comparison enables Metal only on the candidate; the baseline can
+/// predate the API. Both report their actual implementation in provenance.
+fn build_side(
+    checkout: &Path,
+    bench: &Path,
+    target: &Path,
+    name: &str,
+    metal: Option<&'static str>,
+) -> PathBuf {
     let commit = git(checkout, &["rev-parse", "HEAD"]);
     // The copy sits directly in the checkout (build.rs finds the fork at
     // ..). Where the bench itself is nested there, as bench-hashes, that
@@ -481,8 +544,9 @@ pub fn build_against(checkout: &Path, bench: &Path, target: &Path, name: &str) -
         "check: {name}: cargo update: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let out = Command::new("cargo")
+    let out = metal_build(metal)
         .args(["--config", &patch_fork, "build", "--release", "--quiet"])
+        .args(metal_features(metal))
         .current_dir(&copy)
         .env("CARGO_TARGET_DIR", &target)
         .env("BENCH_HASHES_CHECKOUT", bench)
@@ -605,6 +669,7 @@ fn layouts(
     name: &str,
     exe: &Path,
     seeds: std::ops::Range<usize>,
+    metal: Option<&'static str>,
 ) -> Vec<String> {
     let nm = Command::new("nm").arg(exe).output().expect("nm runs");
     let text = String::from_utf8_lossy(&nm.stdout).into_owned();
@@ -637,7 +702,7 @@ fn layouts(
                 "-Clink-arg=-Wl,--no-warn-symbol-ordering".into(),
             ]
         };
-        let out = Command::new("cargo")
+        let out = metal_build(metal)
             .args([
                 "--config",
                 &patch_fork,
@@ -646,8 +711,9 @@ fn layouts(
                 "--quiet",
                 "--bin",
                 "bench-hashes",
-                "--",
             ])
+            .args(metal_features(metal))
+            .arg("--")
             .args(&flags)
             .current_dir(&copy)
             .env("CARGO_TARGET_DIR", side_dir.join("target"))
@@ -1216,5 +1282,23 @@ mod tests {
                 .expect("this bench's use case");
             assert_eq!(super::super::point_named(&label), index, "{label}");
         }
+    }
+}
+
+// Keep each randomized relink on the same configuration as its first build.
+fn metal_build(side: Option<&str>) -> Command {
+    let mut command = Command::new("cargo");
+    command.env_remove("BENCH_METAL");
+    if let Some(side) = side {
+        command.env("BENCH_METAL", side);
+    }
+    command
+}
+
+fn metal_features(side: Option<&str>) -> Vec<&'static str> {
+    if side == Some("new") {
+        vec!["--features", "blake3-servil/metal"]
+    } else {
+        Vec::new()
     }
 }

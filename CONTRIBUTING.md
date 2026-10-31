@@ -128,3 +128,34 @@ the open work is in the issues. Contributing needs neither. A release is
 to X.Y.Z+<HEAD's hash>, and its tag. `METHODOLOGY.md` explains why the measurement works as it does,
 should you want to change it; earlier findings are in `git log`, and in the
 notes the tree held until commit `aadeca9d`.
+
+## Experimental Metal comparison
+
+On Apple Silicon macOS, with a fork checkout containing the experimental
+`metal` feature, compare its Metal stream with its CPU stream:
+
+```sh
+cargo run --release -- check --against OLD --metal --keep /tmp/metal
+```
+
+The old build streams on the CPU (`performance::stream`); the new build
+enables the fork's Metal feature and streams through `metal::Hasher::stream`,
+which hashes messages of the GPU's threshold and more on the GPU and shorter
+ones on the CPU pool. Both use the `blake3-servil-metal` comparison key, and
+each report names its implementation. The baseline can predate the Metal
+API. The comparison measures every ContinuousMessages size, each message
+copied into the stream's own memory as the workload says; a Metal context
+is created on each calling thread before timing and kept. Wall time and
+calling-thread core cycles come from `clocks`; those cycles exclude GPU
+work. The usual paired runs, random link layouts, load checks, statistical
+rule and exit statuses apply, and the frozen CPU workloads stay unchanged.
+
+A calibrated sample holds one or two large messages in a fresh stream, too
+few for the GPU's clock to catch up with. On an M4 Pro the Metal stream
+reads level at every continuous size but 64 MiB shared, 30% slower: two
+callers' two-message streams serialize on a GPU in a low state, against
+fourteen cores taking both callers at once. A sustained stream is measured as a
+labelled diagnostic: run each side's layouts with `--sizes` naming many
+messages a sample, and compare the kept samples. On an M4 Pro the Metal
+stream then takes 53-59% of the CPU stream's time solo at 4-64 MiB and
+57-67% shared, at 5% of the CPU time.

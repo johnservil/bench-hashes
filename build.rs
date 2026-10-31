@@ -12,6 +12,18 @@ fn hash_framed(hasher: &mut Hasher, label: &[u8], contents: &[u8]) {
 }
 
 fn main() {
+    println!("cargo:rustc-check-cfg=cfg(bench_metal)");
+    println!("cargo:rerun-if-env-changed=BENCH_METAL");
+    // The Metal comparison's sides: "new" runs the Metal stream, "old" the
+    // CPU stream under the same contender name.
+    if let Ok(side) = env::var("BENCH_METAL") {
+        assert!(side == "old" || side == "new", "BENCH_METAL is old or new");
+        println!("cargo:rustc-env=BENCH_METAL_SIDE={side}");
+        if side == "new" {
+            println!("cargo:rustc-cfg=bench_metal");
+        }
+    }
+
     let manifest_dir = PathBuf::from(
         env::var_os("CARGO_MANIFEST_DIR").expect("Cargo must provide CARGO_MANIFEST_DIR"),
     );

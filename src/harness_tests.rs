@@ -280,7 +280,7 @@ fn a_merkle_tree_has_the_root_of_its_layers_hashed_node_by_node() {
             }
             Algorithm::Sha1Dc => &sha1_root,
             Algorithm::Sha3_256 => &sha3_root,
-            Algorithm::Blake3Rayon => {
+            Algorithm::Blake3Rayon | Algorithm::Blake3ServilMetal => {
                 unreachable!("{} takes no part in a Merkle tree", algorithm.key())
             }
         };
@@ -390,4 +390,30 @@ fn every_message_in_blocks_hashes_its_own_bytes() {
             );
         }
     }
+}
+
+#[cfg(bench_metal)]
+#[test]
+fn shared_metal_contexts_are_ready_before_timing() {
+    blake3_servil::initialize_multithreaded(None);
+    let len = 1024;
+    let input = make_input(len);
+    let samples = Duo::new().run(
+        Algorithm::Blake3ServilMetal,
+        &input,
+        &input,
+        Point::continuous("", len),
+        1,
+    );
+    let initialized = METAL_CONTEXT_READY.lock().unwrap();
+    assert_eq!(initialized.len(), 2, "each shared worker owns a context");
+    let first_sample = samples
+        .iter()
+        .map(|sample| sample.started_ns)
+        .min()
+        .unwrap();
+    assert!(
+        initialized.iter().all(|&ready| ready <= first_sample),
+        "both pipelines are created before either worker starts timing"
+    );
 }
