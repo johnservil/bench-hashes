@@ -123,8 +123,41 @@ the page", has the whole practice. Check a change with
 ## Maintainers' notes
 
 `AGENTS.md` holds the maintainers' principles and the repository's shape;
-the open work is in the issues. Contributing needs neither. A release is
-`python3 tools/gen-ver.py X.Y.Z` from a clean tree: one commit setting the version
-to X.Y.Z+<HEAD's hash>, and its tag. `METHODOLOGY.md` explains why the measurement works as it does,
+the open work is in the issues. Contributing needs neither.
+`METHODOLOGY.md` explains why the measurement works as it does,
 should you want to change it; earlier findings are in `git log`, and in the
 notes the tree held until commit `aadeca9d`.
+
+## Releases
+
+The overview shows one release a page, so a release is the moment every
+machine runs again. In order:
+
+1. **What it carries:** each entry under FROZEN.md's "Changes for the next
+   release", and the two pins (BLAKE3 servil's commit, the clocks), each a
+   commit that passed the fork's own checks.
+2. **Checks on main:** `cargo nextest run --release`, `cargo fmt --check`,
+   and a `--quick` run that reports no busy window.
+3. **The tag:** `python3 tools/gen-ver.py X.Y.Z` from a clean tree: one
+   commit setting the version to X.Y.Z+<HEAD's hash>, and its tag.
+4. **Every machine runs again at the tag,** each on a quiet machine,
+   plugged in, with the CPU governor at `performance` (a tuning service
+   such as `tuned` can reset it mid-run). A machine's run is:
+   - the fork's release check and, beside it, the same check with the same
+     library on both sides (`--against` the measured commit, `--old-bench`
+     the previous bench). A cell slower in the first and level in the
+     second is the library's; slower in both, the bench's;
+   - the full run, built against the fork's checkout, never through a
+     `--config` patch (Cargo's lock can build the pin instead):
+     `bench-hashes build-against ..`, then the executable it prints, with
+     `--all --expect-servil COMMIT`, from a scratch directory;
+   - the b3sum run, `LAYOUTS=4 python3 tools/b3sum-contenders.py`.
+
+   Check each report names the commit you meant, before you read its numbers.
+5. **The results:** each machine's folder under `benchmark-results/` as
+   the run wrote it, with SHA-256 and BLAKE3 manifests.
+6. **The overview**, once the machines are in: `cargo run --release --
+   overview index.html benchmark-results` (its test fails while it is
+   stale).
+7. **FROZEN.md:** the released entries leave "Changes for the next
+   release" and stand under the release's version.
