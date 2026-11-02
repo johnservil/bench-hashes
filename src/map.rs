@@ -463,18 +463,20 @@ fn details(
     let servil = servil_source(headers);
     if let Some(at) = servil.split("; commit ").nth(1) {
         let fork = at.split([';', ' ']).next().unwrap_or("");
-        // The repository the run's code came from, as its header records it.
+        // The repository the run's code came from, as its header records it:
+        // none where the checkout's origin is a local path (a clone of a
+        // clone), and then the row has no link. (An expect here once ended
+        // a run after it had measured, before its report and map.)
         let repo = servil
             .split("; source https://")
             .nth(1)
-            .and_then(|r| r.split(';').next())
-            .expect("the blake3-servil source names its repository");
+            .and_then(|r| r.split(';').next());
         // Its source as the run recorded it (version, commit, clean status),
-        // linked to the commit.
+        // linked to the commit where the repository is known.
         add(
             "BLAKE3 servil",
             servil.to_owned(),
-            format!("https://{repo}/tree/{fork}"),
+            repo.map_or(String::new(), |repo| format!("https://{repo}/tree/{fork}")),
         );
     }
     // Every other contender's source, as the run recorded it.
@@ -973,4 +975,32 @@ pub fn command(args: &[String]) {
         write(Path::new(dir), old),
         "{dir} holds no samples file with cells (bench-hashes.samples.tsv, b3sum.samples.tsv)"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    /// The door's BLAKE3 servil row: linked to its commit where the source
+    /// names a repository, and unlinked, not a panic, where the checkout's
+    /// origin is a local path.
+    #[test]
+    fn the_servil_row_links_its_commit_where_the_repository_is_known() {
+        let c = "9c25ed9ef6b3cb12c2ca8c77955663feeb2f09fa";
+        let row = |source: &str| {
+            let line = format!("blake3-servil 0.8.0+09d3bbc6 (local checkout); source {source}; branch HEAD; commit {c}; clean; multithreaded");
+            let headers = vec![("source blake3-servil-mt".to_owned(), line)];
+            super::details(&headers, "", "", "bench-hashes.samples.tsv")
+                .into_iter()
+                .find(|(label, _, _)| label == "BLAKE3 servil")
+                .expect("a BLAKE3 servil row")
+        };
+        let (_, text, link) = row("https://github.com/johnservil/BLAKE3");
+        assert_eq!(
+            link,
+            format!("https://github.com/johnservil/BLAKE3/tree/{c}")
+        );
+        assert!(text.contains(c));
+        let (_, text, link) = row("/root/pinned-runs/run/probe");
+        assert_eq!(link, "");
+        assert!(text.contains("source /root/pinned-runs/run/probe"));
+    }
 }
