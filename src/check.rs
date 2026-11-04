@@ -247,7 +247,7 @@ pub fn command(arguments: &[String]) -> i32 {
                     list(&changed)
                 )
             }
-            None => eprintln!("check: no same-code comparison on this machine's executable format (ELF only); measuring"),
+            None => eprintln!("check: no same-code comparison on this machine's executable format (ELF and Mach-O only); measuring"),
         }
     }
     let old_exe = side(&fork, &old_bench, &cache, "old", &old);
@@ -552,7 +552,7 @@ fn side(fork: &Path, bench: &Path, cache: &Path, name: &str, commit: &str) -> Pa
 /// one target directory, and compared (crate::samecode, with the commits
 /// and the panic locations' lines masked): at two paths every build
 /// differs, at one only what the change alters (bench-hashes #125). None
-/// where the executable is not ELF.
+/// where the executable is neither ELF nor Mach-O.
 fn same_path_verdict(
     fork: &Path,
     bench: &Path,

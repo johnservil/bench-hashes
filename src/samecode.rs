@@ -44,6 +44,8 @@ const RELATIVE: [u32; 2] = [8, 1027];
 /// string sections; and, for Mach-O, its base address.
 struct Image {
     sections: BTreeMap<String, (u64, u64, Vec<u8>)>,
+    // Read by the tests, which edit a copy of a binary at a section's offset.
+    #[cfg_attr(not(all(test, target_os = "macos")), allow(dead_code))]
     offsets: BTreeMap<String, usize>,
     relocs: HashMap<u64, u64>,
     text: &'static str,
