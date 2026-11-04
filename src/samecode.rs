@@ -41,15 +41,14 @@ const RELATIVE: [u32; 2] = [8, 1027];
 /// An executable's allocated sections (name: address, size, contents, the
 /// contents empty for NOBITS or zero-fill) and each one's file offset; its
 /// relative relocations (where: target), ELF's; the names of its code and
-/// string sections; and, for Mach-O, its base address and its functions'
-/// symbols (address, name, demangled), in the code section.
+/// string sections; and, for Mach-O, its base address.
 struct Image {
     sections: BTreeMap<String, (u64, u64, Vec<u8>)>,
     offsets: BTreeMap<String, usize>,
     relocs: HashMap<u64, u64>,
     text: &'static str,
     strings: &'static str,
-    macho: Option<(u64, Vec<(u64, String)>)>,
+    macho: Option<u64>,
 }
 
 impl Image {
@@ -62,7 +61,7 @@ impl Image {
         match &self.macho {
             None => vec![self.relocs.get(&at).copied().unwrap_or(raw)],
             Some(_) if raw >> 63 == 1 => Vec::new(),
-            Some((base, _)) => {
+            Some(base) => {
                 let target = (raw & 0xF_FFFF_FFFF) | ((raw >> 36) & 0xFF) << 56;
                 vec![target, target.wrapping_add(*base)]
             }
@@ -151,20 +150,19 @@ fn read(path: &Path) -> Option<Image> {
 }
 
 const MH_MAGIC_64: u32 = 0xFEED_FACF;
-const LC_SYMTAB: u32 = 0x2;
 const LC_SEGMENT_64: u32 = 0x19;
 /// A Mach-O section's types whose contents are not in the file.
 const ZERO_FILL: [u32; 3] = [0x1, 0xC, 0x12];
 
 /// A 64-bit Mach-O file's image (its magic read already): every section of
-/// every segment, and the defined symbols of `__TEXT,__text`.
+/// every segment.
 fn read_macho(d: &[u8]) -> Image {
     let fixed = |b: &[u8]| {
         String::from_utf8_lossy(&b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())])
             .into_owned()
     };
     let (mut sections, mut offsets) = (BTreeMap::new(), BTreeMap::new());
-    let (mut order, mut base, mut symtab) = (Vec::new(), None, None);
+    let mut base = None;
     let mut o = 32;
     for _ in 0..u32_at(d, 16) {
         let (cmd, size) = (u32_at(d, o), u32_at(d, o + 4) as usize);
@@ -186,89 +184,20 @@ fn read_macho(d: &[u8]) -> Image {
                 } else {
                     d[offset..offset + len as usize].to_vec()
                 };
-                order.push(name.clone());
                 offsets.insert(name.clone(), offset);
                 sections.insert(name, (addr, len, body));
             }
-        } else if cmd == LC_SYMTAB {
-            symtab = Some((
-                u32_at(d, o + 8) as usize,
-                u32_at(d, o + 12) as usize,
-                u32_at(d, o + 16) as usize,
-            ));
         }
         o += size;
     }
-    // The defined symbols of __TEXT,__text: nlist_64 entries of type N_SECT,
-    // no debugging entry, whose section (counted from 1) is it.
-    let mut symbols = Vec::new();
-    if let (Some((symoff, nsyms, stroff)), Some(text)) =
-        (symtab, order.iter().position(|n| n == "__TEXT,__text"))
-    {
-        for i in 0..nsyms {
-            let e = symoff + 16 * i;
-            let (strx, kind, sect) = (u32_at(d, e) as usize, d[e + 4], d[e + 5] as usize);
-            if kind & 0xE0 == 0 && kind & 0x0E == 0x0E && sect == text + 1 {
-                symbols.push((u64_at(d, e + 8), demangle(&fixed(&d[stroff + strx..]))));
-            }
-        }
-    }
-    symbols.sort();
     Image {
         sections,
         offsets,
         relocs: HashMap::new(),
         text: "__TEXT,__text",
         strings: "__TEXT,__const",
-        macho: Some((base.unwrap_or(0), symbols)),
+        macho: Some(base.unwrap_or(0)),
     }
-}
-
-/// A Rust symbol's name, demangled as `nm -C` does (legacy mangling: the
-/// path's parts by length, their escapes, and the hash dropped later); a C
-/// symbol without its leading underscore, as it is.
-fn demangle(symbol: &str) -> String {
-    let s = symbol.strip_prefix('_').unwrap_or(symbol);
-    let Some(mut rest) = s.strip_prefix("_ZN") else {
-        return s.to_string();
-    };
-    let mut parts = Vec::new();
-    while let Some(len_end) = rest.find(|c: char| !c.is_ascii_digit()).filter(|&i| i > 0) {
-        let len: usize = rest[..len_end].parse().unwrap();
-        let Some(part) = rest.get(len_end..len_end + len) else {
-            return s.to_string();
-        };
-        parts.push(
-            part.strip_prefix("_$")
-                .map_or(part.to_string(), |p| format!("${p}")),
-        );
-        rest = &rest[len_end + len..];
-    }
-    let mut name = parts.join("::");
-    for (escape, ch) in [
-        ("$LT$", "<"),
-        ("$GT$", ">"),
-        ("$RF$", "&"),
-        ("$BP$", "*"),
-        ("$C$", ","),
-        ("$SP$", "@"),
-        ("$u20$", " "),
-        ("$u27$", "'"),
-        ("$u5b$", "["),
-        ("$u5d$", "]"),
-        ("$u7b$", "{"),
-        ("$u7d$", "}"),
-        ("$u7e$", "~"),
-        ("$u3b$", ";"),
-        ("$u2b$", "+"),
-        ("$u22$", "\""),
-        ("$LP$", "("),
-        ("$RP$", ")"),
-        ("..", "::"),
-    ] {
-        name = name.replace(escape, ch);
-    }
-    name
 }
 
 /// Every panic location's line and column in `image`, zeroed: a
@@ -343,28 +272,58 @@ pub enum Verdict {
     },
 }
 
-/// Each function's sizes and bytes, by name: on Mach-O from the image's
-/// symbols, each running to the next; on ELF by nm -S -C over the symbol table.
+/// Each function's sizes and bytes, by name: on ELF by nm -S -C over the
+/// symbol table; on Mach-O, whose symbols record no size, by nm -n -C, each
+/// function running to the next symbol in the code section.
 fn functions_of(path: &Path, image: &Image) -> BTreeMap<String, Vec<(u64, Vec<u8>)>> {
     let text = image.sections.get(image.text);
-    let Some((_, symbols)) = &image.macho else {
+    if image.macho.is_none() {
         return functions(path, text);
-    };
-    let mut found: BTreeMap<String, Vec<(u64, Vec<u8>)>> = BTreeMap::new();
+    }
     let (start, len, body) = text.cloned().unwrap_or_default();
+    let symbols: Vec<(u64, String)> = sorted_symbols(path)
+        .into_iter()
+        .filter(|(addr, _)| (start..start + len).contains(addr))
+        .collect();
+    let mut found: BTreeMap<String, Vec<(u64, Vec<u8>)>> = BTreeMap::new();
     for (i, (addr, symbol)) in symbols.iter().enumerate() {
         let end = symbols.get(i + 1).map_or(start + len, |s| s.0);
-        let name = strip_hash(symbol);
         let (o, e) = ((addr - start) as usize, (end - start) as usize);
-        found.entry(name.to_string()).or_default().push((
-            end - addr,
-            body.get(o..e.min(body.len())).unwrap_or_default().to_vec(),
-        ));
+        found
+            .entry(strip_hash(symbol).to_string())
+            .or_default()
+            .push((
+                end - addr,
+                body.get(o..e.min(body.len())).unwrap_or_default().to_vec(),
+            ));
     }
     for v in found.values_mut() {
         v.sort();
     }
     found
+}
+
+/// The code symbols of `path`, demangled, by address (nm -n -C).
+fn sorted_symbols(path: &Path) -> Vec<(u64, String)> {
+    let out = Command::new("nm")
+        .args(["-n", "-C", "--defined-only"])
+        .arg(path)
+        .output()
+        .expect("nm runs");
+    assert!(
+        out.status.success(),
+        "nm {}: {}",
+        path.display(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|line| {
+            let f: Vec<&str> = line.splitn(3, ' ').collect();
+            let addr = u64::from_str_radix(f.first()?, 16).ok()?;
+            (f.len() == 3 && matches!(f[1], "t" | "T")).then(|| (addr, f[2].to_string()))
+        })
+        .collect()
 }
 
 /// A demangled name without the legacy mangling's hash (`::h` and 16 hex digits).
@@ -630,8 +589,8 @@ mod macho_tests {
         std::hint::black_box(x).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0x1234
     }
 
-    /// A copy of this test binary, changed by `edit`. (The copy's code
-    /// signature no longer matches; it is read, never run.)
+    /// A copy of this test binary, changed by `edit` (its code signature no
+    /// longer matches; it is read, never run).
     fn copy_with(tag: &str, edit: impl FnOnce(&mut Vec<u8>)) -> std::path::PathBuf {
         let exe = std::env::current_exe().unwrap();
         let dir = std::env::temp_dir().join(format!("samecode-{}-{tag}", std::process::id()));
@@ -648,19 +607,25 @@ mod macho_tests {
         image.offsets[section] + (addr - image.sections[section].0) as usize
     }
 
+    /// The marker's address and its name, as nm demangles it.
+    fn marker(exe: &Path) -> (u64, String) {
+        sorted_symbols(exe)
+            .into_iter()
+            .find(|(_, n)| n.ends_with("samecode::macho_tests::marker_function"))
+            .expect("the marker, demangled by nm")
+    }
+
     #[test]
     fn this_test_binary_reads_as_mach_o() {
-        let image = read(&std::env::current_exe().unwrap()).expect("a Mach-O image");
+        let exe = std::env::current_exe().unwrap();
+        let image = read(&exe).expect("a Mach-O image");
         assert!(
             image.sections.contains_key("__TEXT,__text")
                 && image.sections.contains_key("__TEXT,__const")
         );
-        let (_, symbols) = image.macho.as_ref().unwrap();
         assert!(
-            symbols
-                .iter()
-                .any(|(_, n)| n.contains("samecode::macho_tests::marker_function")),
-            "demangled symbols"
+            functions_of(&exe, &image).contains_key(&marker(&exe).1),
+            "the marker among the functions"
         );
     }
 
@@ -679,24 +644,7 @@ mod macho_tests {
             std::hint::black_box(1u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0x1234
         );
         let image = read(&exe).unwrap();
-        let (_, symbols) = image.macho.as_ref().unwrap();
-        let (addr, name) = symbols
-            .iter()
-            .find(|(_, n)| n.contains("samecode::macho_tests::marker_function"))
-            .unwrap_or_else(|| {
-                let near: Vec<&String> = symbols
-                    .iter()
-                    .map(|(_, n)| n)
-                    .filter(|n| n.contains("macho_tests"))
-                    .take(8)
-                    .collect();
-                panic!(
-                    "no marker among {} symbols; the module's: {near:?}; the first: {:?}",
-                    symbols.len(),
-                    &symbols[..symbols.len().min(5)]
-                )
-            })
-            .clone();
+        let (addr, name) = marker(&exe);
         let copy = copy_with("function", |data| {
             let o = offset_of(&image, "__TEXT,__text", addr);
             data[o] ^= 0xFF;
@@ -709,7 +657,7 @@ mod macho_tests {
             }) => {
                 assert_eq!(sections, ["__TEXT,__text"]);
                 assert_eq!(resized, Vec::<String>::new());
-                assert_eq!(changed, [strip_hash(&name).to_string()]);
+                assert_eq!(changed, [name]);
             }
             other => panic!("one changed byte reads {other:?}"),
         }
@@ -772,23 +720,5 @@ mod macho_tests {
             "and is the same masked"
         );
         std::fs::remove_dir_all(copy.parent().unwrap()).unwrap();
-    }
-}
-
-#[cfg(test)]
-mod demangle_tests {
-    #[test]
-    fn rust_symbols_demangle_as_nm_does() {
-        assert_eq!(
-            super::demangle("__ZN13blake3_servil5lanes7sources6Source7publish17h0123456789abcdefE"),
-            "blake3_servil::lanes::sources::Source::publish::h0123456789abcdef"
-        );
-        assert_eq!(
-            super::strip_hash(&super::demangle("__ZN3foo3bar17h0123456789abcdefE")),
-            "foo::bar"
-        );
-        assert_eq!(super::demangle("__ZN4core3ptr85drop_in_place$LT$std..rt..lang_start$LT$$LP$$RP$$GT$..$u7b$$u7b$closure$u7d$$u7d$$GT$17h0123456789abcdefE"),
-            "core::ptr::drop_in_place<std::rt::lang_start<()>::{{closure}}>::h0123456789abcdef");
-        assert_eq!(super::demangle("_main"), "main");
     }
 }
