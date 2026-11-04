@@ -683,7 +683,19 @@ mod macho_tests {
         let (addr, name) = symbols
             .iter()
             .find(|(_, n)| n.contains("samecode::macho_tests::marker_function"))
-            .unwrap()
+            .unwrap_or_else(|| {
+                let near: Vec<&String> = symbols
+                    .iter()
+                    .map(|(_, n)| n)
+                    .filter(|n| n.contains("macho_tests"))
+                    .take(8)
+                    .collect();
+                panic!(
+                    "no marker among {} symbols; the module's: {near:?}; the first: {:?}",
+                    symbols.len(),
+                    &symbols[..symbols.len().min(5)]
+                )
+            })
             .clone();
         let copy = copy_with("function", |data| {
             let o = offset_of(&image, "__TEXT,__text", addr);

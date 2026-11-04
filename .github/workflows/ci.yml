@@ -25,7 +25,7 @@ jobs:
       - uses: taiki-e/install-action@nextest
       - run: cargo build --release
       # Each test in its own process (AGENTS: "Tests run under nextest").
-      - run: cargo nextest run --release
+      - run: cargo nextest run --release --no-fail-fast
       # A quick run takes about a minute. On Linux, one that is still
       # running after ten prints every thread's stack and fails, so a hang
       # shows where it is.
