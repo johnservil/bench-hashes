@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="336" viewBox="0 0 720 336" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+<rect width="720" height="336" fill="#ffffff"/>
+<text x="170" y="28" font-size="17" font-weight="600" fill="#111827">Hashing one 128 MiB message</text>
+<text x="170" y="50" font-size="13" fill="#4b5563">faster →</text>
+<text x="160" y="95.7" font-size="13" fill="#111827" text-anchor="end" font-weight="600">BLAKE3, multi-core</text>
+<rect x="170" y="78" width="450.0" height="26" rx="3" fill="#7c3aed"/>
+<text x="626.0" y="95.7" font-size="13" fill="#111827" font-weight="600">13 GB/s</text>
+<text x="160" y="131.7" font-size="13" fill="#111827" text-anchor="end" font-weight="600">BLAKE3, one core</text>
+<rect x="170" y="114" width="262.9" height="26" rx="3" fill="#7c3aed"/>
+<text x="438.9" y="131.7" font-size="13" fill="#111827" font-weight="600">7.70 GB/s</text>
+<text x="160" y="167.7" font-size="13" fill="#111827" text-anchor="end">SHA-256</text>
+<rect x="170" y="150" width="79.6" height="26" rx="3" fill="#c2410c"/>
+<text x="255.6" y="167.7" font-size="13" fill="#111827">2.33 GB/s</text>
+<text x="160" y="203.7" font-size="13" fill="#111827" text-anchor="end">SHA-1</text>
+<rect x="170" y="186" width="27.3" height="26" rx="3" fill="#8a7a1e"/>
+<text x="203.3" y="203.7" font-size="13" fill="#111827">0.80 GB/s</text>
+<text x="160" y="239.7" font-size="13" fill="#111827" text-anchor="end">SHA3-256</text>
+<rect x="170" y="222" width="23.2" height="26" rx="3" fill="#db2777"/>
+<text x="199.2" y="239.7" font-size="13" fill="#111827">0.68 GB/s</text>
+<text x="16" y="279.0" font-size="11" fill="#9a9a9a">AMD Ryzen 7 9700X 8-Core Processor, 16 CPUs, linux7.0.0-38-generic · measured 2026-11-04 15:32:14 UTC</text>
+<text x="16" y="294.0" font-size="11" fill="#9a9a9a">bench-hashes 0.20.4 · github.com/johnservil/bench-hashes at 5dd14fb088c337ce527d4bf436173c4428866381 · clean</text>
+<text x="16" y="309.0" font-size="11" fill="#9a9a9a">BLAKE3 servil 0.8.0 · github.com/johnservil/BLAKE3 at b5b988d8982bea9490c38c79ec4b8c5c2428270c · clean</text>
+<text x="16" y="324.0" font-size="11" fill="#9a9a9a">rustc 1.99.1 (58cf8f9c3 2026-10-13) · x86_64-unknown-linux-gnu</text>
+</svg>

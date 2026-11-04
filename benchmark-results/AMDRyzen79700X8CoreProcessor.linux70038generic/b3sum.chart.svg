@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="336" viewBox="0 0 720 336" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+<rect width="720" height="336" fill="#ffffff"/>
+<text x="170" y="28" font-size="17" font-weight="600" fill="#111827">Hashing a tree of 1000 files</text>
+<text x="170" y="50" font-size="13" fill="#4b5563">faster →</text>
+<text x="160" y="95.7" font-size="13" fill="#111827" text-anchor="end" font-weight="600">b3sum</text>
+<rect x="170" y="78" width="450.0" height="26" rx="3" fill="#7c3aed"/>
+<text x="626.0" y="95.7" font-size="13" fill="#111827" font-weight="600">21 GB/s</text>
+<text x="160" y="131.7" font-size="13" fill="#111827" text-anchor="end" font-weight="600">b3sum, one thread</text>
+<rect x="170" y="114" width="136.7" height="26" rx="3" fill="#7c3aed"/>
+<text x="312.7" y="131.7" font-size="13" fill="#111827" font-weight="600">6.45 GB/s</text>
+<text x="160" y="167.7" font-size="13" fill="#111827" text-anchor="end">sha1sum</text>
+<rect x="170" y="150" width="47.7" height="26" rx="3" fill="#8a7a1e"/>
+<text x="223.7" y="167.7" font-size="13" fill="#111827">2.25 GB/s</text>
+<text x="160" y="203.7" font-size="13" fill="#111827" text-anchor="end">sha256sum</text>
+<rect x="170" y="186" width="45.6" height="26" rx="3" fill="#c2410c"/>
+<text x="221.6" y="203.7" font-size="13" fill="#111827">2.15 GB/s</text>
+<text x="160" y="239.7" font-size="13" fill="#111827" text-anchor="end">md5sum</text>
+<rect x="170" y="222" width="18.2" height="26" rx="3" fill="#2563eb"/>
+<text x="194.2" y="239.7" font-size="13" fill="#111827">0.86 GB/s</text>
+<text x="16" y="279.0" font-size="11" fill="#9a9a9a">AMD Ryzen 7 9700X 8-Core Processor, 16 CPUs, linux7.0.0-38-generic · measured 2026-11-04 15:37:00 UTC</text>
+<text x="16" y="294.0" font-size="11" fill="#9a9a9a">bench-hashes 0.20.4 · github.com/johnservil/bench-hashes at 5dd14fb088c337ce527d4bf436173c4428866381 · clean</text>
+<text x="16" y="309.0" font-size="11" fill="#9a9a9a">b3sum 0.8.0+b3c5efc7c975d903762dea809066f7c0a0603861 (each build&apos;s BLAKE3 hash in b3sum.samples.tsv)</text>
+<text x="16" y="324.0" font-size="11" fill="#9a9a9a">rustc 1.99.1 (58cf8f9c3 2026-10-13) · x86_64-unknown-linux-gnu</text>
+</svg>
