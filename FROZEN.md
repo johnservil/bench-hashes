@@ -1,3 +1,11 @@
+# Diagnostic protocol: small mixed messages
+
+This probe replaces the git-object fixture with 1,024 messages: 64 each
+of lengths 100, 160, ... , 1,000 bytes. The existing collection stride
+mixes their lengths. Its cells are named **small mixed**, so these results
+stay separate from the published benchmark's file collections. Timing,
+clocks, sample means and paired judgments are unchanged.
+
 # What the benchmark asks of BLAKE3-Servil (frozen)
 
 The servil team's contract with itself (Zooko and John Servil): bench-hashes
@@ -1024,9 +1032,9 @@ use case ContinuousMessages: 64 B, 128 B, 256 B, 512 B, 1 KiB, 4 KiB, 16 KiB, 64
 use case ContinuousBatches: 16, 64, 256, 1024, 4096, 16384, 65536
 use case LentMessages: 64 B, 128 B, 256 B, 512 B, 1 KiB, 4 KiB, 16 KiB, 64 KiB, 256 KiB, 1 MiB, 4 MiB, 16 MiB, 64 MiB
 use case Interleaved: 256
-use case Collection: git objects, Nix files
+use case Collection: small mixed, Nix files
 use case LentBatches: 16, 64, 256, 1024, 4096, 16384, 65536
-use case ContinuousCollection: git objects, Nix files
+use case ContinuousCollection: small mixed, Nix files
 use case MerkleTree: 1024, 4096, 16384, 65536, 262144
 use case InterleavedTurn: 256
 use case IdleInterleavedTurn: 256
