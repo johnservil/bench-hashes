@@ -2992,6 +2992,7 @@ fn measure_all(
 
         if let Sizes::CalibrateOnly(path) = sizes {
             if pattern == "idle" {
+                twins_take_their_sizes(roster, &mut batch_iterations);
                 Sizes::write(path, &[], roster, &batch_iterations);
                 std::process::exit(0);
             }
@@ -3156,10 +3157,10 @@ fn measure_all(
                     samples.shared_cpu[i][a][p] = samples.shared_cpu[i][a][t].clone();
                 }
                 samples.solo_cpu[a][p] = samples.solo_cpu[a][t].clone();
-                batch_iterations[a][p] = batch_iterations[a][t];
             }
         }
     }
+    twins_take_their_sizes(roster, &mut batch_iterations);
     let load: Vec<clocks::load::Window> = clocks::load::windows()
         .into_iter()
         .filter(|window| window.end_ns > measuring_from_ns)
@@ -4562,6 +4563,27 @@ fn free_place<'a, D: FnMut(&'a mut [blake3_servil::Hash])>(
 /// for owned buffers changes it.
 fn owned_runs_lent(algorithm: Algorithm, len: Option<usize>) -> bool {
     algorithm != Algorithm::Blake3ServilMt && len.is_none_or(|len| len <= PIECE_LEN)
+}
+
+/// Each owned cell measured as its lent twin (lent_twin) takes the twin's
+/// sample size: its calls, and so its work a sample, are the twin's. A
+/// sizes file (--calibrate-only) written before this held 1 for those
+/// cells, which `regress` gave both sides (merge_sizes: the old side's
+/// size): a new side that measures such a cell itself (a contender whose
+/// owned calls changed) then timed one call a sample, a stream opened and
+/// finished per message (bench #133: +72% read where it was -93%).
+fn twins_take_their_sizes(roster: &Roster, batch_iterations: &mut [Vec<usize>]) {
+    for (a, sizes) in batch_iterations.iter_mut().enumerate() {
+        for p in 0..POINT_COUNT {
+            if let Some(t) = roster
+                .measures(p)
+                .then(|| lent_twin(roster, roster.algorithms[a], p))
+                .flatten()
+            {
+                sizes[p] = sizes[t];
+            }
+        }
+    }
 }
 
 /// The lent cell whose samples stand for an owned cell in this run: where
@@ -8139,6 +8161,58 @@ mod correctness_tests {
             "another context's file serves nothing"
         );
         fs::remove_file(&path).unwrap();
+    }
+
+    /// An owned cell measured as its lent twin takes the twin's sample size
+    /// (twins_take_their_sizes), which the sizes file then holds: servil st's
+    /// continuous 4 KiB beside its lent 4 KiB; a cell with no twin in the run
+    /// (servil mt's stream; servil st's continuous 64 B, its lent cell not
+    /// measured) keeps its own.
+    #[test]
+    fn owned_cells_measured_as_twins_take_the_twins_sizes() {
+        let mut points = vec![
+            point("4 KiB", UseCase::ContinuousMessages),
+            point("4 KiB", UseCase::LentMessages),
+            point("64 B", UseCase::ContinuousMessages),
+        ];
+        points.sort_unstable();
+        let roster = Roster::new(
+            vec![Algorithm::Blake3ServilSt, Algorithm::Blake3ServilMt],
+            true,
+            Some(points),
+            Some(2),
+            &TO_MEASURE_SPEED,
+        );
+        let (owned, lent, small) = (
+            point("4 KiB", UseCase::ContinuousMessages),
+            point("4 KiB", UseCase::LentMessages),
+            point("64 B", UseCase::ContinuousMessages),
+        );
+        let mut sizes = vec![vec![1usize; POINT_COUNT]; 2];
+        for (a, row) in sizes.iter_mut().enumerate() {
+            row[owned] = 1;
+            row[lent] = 1000 + a;
+            row[small] = 77;
+        }
+        twins_take_their_sizes(&roster, &mut sizes);
+        assert_eq!(
+            sizes[0][owned], 1000,
+            "servil st's owned 4 KiB is its lent twin: the twin's size"
+        );
+        assert_eq!(
+            sizes[1][owned], 1,
+            "servil mt's stream is measured on its own: its own size"
+        );
+        assert_eq!(sizes[0][small], 77, "no twin in the run: its own size");
+        let path = std::env::temp_dir().join(format!("twin-sizes-{}.tsv", std::process::id()));
+        Sizes::write(&path, &[], &roster, &sizes);
+        let text = std::fs::read_to_string(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert!(
+            text.lines()
+                .any(|l| l == "blake3-servil-st\tcontinuous 4 KiB\t1000"),
+            "the sizes file holds the twin's size:\n{text}"
+        );
     }
 
     /// An owned cell whose calls are its lent twin's (owned_runs_lent) is
