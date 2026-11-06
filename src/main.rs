@@ -10095,8 +10095,8 @@ mod correctness_tests {
         for (k, point) in POINTS[UseCase::Collection.points()].iter().enumerate() {
             assert_eq!(
                 (point.label, point.messages),
-                (COLLECTIONS[k].0, 2048),
-                "each collection is 2048 items"
+                (COLLECTIONS[k].0, [1024, 2048][k]),
+                "the diagnostic is 1024 items; Nix remains 2048"
             );
         }
         let covered: Vec<_> = UseCase::ALL.into_iter().flat_map(UseCase::points).collect();
