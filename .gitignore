@@ -2,3 +2,5 @@ tmp
 target
 ghtokenclassic.txt
 __pycache__/
+probe.err
+probe.out

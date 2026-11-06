@@ -1,6 +1,0 @@
-waiting for a quiet machine (other programs kept 2.36 CPUs busy in one of the last 10 seconds); reading again in 30 s
-check: BLAKE3-Servil's exp/devon-two-plus-partial (78582ca3f399) against candidate/devon-round-up-lanes (01c1beb54a89)
-regress: 3 new builds against 3 old, 3 pairs over --contenders blake3-servil-st,blake3-servil-mt --points "2304 B,brief idle 2304 B,idle 2304 B,2 KiB,brief idle 2 KiB,brief idle 3 KiB"
-regress: pair 1 of 3 in 4.1 s
-regress: pair 2 of 3 in 4.0 s
-regress: pair 3 of 3 in 4.0 s
