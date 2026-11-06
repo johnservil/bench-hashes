@@ -26,6 +26,19 @@ release, so results of different benchmarks are never read as alike. The
 documents that explain the benchmark (README, METHODOLOGY, CONTRIBUTING,
 the notes) may still change, to say it better.
 
+**Changes for 0.21** (Zooko, November 5-6, 2026; John Servil to word):
+- **servil st's calls made one after another are its performance call**
+  (Zooko, November 5, 2026, "Cold calls and warm calls, by their API":
+  convenience is for a hash now and then, amid other work; performance for
+  call after call, the call alone deciding; built at John Servil's request
+  on BLAKE3-Servil #253, November 6): the lent messages, the owned messages
+  up to 64 KiB (their lent twins) and the pipelined collection's items go
+  through `performance::hash`, each message in the whole blocks the bench
+  lays out for every contender (no copy). The cells after a gap (after
+  other work, after idling) keep `convenience::hash`. On AMD Zen 5 the
+  performance call takes the integer-register chunk root for a chunk or
+  less (BLAKE3-Servil #252: 19-35% less time back to back).
+
 **Changes for 0.19** (Zooko, October 31, 2026: "the new protocol is worth
 it for accuracy under sustained load, which the GPU work needs, even if it
 worsens the VM results a bit"; and, the same day, "don't wait for me on
@@ -912,11 +925,11 @@ blake3-servil-st ManyLongMessages: performance::hash_many(Mode::Plain, &Batch::f
 blake3-servil-mt ManyLongMessages: performance::hash_many_multithreaded(Mode::Plain, &Batch::from_blocks(blocks, 4096), out), the batch borrowed in place, each call after other work
 blake3-servil-mt ContinuousMessages: performance::stream(Mode::Plain, handler, body), one a sample: one message after another, each read straight into the stream's ring (submit_with), its digest into one of 1024 kept places, used as the place comes back and the place used again
 blake3-servil-mt ContinuousBatches: performance::stream(Mode::Plain, handler, body), one a sample: one batch after another, each read straight into the stream's ring (submit_batch_with), its digests into a kept place of the batch's size (enough that the ring fills first, up to 1024), the place used whole as it comes back and used again
-blake3-servil-st ContinuousMessages: convenience::hash(input), one message after another, each read into a kept buffer of the program's and hashed on its thread (a Hasher fed 64 KiB pieces above 64 KiB)
+blake3-servil-st ContinuousMessages: performance::hash(Mode::Plain, blocks, len), one message after another, each read into a kept buffer of the program's in whole blocks and hashed on its thread (a Hasher fed 64 KiB pieces above 64 KiB)
 blake3-servil-st ContinuousBatches: performance::hash_many(Mode::Plain, &Batch::from_blocks(blocks, 64), out), the batch borrowed in place, one batch after another, each read into a kept buffer of the program's and hashed on its thread
 blake3-servil-mt ContinuousCollection: performance::stream(Mode::Plain, handler, body), one a sample: the collection's messages one after another, each read straight into the stream's ring (submit_with), its digest into one of 1024 kept places, used as the place comes back and the place used again
-blake3-servil-st ContinuousCollection: convenience::hash(input), the collection's messages one after another, each read into a kept buffer of the program's and hashed on its thread
-blake3-servil-st LentMessages: convenience::hash(input), one message after another, each read into a kept buffer and lent until the call returns
+blake3-servil-st ContinuousCollection: performance::hash(Mode::Plain, blocks, len), the collection's messages one after another, each read into a kept buffer of the program's in whole blocks and hashed on its thread
+blake3-servil-st LentMessages: performance::hash(Mode::Plain, blocks, len), one message after another, each read into a kept buffer in whole blocks and lent until the call returns
 blake3-servil-st Interleaved: a Hasher per open message, 256 messages open at once, the pieces arriving in turns of 64, each read into its own kept buffer; performance::update_each per turn, then performance::finalize_each for the messages that ended in it, each buffer lent until the calls return
 blake3-servil-st Collection: performance::hash_each(Mode::Plain, items, out), every item of the collection in one call, in memory
 blake3-servil-st LentBatches: performance::hash_many(Mode::Plain, &Batch::from_blocks(blocks, 64), out), the batch borrowed in place, batches one after another, each read into a kept buffer and lent with kept digests until the call returns
