@@ -49,7 +49,7 @@ default-features = false
 # build-against updates its own lock for the patch first.
 [dependencies.blake3-servil]
 git = "https://github.com/servil-software-factory/BLAKE3"
-rev = "b02b776cc1927f74771ae5408046f6cf6dfeb2e5"
+rev = "bd08bda4a9cecd859748084f7ff1329157a247b2"
 default-features = false
 features = ["std"]
 
