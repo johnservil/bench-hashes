@@ -1,3 +1,4 @@
+mod pipeline;
 mod receive;
 
 use sha2::{Digest, Sha256};
@@ -1386,10 +1387,16 @@ enum Algorithm {
     /// RustCrypto's SHA3-256 (the sha3 crate), with the ARMv8 SHA-3
     /// instructions where the CPU has them (keccak's run-time detection).
     Sha3_256,
+    /// BLAKE3-Servil's incremental background pipeline
+    /// (throughput::pipeline): each message's bytes written into the
+    /// pipeline's rooms as they arrive, hashed by its workers meanwhile, its
+    /// digest delivered on the caller's thread. Evolving; measured here to
+    /// decide its design and whether it replaces the stream.
+    Blake3ServilPipeline,
 }
 
 impl Algorithm {
-    const ALL: [Algorithm; 9] = [
+    const ALL: [Algorithm; 10] = [
         Algorithm::Blake3,
         Algorithm::Sha256,
         Algorithm::Sha1Dc,
@@ -1399,6 +1406,7 @@ impl Algorithm {
         Algorithm::Blake3Rayon,
         Algorithm::Blake3ServilMt,
         Algorithm::Sha3_256,
+        Algorithm::Blake3ServilPipeline,
     ];
 
     /// Command-line key, as in `--contenders blake3,sha256-cc`.
@@ -1413,6 +1421,7 @@ impl Algorithm {
             Self::Blake3Rayon => "blake3-official-mt",
             Self::Blake3ServilMt => "blake3-servil-mt",
             Self::Sha3_256 => "sha3-256",
+            Self::Blake3ServilPipeline => "blake3-servil-pipeline",
         }
     }
 
@@ -1435,6 +1444,11 @@ impl Algorithm {
     /// to one thread hashes its inputs so (FROZEN.md).
     fn takes_part(self, use_case: UseCase) -> bool {
         let use_case = use_case.call();
+        /* The pipeline takes part where bytes arrive over time: a message
+         * received in fragments. Elsewhere it has no call. */
+        if self == Self::Blake3ServilPipeline {
+            return matches!(use_case, UseCase::ReceivingMessage);
+        }
         match use_case {
             UseCase::ManyMessages
             | UseCase::ManyLongMessages
@@ -1474,7 +1488,8 @@ impl Algorithm {
             | Self::Blake3ServilSt
             | Self::Blake3Rayon
             | Self::Blake3ServilMt
-            | Self::Sha3_256 => Ok(()),
+            | Self::Sha3_256
+            | Self::Blake3ServilPipeline => Ok(()),
             Self::Sha256CommonCrypto => {
                 if cfg!(target_vendor = "apple") {
                     Ok(())
@@ -1496,6 +1511,7 @@ impl Algorithm {
             Self::Blake3Rayon => "BLAKE3 official mt",
             Self::Blake3ServilMt => "BLAKE3-Servil mt",
             Self::Sha3_256 => "SHA3-256",
+            Self::Blake3ServilPipeline => "BLAKE3-Servil pipeline",
         }
     }
 
@@ -1512,7 +1528,7 @@ impl Algorithm {
             Self::Blake3 | Self::Blake3Rayon => "#3b82f6",
             Self::Sha256 => "#e07a45",
             Self::Sha1Dc => "#8a7a1e",
-            Self::Blake3ServilSt | Self::Blake3ServilMt => "#7c3aed",
+            Self::Blake3ServilSt | Self::Blake3ServilMt | Self::Blake3ServilPipeline => "#7c3aed",
             Self::Sha256CommonCrypto => "#0e9aa7",
             Self::Sha256Ring => "#c2410c",
             Self::Sha3_256 => "#db2777",
@@ -1523,7 +1539,10 @@ impl Algorithm {
     /// its single-threaded form's colour with a pattern of its own, and
     /// the one kind the shared scenario measures (Scenario::measures).
     fn multithreaded(self) -> bool {
-        matches!(self, Self::Blake3Rayon | Self::Blake3ServilMt)
+        matches!(
+            self,
+            Self::Blake3Rayon | Self::Blake3ServilMt | Self::Blake3ServilPipeline
+        )
     }
 
     /// The Cargo.lock description of the crate that implements this contender.
@@ -1538,6 +1557,7 @@ impl Algorithm {
             Self::Blake3Rayon => BLAKE3_SOURCE_INFO,
             Self::Blake3ServilMt => BLAKE3_SERVIL_SOURCE_INFO,
             Self::Sha3_256 => SHA3_SOURCE_INFO,
+            Self::Blake3ServilPipeline => BLAKE3_SERVIL_SOURCE_INFO,
         }
     }
 
@@ -1554,6 +1574,7 @@ impl Algorithm {
             Self::Blake3ServilSt => "single-threaded; convenience::hash for one message after a gap and throughput::hash for one after another, throughput::hash_many for a batch, convenience::Hasher::update per piece for many messages at once",
             Self::Blake3Rayon => "multithreaded; Hasher::update_rayon (per piece, for a stream) on Rayon's global pool, the crate's own multithreading as a program gets it by default: the tree splits recursively over the pool, and inputs under a few chunks stay on the caller's thread",
             Self::Blake3ServilMt => "multithreaded; throughput::hash_multithreaded for one message, throughput::hash_many_multithreaded for a batch, throughput::update_multithreaded into a convenience::Hasher per piece for many messages at once; for continuous loads its stream: Stream::submit_with for messages, Stream::submit_batch_with for batches, each digest into a place the program keeps: BLAKE3-Servil chooses when to wake its worker threads",
+            Self::Blake3ServilPipeline => "multithreaded; throughput::pipeline: one Stream kept for the process, a Message per message, each arriving piece written into the room Message::input gives and committed, Message::end, the digest delivered by value to the Stream's handler on the caller's thread; BLAKE3-Servil's workers hash meanwhile",
         }
     }
 }
@@ -2311,7 +2332,7 @@ and, for the multithreaded contenders, as two programs at once
 
 Keys: blake3-servil-st, blake3-servil-mt, sha256, sha256-ring,
       blake3-official, blake3-official-mt,
-      sha1dc, sha256-cc, sha3-256
+      sha1dc, sha256-cc, sha3-256, blake3-servil-pipeline
 
 A run takes under a minute (the default contenders) or two (--all): every
 point, to 128 MiB inputs and batches of 262144 messages, 96 rounds, each
@@ -3023,7 +3044,9 @@ fn main() {
     };
     // A program that calls BLAKE3-Servil's multithreaded entry points or its
     // queue starts their threads once, first: BLAKE3-Servil's contract.
-    if algorithms.contains(&Algorithm::Blake3ServilMt) {
+    if algorithms.contains(&Algorithm::Blake3ServilMt)
+        || algorithms.contains(&Algorithm::Blake3ServilPipeline)
+    {
         blake3_servil::initialize_multithreaded(threads);
     }
     let idle_control = IdleControl::detect(std::path::Path::new("/sys/devices/system/cpu"));
@@ -4187,6 +4210,9 @@ fn one_message_call(algorithm: Algorithm) -> fn(&[u8], usize) {
             |blocks, len| use_digest(&common_crypto::sha256(&blocks[..len]))
         }
         Algorithm::Sha3_256 => |blocks, len| use_digest(&sha3::Sha3_256::digest(&blocks[..len])),
+        Algorithm::Blake3ServilPipeline => {
+            |_, _| unreachable!("the pipeline takes no part in one-message cells")
+        }
         Algorithm::Sha1Dc => {
             |blocks, len| use_digest(sha1_checked::Sha1::try_digest(&blocks[..len]).hash())
         }
@@ -4382,6 +4408,9 @@ fn hash_messages(
     }
     let input = if batch { input } else { &input[..message_len] };
     match algorithm {
+        Algorithm::Blake3ServilPipeline => {
+            unreachable!("the pipeline takes no part in in-memory cells")
+        }
         Algorithm::Blake3 => {
             // The crate's hidden batch function hashes each message as one
             // chunk: longer messages, as a program would, one call each.
@@ -4664,6 +4693,13 @@ fn hash_stream_from<const RECEIVING: bool>(
     use sha1_checked::digest::Update as _;
     use sha2::Digest as _;
     match algorithm {
+        Algorithm::Blake3ServilPipeline => {
+            assert!(
+                RECEIVING,
+                "the pipeline takes part in the receiving cells alone"
+            );
+            pipeline::receive(input, iterations, &arrivals, consume)
+        }
         Algorithm::Blake3 => each_stream::<RECEIVING, _>(
             input,
             iterations,
@@ -4796,15 +4832,18 @@ fn hash_interleaved(
     use sha2::Digest as _;
     let key = algorithm.key();
     match algorithm {
+        Algorithm::Blake3ServilPipeline => {
+            unreachable!("the pipeline takes no part in the interleaved cells yet")
+        }
         Algorithm::Blake3 => each_interleaved(
             key,
             input,
             budget,
             iterations,
             blake3::Hasher::new,
-            per_piece(|h: &mut blake3::Hasher, p| {
+            read_into_buffer(per_piece(|h: &mut blake3::Hasher, p| {
                 h.update(p);
-            }),
+            })),
             per_message(blake3::Hasher::new, |h| *h.finalize().as_bytes()),
             consume,
         ),
@@ -4814,9 +4853,9 @@ fn hash_interleaved(
             budget,
             iterations,
             blake3::Hasher::new,
-            per_piece(|h: &mut blake3::Hasher, p| {
+            read_into_buffer(per_piece(|h: &mut blake3::Hasher, p| {
                 h.update_rayon(p);
-            }),
+            })),
             per_message(blake3::Hasher::new, |h| *h.finalize().as_bytes()),
             consume,
         ),
@@ -4833,7 +4872,7 @@ fn hash_interleaved(
                 budget,
                 iterations,
                 || blake3_servil::convenience::Hasher::new(blake3_servil::Mode::Plain, None),
-                update,
+                read_into_buffer(update),
                 move |hashers: &mut [blake3_servil::convenience::Hasher],
                       ended: &[usize],
                       consume: &mut dyn FnMut(&[u8])| {
@@ -4853,7 +4892,7 @@ fn hash_interleaved(
             budget,
             iterations,
             Sha256::new,
-            per_piece(|h: &mut Sha256, p| sha2::Digest::update(h, p)),
+            read_into_buffer(per_piece(|h: &mut Sha256, p| sha2::Digest::update(h, p))),
             per_message(Sha256::new, |h| -> [u8; 32] { h.finalize().into() }),
             consume,
         ),
@@ -4865,7 +4904,7 @@ fn hash_interleaved(
                 budget,
                 iterations,
                 new,
-                per_piece(|h: &mut ring::digest::Context, p| h.update(p)),
+                read_into_buffer(per_piece(|h: &mut ring::digest::Context, p| h.update(p))),
                 per_message(new, |h| {
                     let mut digest = [0u8; 32];
                     digest.copy_from_slice(h.finish().as_ref());
@@ -4880,7 +4919,9 @@ fn hash_interleaved(
             budget,
             iterations,
             common_crypto::Sha256State::new,
-            per_piece(|h: &mut common_crypto::Sha256State, p| h.update(p)),
+            read_into_buffer(per_piece(|h: &mut common_crypto::Sha256State, p| {
+                h.update(p)
+            })),
             per_message(common_crypto::Sha256State::new, |h| h.finish()),
             consume,
         ),
@@ -4890,7 +4931,7 @@ fn hash_interleaved(
             budget,
             iterations,
             sha1_checked::Sha1::new,
-            per_piece(|h: &mut sha1_checked::Sha1, p| h.update(p)),
+            read_into_buffer(per_piece(|h: &mut sha1_checked::Sha1, p| h.update(p))),
             per_message(sha1_checked::Sha1::new, |h| {
                 let mut digest = [0u8; 20];
                 digest.copy_from_slice(h.try_finalize().hash());
@@ -4904,7 +4945,9 @@ fn hash_interleaved(
             budget,
             iterations,
             sha3::Sha3_256::new,
-            per_piece(|h: &mut sha3::Sha3_256, p| sha3::Digest::update(h, p)),
+            read_into_buffer(per_piece(|h: &mut sha3::Sha3_256, p| {
+                sha3::Digest::update(h, p)
+            })),
             per_message(sha3::Sha3_256::new, |h| -> [u8; 32] { h.finalize().into() }),
             consume,
         ),
@@ -4991,20 +5034,16 @@ fn each_interleaved<S: 'static>(
             source: 0,
         },
     };
-    let mut buffer = STREAM_BUFFER.with(|kept| std::mem::take(&mut *kept.borrow_mut()));
-    if buffer.len() < TURN * longest {
-        buffer = written(TURN * longest, 1u8);
-    }
-    let mut turn: Vec<(usize, usize, usize)> = Vec::with_capacity(TURN);
+    let mut pieces: Vec<(usize, &[u8])> = Vec::with_capacity(TURN);
     let mut ended: Vec<usize> = Vec::with_capacity(TURN);
     for _ in 0..iterations {
         let mut budget = budget;
         while budget > 0 {
-            // A turn: up to TURN pieces, each read into its own buffer.
-            turn.clear();
+            // A turn: up to TURN pieces, each arriving from the source;
+            // `update` reads each into the contender's own storage.
+            pieces.clear();
             ended.clear();
-            let mut at = 0;
-            while turn.len() < TURN && budget > 0 {
+            while pieces.len() < TURN && budget > 0 {
                 let slot = schedule.piece % spec.open;
                 let len = spec.pieces[schedule.piece % spec.pieces.len()]
                     .min(schedule.left[slot])
@@ -5013,11 +5052,11 @@ fn each_interleaved<S: 'static>(
                 if schedule.source + len > input.len() {
                     schedule.source = 0;
                 }
-                buffer[at..at + len]
-                    .copy_from_slice(&black_box(input)[schedule.source..schedule.source + len]);
+                pieces.push((
+                    slot,
+                    &black_box(input)[schedule.source..schedule.source + len],
+                ));
                 schedule.source += len;
-                turn.push((slot, at, len));
-                at += len;
                 schedule.left[slot] -= len;
                 budget -= len;
                 if schedule.left[slot] == 0 {
@@ -5026,16 +5065,39 @@ fn each_interleaved<S: 'static>(
                     schedule.opened += 1;
                 }
             }
-            let pieces: Vec<(usize, &[u8])> = turn
-                .iter()
-                .map(|&(slot, at, len)| (slot, &buffer[at..at + len]))
-                .collect();
             update(&mut schedule.states, black_box(&pieces));
             finish(&mut schedule.states, &ended, &mut consume);
         }
     }
-    STREAM_BUFFER.with(|kept| *kept.borrow_mut() = buffer);
     SCHEDULES.with(|all| all.borrow_mut().push((key, Box::new(schedule))));
+}
+
+/// A turn's pieces read into the program's piece buffer, each into its own
+/// place (as a receive writes them), then handed to `update` together: how
+/// every contender but the pipeline takes a turn.
+fn read_into_buffer<S>(
+    update: impl Fn(&mut [S], &[(usize, &[u8])]),
+) -> impl Fn(&mut [S], &[(usize, &[u8])]) {
+    let longest = INTERLEAVED.pieces.iter().copied().max().unwrap();
+    move |states, arriving| {
+        let mut buffer = STREAM_BUFFER.with(|kept| std::mem::take(&mut *kept.borrow_mut()));
+        if buffer.len() < TURN * longest {
+            buffer = written(TURN * longest, 1u8);
+        }
+        let mut at = 0;
+        let mut turn: Vec<(usize, usize, usize)> = Vec::with_capacity(TURN);
+        for &(slot, piece) in arriving {
+            buffer[at..at + piece.len()].copy_from_slice(piece);
+            turn.push((slot, at, piece.len()));
+            at += piece.len();
+        }
+        let pieces: Vec<(usize, &[u8])> = turn
+            .iter()
+            .map(|&(slot, at, len)| (slot, &buffer[at..at + len]))
+            .collect();
+        update(states, black_box(&pieces));
+        STREAM_BUFFER.with(|kept| *kept.borrow_mut() = buffer);
+    }
 }
 
 /// The places a ContinuousMessages stream keeps for its digests: the
@@ -5336,6 +5398,9 @@ fn hash_tree_layer(
     let messages = input.len() / message_len;
     let prefix = [node.prefix()];
     match algorithm {
+        Algorithm::Blake3ServilPipeline => {
+            unreachable!("the pipeline takes no part in a tree's layers")
+        }
         Algorithm::Blake3 => blake3_batch(input, message_len, Some(node.key()), 1, consume),
         Algorithm::Blake3ServilSt => servil_batch(
             input,
@@ -5671,9 +5736,10 @@ thread_local! {
  * these.
  */
 #[cfg(test)]
-const SERVIL_CALLS: [(Algorithm, UseCase, &str); 32] = [
-    (Algorithm::Blake3ServilSt, UseCase::ReceivingMessage, "throughput::Hasher::new(Mode::Plain), update per received fragment, finalize after the last; 1448 B, 4 KiB, 16 KiB and 64 KiB arrivals in a repeating cycle, cut at message end; a kept 64 KiB receive buffer; fixed arrival deadlines from the first fragment (saturated, 2 us, 20 us); reads, waits, updates and finalization timed together"),
-    (Algorithm::Blake3ServilMt, UseCase::ReceivingMessage, "throughput::Hasher::new(Mode::Plain), update_multithreaded per received fragment, finalize after the last; 1448 B, 4 KiB, 16 KiB and 64 KiB arrivals in a repeating cycle, cut at message end; a kept 64 KiB receive buffer; fixed arrival deadlines from the first fragment (saturated, 2 us, 20 us); reads, waits, updates and finalization timed together"),
+const SERVIL_CALLS: [(Algorithm, UseCase, &str); 33] = [
+    (Algorithm::Blake3ServilPipeline, UseCase::ReceivingMessage, "throughput::pipeline: one Stream kept for the process (64 rooms of 16 KiB, 1 MiB in flight; 2 message slots), Stream::message per message with its length as the hint, each received fragment written into the rooms Message::input gives and committed (the one copy of an arrival), the last fragment's final bytes ended with Message::end(n), then collect and ready until the digest is delivered; 1448 B, 4 KiB, 16 KiB and 64 KiB arrivals in a repeating cycle, cut at message end; fixed arrival deadlines from the first fragment (saturated, 2 us, 20 us); reads, waits, writes and the wait for the digest timed together"),
+    (Algorithm::Blake3ServilSt, UseCase::ReceivingMessage, "convenience::Hasher::new(Mode::Plain, None), update per received fragment, finalize after the last; 1448 B, 4 KiB, 16 KiB and 64 KiB arrivals in a repeating cycle, cut at message end; a kept 64 KiB receive buffer; fixed arrival deadlines from the first fragment (saturated, 2 us, 20 us); reads, waits, updates and finalization timed together"),
+    (Algorithm::Blake3ServilMt, UseCase::ReceivingMessage, "convenience::Hasher::new(Mode::Plain, None), update_multithreaded per received fragment, finalize after the last; 1448 B, 4 KiB, 16 KiB and 64 KiB arrivals in a repeating cycle, cut at message end; a kept 64 KiB receive buffer; fixed arrival deadlines from the first fragment (saturated, 2 us, 20 us); reads, waits, updates and finalization timed together"),
     (Algorithm::Blake3ServilSt, UseCase::InterleavedTurn, "the Hashers of the 256 open messages; one turn a call (up to 64 pieces, 256 KiB), each after other work: throughput::update_each, then throughput::finalize_each for the messages that ended in it"),
     (Algorithm::Blake3ServilSt, UseCase::IdleInterleavedTurn, "the Hashers of the 256 open messages; one turn a call (up to 64 pieces, 256 KiB), each after idling: throughput::update_each, then throughput::finalize_each for the messages that ended in it"),
     (Algorithm::Blake3ServilMt, UseCase::InterleavedTurn, "the Hashers of the 256 open messages; one turn a call (up to 64 pieces, 256 KiB), each after other work: throughput::update_each_multithreaded, then throughput::finalize_each for the messages that ended in it"),

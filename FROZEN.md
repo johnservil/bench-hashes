@@ -27,6 +27,20 @@ documents that explain the benchmark (README, METHODOLOGY, CONTRIBUTING,
 the notes) may still change, to say it better.
 
 **Changes for the next release**:
+- **A contender for BLAKE3-Servil's pipeline** (John Servil, November 7,
+  2026; Zooko: measure the new API before deciding its design and whether
+  it is promoted). `blake3-servil-pipeline` is `throughput::pipeline`,
+  the incremental background pipeline, taking part where bytes arrive
+  over time: the receiving cells, beside `blake3-servil-st` (a Hasher,
+  update per fragment) and `blake3-servil-mt` (update_multithreaded per
+  fragment). One pipeline per thread and limits, kept for the process;
+  64 rooms of 16 KiB (1 MiB in flight) and 2 message slots for a message
+  received alone. Each fragment is written straight into the pipeline's
+  room (the one copy of an arrival, as the Hasher contenders copy into
+  their receive buffer), the last fragment's final bytes with
+  `Message::end(n)`; the digest is awaited after the last. The pipeline is
+  multithreaded, so the shared scenario measures it too. Its other cells
+  (many messages at once, continuous messages) follow as the API settles.
 - **A run's final load window joins the one before it** (John Servil,
   November 7, 2026). A tail shorter than a window joins the last closed
   window, however long it is; it closed on its own at half a window
@@ -1091,9 +1105,10 @@ receive trace: 16777216 B per message; fragment cycle 1448, 4096, 16384, 65536 B
 scenarios: solo, shared-one-cache, shared-two-caches, shared-os
 shared measures: ContinuousMessages, ContinuousBatches, LentMessages, Interleaved, Collection, LentBatches, ContinuousCollection, MerkleTree, ReceivingMessage
 shared placements: two cores under one last-level cache; two cores under two (where the machine has two); where it offers no pair (macOS), wherever the OS runs them
-shared contenders: blake3-official-mt, blake3-servil-mt
-blake3-servil-st ReceivingMessage: throughput::Hasher::new(Mode::Plain), update per received fragment, finalize after the last; 1448 B, 4 KiB, 16 KiB and 64 KiB arrivals in a repeating cycle, cut at message end; a kept 64 KiB receive buffer; fixed arrival deadlines from the first fragment (saturated, 2 us, 20 us); reads, waits, updates and finalization timed together
-blake3-servil-mt ReceivingMessage: throughput::Hasher::new(Mode::Plain), update_multithreaded per received fragment, finalize after the last; 1448 B, 4 KiB, 16 KiB and 64 KiB arrivals in a repeating cycle, cut at message end; a kept 64 KiB receive buffer; fixed arrival deadlines from the first fragment (saturated, 2 us, 20 us); reads, waits, updates and finalization timed together
+shared contenders: blake3-official-mt, blake3-servil-mt, blake3-servil-pipeline
+blake3-servil-pipeline ReceivingMessage: throughput::pipeline: one Stream kept for the process (64 rooms of 16 KiB, 1 MiB in flight; 2 message slots), Stream::message per message with its length as the hint, each received fragment written into the rooms Message::input gives and committed (the one copy of an arrival), the last fragment's final bytes ended with Message::end(n), then collect and ready until the digest is delivered; 1448 B, 4 KiB, 16 KiB and 64 KiB arrivals in a repeating cycle, cut at message end; fixed arrival deadlines from the first fragment (saturated, 2 us, 20 us); reads, waits, writes and the wait for the digest timed together
+blake3-servil-st ReceivingMessage: convenience::Hasher::new(Mode::Plain, None), update per received fragment, finalize after the last; 1448 B, 4 KiB, 16 KiB and 64 KiB arrivals in a repeating cycle, cut at message end; a kept 64 KiB receive buffer; fixed arrival deadlines from the first fragment (saturated, 2 us, 20 us); reads, waits, updates and finalization timed together
+blake3-servil-mt ReceivingMessage: convenience::Hasher::new(Mode::Plain, None), update_multithreaded per received fragment, finalize after the last; 1448 B, 4 KiB, 16 KiB and 64 KiB arrivals in a repeating cycle, cut at message end; a kept 64 KiB receive buffer; fixed arrival deadlines from the first fragment (saturated, 2 us, 20 us); reads, waits, updates and finalization timed together
 blake3-servil-st InterleavedTurn: the Hashers of the 256 open messages; one turn a call (up to 64 pieces, 256 KiB), each after other work: throughput::update_each, then throughput::finalize_each for the messages that ended in it
 blake3-servil-st IdleInterleavedTurn: the Hashers of the 256 open messages; one turn a call (up to 64 pieces, 256 KiB), each after idling: throughput::update_each, then throughput::finalize_each for the messages that ended in it
 blake3-servil-mt InterleavedTurn: the Hashers of the 256 open messages; one turn a call (up to 64 pieces, 256 KiB), each after other work: throughput::update_each_multithreaded, then throughput::finalize_each for the messages that ended in it
